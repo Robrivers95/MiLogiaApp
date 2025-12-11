@@ -30,13 +30,24 @@ jobs:
 
       - name: Install dependencies (verbose)
         run: |
-          echo "Using npm ci for reproducible install"
-          npm ci --loglevel=verbose || {
-            echo "npm ci failed, listing npm logs if any";
-            [ -f npm-debug.log ] && cat npm-debug.log || true;
-            ls -la node_modules || true;
-            exit 1;
-          }
+          echo "If package-lock.json exists use 'npm ci', otherwise use 'npm install'"
+          if [ -f package-lock.json ]; then
+            echo "package-lock.json found — running npm ci"
+            npm ci --loglevel=verbose || {
+              echo "npm ci failed";
+              [ -f npm-debug.log ] && cat npm-debug.log || true;
+              ls -la node_modules || true;
+              exit 1;
+            }
+          else
+            echo "No package-lock.json — running npm install"
+            npm install --loglevel=verbose || {
+              echo "npm install failed";
+              [ -f npm-debug.log ] && cat npm-debug.log || true;
+              ls -la node_modules || true;
+              exit 1;
+            }
+          fi
 
       - name: Build project
         run: npm run build --if-present
