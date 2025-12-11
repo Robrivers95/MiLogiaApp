@@ -1,6 +1,6 @@
 
 import { User, Payment, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Group } from '../types';
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { auth, db } from './firebase';
 import { 
   signInWithEmailAndPassword, 
@@ -836,7 +836,7 @@ export const generateTriviaWithAI = async (): Promise<Partial<Trivia>> => {
     };
   }
   
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenerativeAI({ apiKey });
   
   const prompt = `
     Genera una pregunta de trivia interesante y desafiante para un club de lectura adulto o logia masónica.
