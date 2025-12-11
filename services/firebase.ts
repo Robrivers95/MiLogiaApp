@@ -3,11 +3,9 @@ import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
 import { getAuth, Auth } from "firebase/auth";
 import { getFirestore, Firestore } from "firebase/firestore";
 
-const CONFIG_KEY = 'logia_firebase_config';
-
-// Configuración proporcionada por el usuario para RegistroLogia
-const defaultFirebaseConfig = {
-  apiKey: "AIzaSyASWup-3BsCi9zvIZYb_6BfM2mvkv5frgg",
+// --- CONFIGURACIÓN DE FIREBASE PARA REGISTROLOGIA ---
+const firebaseConfig = {
+  apiKey: "AIzaSyASWup-3BsCi9zvIZYb_6BfM2mvkv5frgg", // Si tienes errores de autenticación, verifica esta Key en tu consola
   authDomain: "registrologia.firebaseapp.com",
   projectId: "registrologia",
   storageBucket: "registrologia.firebasestorage.app",
@@ -16,23 +14,7 @@ const defaultFirebaseConfig = {
   measurementId: "G-BL97DVCY3F"
 };
 
-// 1. Intentar cargar configuración guardada o usar la default
-const savedConfigStr = localStorage.getItem(CONFIG_KEY);
-let firebaseConfig = defaultFirebaseConfig;
-let isConfigured = true; // Asumimos true porque ya tenemos credenciales válidas en el código
-
-try {
-  if (savedConfigStr) {
-    const parsed = JSON.parse(savedConfigStr);
-    if (parsed.apiKey) {
-        firebaseConfig = parsed;
-    }
-  }
-} catch (e) {
-  console.error("Error parsing saved config", e);
-}
-
-// 3. Inicializar Firebase (Singleton)
+// Inicialización de la App (Singleton)
 let app: FirebaseApp;
 try {
     if (!getApps().length) {
@@ -41,40 +23,21 @@ try {
         app = getApp();
     }
 } catch (e) {
-    console.error("Firebase initialization error:", e);
-    // Fallback
-    app = getApps()[0] || undefined as unknown as FirebaseApp; 
+    console.error("Error inicializando Firebase:", e);
+    // Fallback por si acaso
+    if (getApps().length > 0) {
+        app = getApps()[0];
+    } else {
+        throw e;
+    }
 }
 
 export const auth: Auth = getAuth(app);
 export const db: Firestore = getFirestore(app);
 
-// 4. Helpers para la UI de Configuración (por si quieres cambiar de proyecto en el futuro)
-export const saveFirebaseConfig = (configText: string): boolean => {
-  try {
-    // Limpiar el string por si el usuario copió "const firebaseConfig = "
-    let jsonStr = configText;
-    if (jsonStr.includes('=')) {
-        jsonStr = jsonStr.split('=')[1].trim();
-        if (jsonStr.endsWith(';')) jsonStr = jsonStr.slice(0, -1);
-    }
-    
-    const config = JSON.parse(jsonStr);
-    
-    if (!config.apiKey) throw new Error("Falta apiKey en el JSON");
-    
-    localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
-    window.location.reload(); // Recargar para aplicar cambios
-    return true;
-  } catch (e) {
-    console.error(e);
-    return false;
-  }
-};
+// Indicamos que ya está configurada para saltar la pantalla de Setup
+export const isConfigured = true;
 
-export const resetFirebaseConfig = () => {
-  localStorage.removeItem(CONFIG_KEY);
-  window.location.reload();
-};
-
-export { isConfigured };
+// Funciones legacy para compatibilidad con componentes antiguos
+export const saveFirebaseConfig = (config: string) => true;
+export const resetFirebaseConfig = () => {};
