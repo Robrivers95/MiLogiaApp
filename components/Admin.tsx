@@ -302,29 +302,283 @@ const Admin: React.FC<Props> = ({ user }) => {
       n.splice(idx, 1);
       setAllocations(n);
   };
-  const handleSaveTransaction = async () => { /* ... */ };
+  const handleSaveTransaction = async () => {
+      if (isReadOnly || !newTransAmount || !newTransDesc) {
+          showMessage("Completa todos los campos", 'error');
+          return;
+      }
+      try {
+          setIsSubmitting(true);
+          const entry: Omit<TreasuryEntry, 'id' | 'createdAt'> = {
+              groupId: user.groupId!,
+              date: mxDate,
+              type: newTransType as 'income' | 'expense',
+              category: newTransCat,
+              description: newTransDesc,
+              amount: newTransAmount,
+              allocations: allocations.length > 0 ? allocations : [{ source: 'tesoro_general', amount: newTransAmount }],
+              createdBy: user.uid
+          };
+          if (editingTreasuryId) {
+              await dataService.updateTreasuryEntry({ ...entry, id: editingTreasuryId } as TreasuryEntry);
+              showMessage("Movimiento actualizado");
+          } else {
+              await dataService.addTreasuryEntry(entry);
+              showMessage("Movimiento registrado");
+          }
+          setEditingTreasuryId(null);
+          setNewTransAmount(0);
+          setNewTransDesc('');
+          setNewTransType('income');
+          setNewTransCat('evento');
+          setAllocations([]);
+          await loadTreasuryData();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error guardando movimiento", 'error');
+      } finally {
+          setIsSubmitting(false);
+      }
+  };
   const handleDeleteTransaction = (id: string, e: React.MouseEvent) => {
       e.stopPropagation(); e.preventDefault(); 
       if (isReadOnly) return;
       setDeletingTreasuryId(id);
       setShowDeleteTreasuryModal(true);
   };
-  const handleExecuteDeleteTreasury = async () => { /* ... */ };
-  const handleEditTransaction = (t: TreasuryEntry, e: React.MouseEvent) => { /* ... */ };
-  const handleDownloadTreasuryCSV = async () => { /* ... */ };
-  const handleSaveExtraFee = async () => { /* ... */ };
-  const handleAddPriceChange = async () => { /* ... */ };
-  const handleOpenEditPrice = (h: PriceHistoryEntry) => { /* ... */ };
-  const handleUpdatePrice = async () => { /* ... */ };
-  const handleConfirmDeletePrice = (date: string) => { /* ... */ };
-  const handleExecuteDeletePrice = async () => { /* ... */ };
-  const handleSyncDebts = async () => { /* ... */ };
-  const handleUpdateUserProfile = async () => { /* ... */ };
-  const handleOpenPayments = async (uid: string) => { /* ... */ };
-  const handleSavePaymentRow = async (p: Payment) => { /* ... */ };
-  const handleDeletePaymentRow = async (period: string) => { /* ... */ };
-  const handleDownloadAttendanceCSV = async () => { /* ... */ };
-  const handleRecordAttendance = async () => { /* ... */ };
+  const handleExecuteDeleteTreasury = async () => {
+      if (!deletingTreasuryId) return;
+      try {
+          await dataService.deleteTreasuryEntry(user.groupId!, deletingTreasuryId);
+          showMessage("Movimiento eliminado");
+          setShowDeleteTreasuryModal(false);
+          setDeletingTreasuryId(null);
+          await loadTreasuryData();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error eliminando movimiento", 'error');
+      }
+  };
+  const handleEditTransaction = (t: TreasuryEntry, e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (isReadOnly) return;
+      setEditingTreasuryId(t.id);
+      setMxDate(t.date);
+      setNewTransType(t.type as 'income' | 'expense');
+      setNewTransCat(t.category);
+      setNewTransDesc(t.description);
+      setNewTransAmount(t.amount);
+      setAllocations(t.allocations || []);
+  };
+  const handleDownloadTreasuryCSV = async () => {
+      try {
+          const entries = await dataService.getTreasuryEntries(user.groupId!);
+          const quotas = await dataService.getDetailedQuotaTransactions(user.groupId!);
+          const combined = [...entries, ...quotas].sort((a, b) => b.date.localeCompare(a.date));
+          
+          const csv = "Fecha,Tipo,Categoría,Descripción,Monto\n" +
+              combined.map(e => `${e.date},"${e.type}","${e.category}","${e.description}",${e.amount}`).join('\n');
+          
+          const blob = new Blob([csv], { type: 'text/csv' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `tesoreria_${user.groupId}_${new Date().toISOString().slice(0,10)}.csv`;
+          a.click();
+          URL.revokeObjectURL(url);
+      } catch (e) {
+          console.error(e);
+          showMessage("Error descargando CSV", 'error');
+      }
+  };
+  const handleSaveExtraFee = async () => {
+      if (isReadOnly || !extraFeePeriod || !extraFeeAmount || extraFeeAmount <= 0) {
+          showMessage("Completa período y monto", 'error');
+          return;
+      }
+      try {
+          setApplyingExtra(true);
+          await dataService.assignExtraFeeToAll(user.groupId!, extraFeePeriod, extraFeeAmount, extraFeeDesc);
+          showMessage("Cuota extraordinaria aplicada a todos los activos");
+          setExtraFeePeriod('');
+          setExtraFeeAmount(0);
+          setExtraFeeDesc('');
+          await loadAllUserLedgers();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error aplicando cuota extraordinaria", 'error');
+      } finally {
+          setApplyingExtra(false);
+      }
+  };
+  const handleAddPriceChange = async () => {
+      if (isReadOnly || !newPricePeriod || newPriceAmount <= 0) {
+          showMessage("Completa período y monto válido", 'error');
+          return;
+      }
+      try {
+          setIsSubmitting(true);
+          const entry: PriceHistoryEntry = { startDate: newPricePeriod, amount: newPriceAmount };
+          await dataService.addPriceChange(user.groupId!, entry);
+          showMessage("Precio de cuota actualizado");
+          setNewPricePeriod('');
+          setNewPriceAmount(0);
+          await loadPriceHistory();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error guardando precio", 'error');
+      } finally {
+          setIsSubmitting(false);
+      }
+  };
+  const handleOpenEditPrice = (h: PriceHistoryEntry) => {
+      setEditPriceData(h);
+      setOriginalEditDate(h.startDate);
+      setShowEditPriceModal(true);
+  };
+  const handleUpdatePrice = async () => {
+      if (isReadOnly || !editPriceData.startDate || editPriceData.amount <= 0) {
+          showMessage("Datos inválidos", 'error');
+          return;
+      }
+      try {
+          setIsSubmitting(true);
+          await dataService.updatePriceChange(user.groupId!, originalEditDate, editPriceData);
+          showMessage("Precio actualizado");
+          setShowEditPriceModal(false);
+          await loadPriceHistory();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error actualizando precio", 'error');
+      } finally {
+          setIsSubmitting(false);
+      }
+  };
+  const handleConfirmDeletePrice = (date: string) => {
+      setDeletingPriceDate(date);
+      setShowDeletePriceModal(true);
+  };
+  const handleExecuteDeletePrice = async () => {
+      if (!deletingPriceDate) return;
+      try {
+          setIsSubmitting(true);
+          await dataService.removePriceChange(user.groupId!, deletingPriceDate);
+          showMessage("Precio eliminado");
+          setShowDeletePriceModal(false);
+          setDeletingPriceDate(null);
+          await loadPriceHistory();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error eliminando precio", 'error');
+      } finally {
+          setIsSubmitting(false);
+      }
+  };
+  const handleSyncDebts = async () => {
+      if (isReadOnly || priceHistory.length === 0) {
+          showMessage("No hay precios configurados", 'error');
+          return;
+      }
+      try {
+          setSyncing(true);
+          let totalOps = 0;
+          for (const u of filteredUsers) {
+              const ops = await dataService.syncUserDebts(u, priceHistory);
+              totalOps += ops;
+          }
+          showMessage(`Sincronización completada: ${totalOps} registros generados`);
+          await loadAllUserLedgers();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error sincronizando deudas", 'error');
+      } finally {
+          setSyncing(false);
+      }
+  };
+  const handleUpdateUserProfile = async () => {
+      if (!editingUserProfile) return;
+      try {
+          await dataService.updateUser(editingUserProfile.uid, {
+              name: editingUserProfile.name,
+              email: editingUserProfile.email,
+              role: editingUserProfile.role,
+              masonicdegree: editingUserProfile.masonicdegree
+          });
+          showMessage("Perfil actualizado");
+          setEditingUserProfile(null);
+          await loadUsers();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error actualizando perfil", 'error');
+      }
+  };
+  const handleOpenPayments = async (uid: string) => {
+      const payments = await dataService.getPayments(uid);
+      setEditPayments(payments);
+      setEditingUserLedger(uid);
+  };
+  const handleSavePaymentRow = async (p: Payment) => {
+      if (isReadOnly || !editingUserLedger) return;
+      try {
+          await dataService.updatePayment(editingUserLedger, p);
+          showMessage("Pago guardado");
+          const payments = await dataService.getPayments(editingUserLedger);
+          setEditPayments(payments);
+          await loadAllUserLedgers();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error guardando pago", 'error');
+      }
+  };
+  const handleDeletePaymentRow = async (period: string) => {
+      if (isReadOnly || !editingUserLedger) return;
+      try {
+          await dataService.deletePayment(editingUserLedger, period);
+          showMessage("Pago eliminado");
+          const payments = await dataService.getPayments(editingUserLedger);
+          setEditPayments(payments);
+          await loadAllUserLedgers();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error eliminando pago", 'error');
+      }
+  };
+  const handleDownloadAttendanceCSV = async () => {
+      try {
+          const csv = "Miembro,Asistencias\n" +
+              filteredUsers.map(u => `"${u.name}",${userStats[u.uid]?.attendance || 0}`).join('\n');
+          
+          const blob = new Blob([csv], { type: 'text/csv' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `asistencia_${user.groupId}_${new Date().toISOString().slice(0,10)}.csv`;
+          a.click();
+          URL.revokeObjectURL(url);
+      } catch (e) {
+          console.error(e);
+          showMessage("Error descargando CSV", 'error');
+      }
+  };
+  const handleRecordAttendance = async () => {
+      if (isReadOnly || !attendanceUser || !mxTime) {
+          showMessage("Selecciona usuario y hora", 'error');
+          return;
+      }
+      try {
+          const date = mxDate || new Date().toISOString().slice(0, 10);
+          const att: Attendance = { date, time: mxTime, recorded: new Date().toISOString() };
+          await dataService.recordAttendance(attendanceUser, att);
+          showMessage("Asistencia registrada");
+          setAttendanceUser('');
+          setMxTime('');
+          await loadUsers();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error registrando asistencia", 'error');
+      }
+  };
 
   // Dashboard Chart Calculation
   const dbInc = Number(dashboardData.income) || 0;
