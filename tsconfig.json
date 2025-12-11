@@ -11,8 +11,8 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
+    "types": ["node"],
     
-    /* Reglas relajadas para evitar errores de bloqueo */
     "strict": false,
     "noImplicitAny": false,
     "noUnusedLocals": false,
