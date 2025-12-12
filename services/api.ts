@@ -648,21 +648,25 @@ export const dataService = {
           });
       }
       
-      // Get all unique dates
-      const uniqueDates = Array.from(new Set(allRecords.map(r => r.date))).sort().reverse();
+      // Get all unique dates sorted chronologically
+      const uniqueDates = Array.from(new Set(allRecords.map(r => r.date))).sort();
       
       // Build lookup map: date_uid -> bool
       const lookup = new Map<string, boolean>();
       allRecords.forEach(r => lookup.set(`${r.date}_${r.uid}`, r.attended));
 
-      // HEADERS: Date, Name, Status
-      const csvRows = ["Fecha,Nombre Completo,Estatus"];
+      // CSV Format: Nombre,Fecha,Asistencia (1=asistió, 0=no asistió pero estaba inscrito)
+      const csvRows = ["Nombre,Fecha,Asistencia"];
       
       uniqueDates.forEach(date => {
           activeUsers.forEach(u => {
-              const present = lookup.has(`${date}_${u.uid}`);
-              const status = present ? "ASISTIO" : "FALTA";
-              csvRows.push(`${date},"${u.name}","${status}"`);
+              const attended = lookup.get(`${date}_${u.uid}`);
+              // Si hay registro de ese día, ponemos 1 si asistió, 0 si no
+              // Si no hay registro, significa que no estaba inscrito aún en esa fecha
+              if (attended !== undefined) {
+                  const value = attended ? 1 : 0;
+                  csvRows.push(`"${u.name}",${date},${value}`);
+              }
           });
       });
       

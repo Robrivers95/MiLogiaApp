@@ -310,8 +310,32 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
   };
 
-  // ... (Other handlers unchanged) ...
-  const handleDownloadCSV = () => { /* ... */ };
+  const handleDownloadCSV = () => {
+      try {
+          // Headers
+          const headers = "Nombre,Email,Rol,Estado,Ciudad,Grado,Fecha Ingreso,Total Pagado,Total Deuda,Total Facturado\n";
+          
+          // Data rows
+          const rows = filteredUsers.map(u => {
+              const stats = userStats[u.uid] || { totalPaid: 0, totalDebt: 0, totalBilled: 0 };
+              return `"${u.name}","${u.email}","${u.role}","${u.active ? 'Activo' : 'Inactivo'}","${u.city || 'N/A'}","${u.masonicDegree || 'N/A'}","${u.joinDate?.slice(0,10) || 'N/A'}",${stats.totalPaid},${stats.totalDebt},${stats.totalBilled}`;
+          }).join('\n');
+          
+          const csv = headers + rows;
+          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `miembros_${user.groupId}_${new Date().toISOString().slice(0,10)}.csv`;
+          a.click();
+          URL.revokeObjectURL(url);
+          showMessage("CSV descargado exitosamente", 'success');
+      } catch (e) {
+          console.error(e);
+          showMessage("Error descargando CSV", 'error');
+      }
+  };
+  
   const handleSendEmail = (u: User) => { /* ... */ };
   const handleAddAllocation = () => {
       if (allocAmount <= 0) return;
@@ -573,16 +597,17 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
   const handleDownloadAttendanceCSV = async () => {
       try {
-          const csv = "Miembro,Asistencias\n" +
-              filteredUsers.map(u => `"${u.name}",${userStats[u.uid]?.attendance || 0}`).join('\n');
+          showMessage("Generando CSV histórico de asistencia...", 'success');
+          const csv = await dataService.generateDetailedAttendanceCSV(user.groupId!, users);
           
-          const blob = new Blob([csv], { type: 'text/csv' });
+          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = `asistencia_${user.groupId}_${new Date().toISOString().slice(0,10)}.csv`;
+          a.download = `asistencia_historica_${user.groupId}_${new Date().toISOString().slice(0,10)}.csv`;
           a.click();
           URL.revokeObjectURL(url);
+          showMessage("CSV descargado exitosamente", 'success');
       } catch (e) {
           console.error(e);
           showMessage("Error descargando CSV", 'error');
