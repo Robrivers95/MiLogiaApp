@@ -27,5 +27,45 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
+
+    <!-- Floating password reset button (aparece en la app web) -->
+    <style>
+      .pw-reset-btn { position: fixed; right: 18px; bottom: 84px; z-index: 9999; background: #1f2937; color: #e0e7ff; padding: 10px 14px; border-radius: 9999px; box-shadow: 0 6px 18px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.03); cursor: pointer; font-weight: 600; }
+      .pw-reset-btn:hover { background: #111827; }
+    </style>
+
+    <button id="pwResetBtn" class="pw-reset-btn" title="Recuperar contraseña">🔑 Recuperar contraseña</button>
+
+    <script type="module">
+      import { initializeApp } from 'firebase/app';
+      import { getAuth, sendPasswordResetEmail } from 'firebase/auth';
+
+      const firebaseConfig = {
+        apiKey: "AIzaSyASWup-3BsCi9zvIZYb_6BfM2mvkv5frgg",
+        authDomain: "registrologia.firebaseapp.com",
+        projectId: "registrologia",
+        storageBucket: "registrologia.firebasestorage.app",
+        messagingSenderId: "635701699225",
+        appId: "1:635701699225:web:0edf683ec4a6816a96ce08",
+        measurementId: "G-BL97DVCY3F"
+      };
+
+      // Inicializar app si no existe (segura en SPA)
+      try { initializeApp(firebaseConfig); } catch (e) { /* ignore si ya está inicializada */ }
+
+      const auth = getAuth();
+
+      document.getElementById('pwResetBtn')?.addEventListener('click', async () => {
+        const email = prompt('Ingresa tu correo para recibir el enlace de recuperación:');
+        if (!email) return;
+        try {
+          await sendPasswordResetEmail(auth, email.trim());
+          alert('Se ha enviado un correo de recuperación si la cuenta existe. Revisa tu bandeja.');
+        } catch (err) {
+          console.error(err);
+          alert('Error enviando correo de recuperación: ' + ((err && err.message) || err));
+        }
+      });
+    </script>
   </body>
 </html>

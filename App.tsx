@@ -82,10 +82,10 @@ const App: React.FC = () => {
   // If user is master AND hasn't selected a group yet, show the Master Dashboard
   if (user.role === 'master' && !selectedGroup) {
       return <MasterDashboard 
-        onSelectGroup={(g) => setSelectedGroup(g)} 
-        onLogout={handleLogout} 
+        onSelectGroup={setSelectedGroup}
+        onLogout={handleLogout}
       />;
-  }
+    }
 
   // PREPARE USER CONTEXT
   // If Master has selected a group, we temporarily "act" as if the master belongs to that group for the UI components

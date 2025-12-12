@@ -8,8 +8,8 @@ import {
   updateProfile 
 } from "firebase/auth";
 import { 
-  doc, 
-  getDoc, 
+  doc,
+  getDoc,
   setDoc, 
   updateDoc, 
   deleteDoc,
@@ -113,171 +113,80 @@ export const authService = {
     await updateProfile(userCredential.user, { displayName: name });
     
     return newUser;
+  },
+
+  resetPassword: async (email: string): Promise<void> => {
+    try {
+      const { sendPasswordResetEmail } = await import('firebase/auth');
+      await sendPasswordResetEmail(auth, email);
+    } catch (e: any) {
+      console.error('Error sending password reset email', e);
+      throw e;
+    }
   }
 };
 
 export const dataService = {
-  // GROUP / LODGE MANAGEMENT
   getAllGroups: async (): Promise<Group[]> => {
-      try {
-          const q = query(collection(db, "groups"));
-          const snapshot = await getDocs(q);
-          return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Group));
-      } catch (e) {
-          console.error("Error fetching groups", e);
-          return [];
-      }
+    try {
+      const q = query(collection(db, "groups"));
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Group));
+    } catch (e) {
+      console.error("Error fetching groups", e);
+      return [];
+    }
   },
 
   createGroup: async (name: string, description: string): Promise<Group> => {
-      const newGroup: Omit<Group, 'id'> = {
-          name,
-          description,
-          createdAt: Date.now(),
-          priceHistory: []
-      };
-      const docRef = await addDoc(collection(db, "groups"), newGroup);
-      return { id: docRef.id, ...newGroup };
+    const newGroup = {
+      name,
+      description,
+      createdAt: Date.now(),
+      priceHistory: []
+    };
+    const docRef = await addDoc(collection(db, "groups"), newGroup);
+    return { id: docRef.id, ...newGroup };
   },
 
-  updateGroup: async (groupId: string, data: Partial<Group>): Promise<void> => {
-      if (!groupId) return;
-      const groupRef = doc(db, "groups", groupId);
-      await updateDoc(groupRef, data);
+  updateGroup: async (groupId: string, data: Partial<Group>) => {
+    if (!groupId) return;
+    const ref = doc(db, "groups", groupId);
+    await updateDoc(ref, data);
   },
 
   getGroupDetails: async (groupId: string): Promise<Group | null> => {
-      if (!groupId) return null;
-      const snap = await getDoc(doc(db, "groups", groupId));
-      if (snap.exists()) return { id: snap.id, ...snap.data() } as Group;
-      return null;
+    if (!groupId) return null;
+    const snap = await getDoc(doc(db, "groups", groupId));
+    return snap.exists() ? { id: snap.id, ...snap.data() } as Group : null;
   },
 
-  // Profile Fetching
   getUserProfile: async (uid: string): Promise<User | null> => {
     try {
       const snap = await getDoc(doc(db, "users", uid));
-      if (snap.exists()) {
-        const data = snap.data() as User;
-        if (!data.rpg) data.rpg = { ...INITIAL_RPG };
-        
-        // --- SUPER ADMIN RECOVERY ---
-        // If the user is you, enforce Master role in DB if missing
-        if (data.email === 'robrivers95@gmail.com' && data.role !== 'master') {
-            console.log("Restoring Master Role privileges...");
-            data.role = 'master';
-            await updateDoc(doc(db, "users", uid), { role: 'master' });
-        }
-        // ----------------------------
-
-        return data;
-      }
-      return null;
+      return snap.exists() ? snap.data() as User : null;
     } catch (e) {
-      console.error("Error getting user profile:", e);
+      console.error("Error fetching user profile", e);
       return null;
     }
   },
 
-  // RPG (Also used for Snake High Score)
-  saveCharacter: async (uid: string, character: Partial<RpgCharacter>) => {
-    if (!uid) return;
-    try {
-        const userRef = doc(db, "users", uid);
-        await setDoc(userRef, { rpg: character }, { merge: true });
-    } catch (e) {
-        // Suppress permission error logs
-    }
-  },
-
-  // Trivia
-  getActiveTrivia: async (groupId: string): Promise<Trivia | null> => {
-    if (!groupId) return null;
-    try {
-        const q = query(
-          collection(db, "trivias"), 
-          where("groupId", "==", groupId)
-        );
-        
-        const snapshot = await getDocs(q);
-        if (snapshot.empty) return null;
-        
-        // Client side sort to avoid index requirement
-        const allTrivias = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Trivia));
-        allTrivias.sort((a, b) => b.createdAt - a.createdAt);
-        
-        return allTrivias[0];
-    } catch (error) {
-        console.error("Error fetching trivia", error);
-        return null;
-    }
-  },
-
-  submitAnswer: async (uid: string, triviaId: string, answerIndex: number): Promise<TriviaAnswer> => {
-    const triviaDoc = await getDoc(doc(db, "trivias", triviaId));
-    if (!triviaDoc.exists()) throw new Error("Trivia no encontrada");
-    
-    const triviaData = triviaDoc.data() as Trivia;
-    const isCorrect = triviaData.correctIndex === answerIndex;
-    const points = isCorrect ? 10 : 0;
-    
-    const answer: TriviaAnswer = {
-      uid,
-      triviaId,
-      answerIndex,
-      correct: isCorrect,
-      points,
-      answeredAt: new Date().toISOString()
-    };
-    
-    await setDoc(doc(db, "trivias", triviaId, "answers", uid), answer);
-
-    if (points > 0) {
-      await updateDoc(doc(db, "users", uid), {
-        totalPoints: increment(points)
-      });
-    }
-    
-    return answer;
-  },
-
-  getUserAnswer: async (uid: string, triviaId: string): Promise<TriviaAnswer | undefined> => {
-    const docRef = doc(db, "trivias", triviaId, "answers", uid);
-    const snap = await getDoc(docRef);
-    return snap.exists() ? (snap.data() as TriviaAnswer) : undefined;
-  },
-
-  getLeaderboard: async (): Promise<{name: string, points: number}[]> => {
-    const q = query(
-      collection(db, "users"),
-      orderBy("totalPoints", "desc"),
-      limit(10)
-    );
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(d => {
-      const u = d.data() as User;
-      return { name: u.name, points: u.totalPoints || 0 };
-    });
-  },
-
-  // User Management
   updateUser: async (uid: string, data: Partial<User>) => {
     await updateDoc(doc(db, "users", uid), data);
   },
 
-  // Payments & Price History
   getPriceHistory: async (groupId: string): Promise<PriceHistoryEntry[]> => {
-    if (!groupId) return [];
     try {
-        const docRef = doc(db, "groups", groupId);
-        const snap = await getDoc(docRef);
-        if (snap.exists() && snap.data().priceHistory) {
-            return snap.data().priceHistory as PriceHistoryEntry[];
-        }
-        return [];
+      const snap = await getDoc(doc(db, "groups", groupId));
+      if (snap.exists() && snap.data().priceHistory) {
+        return snap.data().priceHistory.sort((a: PriceHistoryEntry, b: PriceHistoryEntry) => 
+          a.startDate.localeCompare(b.startDate)
+        );
+      }
+      return [];
     } catch (e) {
-        console.error("Error fetching price history", e);
-        return [];
+      console.error("Error fetching price history", e);
+      return [];
     }
   },
 
@@ -614,7 +523,8 @@ export const dataService = {
                     amount,
                     paid: 0,
                     status: 'Pendiente',
-                    comments: 'Generado auto'
+                    comments: 'Generado auto',
+                    groupId: user.groupId
                 });
                 opCount++;
             } else {
@@ -705,7 +615,7 @@ export const dataService = {
   
   getAttendanceListForDate: async (groupId: string, date: string): Promise<{name: string, attended: boolean}[]> => {
       const users = await dataService.getUsers(groupId);
-      const activeUsers = users.filter(u => u.active).sort((a,b) => a.name.localeCompare(b.name));
+      const activeUsers = users.filter(u => u.active && u.groupId === groupId).sort((a,b) => a.name.localeCompare(b.name));
       
       const results: {name: string, attended: boolean}[] = [];
       

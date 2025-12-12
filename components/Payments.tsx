@@ -14,12 +14,14 @@ const Payments: React.FC<Props> = ({ user }) => {
   useEffect(() => {
     const load = async () => {
       const data = await dataService.getPayments(user.uid);
+      // Filter only payments from the user's own group (to avoid showing debts from other lodges)
+      const filtered = data.filter(p => !p.groupId || p.groupId === user.groupId);
       // Sort by period descending
-      setPayments(data.sort((a, b) => b.period.localeCompare(a.period)));
+      setPayments(filtered.sort((a, b) => b.period.localeCompare(a.period)));
       setLoading(false);
     };
     load();
-  }, [user.uid]);
+  }, [user.uid, user.groupId]);
   
   const calculateTotalDue = (p: Payment) => p.amount + (p.extraAmount || 0);
 

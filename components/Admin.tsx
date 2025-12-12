@@ -1,13 +1,13 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, Payment, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation } from '../types';
+import { User, Payment, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice } from '../types';
 import { dataService, generateTriviaWithAI } from '../services/api';
 
 interface Props {
   user: User;
 }
 
-type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury';
+type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'notices';
 
 const Admin: React.FC<Props> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
@@ -81,6 +81,14 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [deletingTreasuryId, setDeletingTreasuryId] = useState<string | null>(null);
   const [showDeleteTreasuryModal, setShowDeleteTreasuryModal] = useState(false);
 
+  // Notices State
+  const [notices, setNotices] = useState<Notice[]>([]);
+  const [newNoticeTitle, setNewNoticeTitle] = useState('');
+  const [newNoticeContent, setNewNoticeContent] = useState('');
+  const [editingNotice, setEditingNotice] = useState<Notice | null>(null);
+  const [deletingNoticeId, setDeletingNoticeId] = useState<string | null>(null);
+  const [showDeleteNoticeModal, setShowDeleteNoticeModal] = useState(false);
+
   // Modals
   const [editingUserLedger, setEditingUserLedger] = useState<string | null>(null);
   const [editPayments, setEditPayments] = useState<Payment[]>([]);
@@ -118,6 +126,9 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
       if (activeTab === 'treasury') {
           loadTreasury();
+      }
+      if (activeTab === 'notices') {
+          loadNotices();
       }
   }, [activeTab, dashboardStart, dashboardEnd]);
 
@@ -233,6 +244,16 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
       setAttHistory(Array.from(dates).sort().reverse());
   };
+
+  const loadNotices = async () => {
+      try {
+          const data = await dataService.getNotices(user.groupId);
+          setNotices(data);
+      } catch (e) {
+          console.error("Error cargando avisos", e);
+          showMessage("Error cargando avisos", 'error');
+      }
+  };
   
   // ... (Other functions remain the same) ...
   const handleViewAttDetail = async (date: string) => {
@@ -311,7 +332,7 @@ const Admin: React.FC<Props> = ({ user }) => {
           setIsSubmitting(true);
           const entry: Omit<TreasuryEntry, 'id' | 'createdAt'> = {
               groupId: user.groupId!,
-              date: mxDate,
+              date: newTransDate,
               type: newTransType as 'income' | 'expense',
               category: newTransCat,
               description: newTransDesc,
@@ -332,7 +353,7 @@ const Admin: React.FC<Props> = ({ user }) => {
           setNewTransType('income');
           setNewTransCat('evento');
           setAllocations([]);
-          await loadTreasuryData();
+          await loadTreasury();
       } catch (e) {
           console.error(e);
           showMessage("Error guardando movimiento", 'error');
@@ -353,7 +374,7 @@ const Admin: React.FC<Props> = ({ user }) => {
           showMessage("Movimiento eliminado");
           setShowDeleteTreasuryModal(false);
           setDeletingTreasuryId(null);
-          await loadTreasuryData();
+          await loadTreasury();
       } catch (e) {
           console.error(e);
           showMessage("Error eliminando movimiento", 'error');
@@ -364,7 +385,7 @@ const Admin: React.FC<Props> = ({ user }) => {
       e.preventDefault();
       if (isReadOnly) return;
       setEditingTreasuryId(t.id);
-      setMxDate(t.date);
+      setNewTransDate(t.date);
       setNewTransType(t.type as 'income' | 'expense');
       setNewTransCat(t.category);
       setNewTransDesc(t.description);
@@ -404,7 +425,7 @@ const Admin: React.FC<Props> = ({ user }) => {
           setExtraFeePeriod('');
           setExtraFeeAmount(0);
           setExtraFeeDesc('');
-          await loadAllUserLedgers();
+          await loadUsers();
       } catch (e) {
           console.error(e);
           showMessage("Error aplicando cuota extraordinaria", 'error');
@@ -484,11 +505,13 @@ const Admin: React.FC<Props> = ({ user }) => {
           setSyncing(true);
           let totalOps = 0;
           for (const u of filteredUsers) {
-              const ops = await dataService.syncUserDebts(u, priceHistory);
+              // Ensure user has the correct groupId for this lodge
+              const userWithGroup = { ...u, groupId: user.groupId };
+              const ops = await dataService.syncUserDebts(userWithGroup, priceHistory);
               totalOps += ops;
           }
           showMessage(`Sincronización completada: ${totalOps} registros generados`);
-          await loadAllUserLedgers();
+          await loadUsers();
       } catch (e) {
           console.error(e);
           showMessage("Error sincronizando deudas", 'error');
@@ -503,7 +526,11 @@ const Admin: React.FC<Props> = ({ user }) => {
               name: editingUserProfile.name,
               email: editingUserProfile.email,
               role: editingUserProfile.role,
-              masonicdegree: editingUserProfile.masonicdegree
+              degree: editingUserProfile.degree,
+              numericDegree: editingUserProfile.numericDegree,
+              lodgeRole: editingUserProfile.lodgeRole,
+              masonicJoinDate: editingUserProfile.masonicJoinDate,
+              masonicRejoinDate: editingUserProfile.masonicRejoinDate
           });
           showMessage("Perfil actualizado");
           setEditingUserProfile(null);
@@ -525,7 +552,7 @@ const Admin: React.FC<Props> = ({ user }) => {
           showMessage("Pago guardado");
           const payments = await dataService.getPayments(editingUserLedger);
           setEditPayments(payments);
-          await loadAllUserLedgers();
+          await loadUsers();
       } catch (e) {
           console.error(e);
           showMessage("Error guardando pago", 'error');
@@ -538,7 +565,7 @@ const Admin: React.FC<Props> = ({ user }) => {
           showMessage("Pago eliminado");
           const payments = await dataService.getPayments(editingUserLedger);
           setEditPayments(payments);
-          await loadAllUserLedgers();
+          await loadUsers();
       } catch (e) {
           console.error(e);
           showMessage("Error eliminando pago", 'error');
@@ -562,22 +589,90 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
   };
   const handleRecordAttendance = async () => {
-      if (isReadOnly || !attendanceUser || !mxTime) {
-          showMessage("Selecciona usuario y hora", 'error');
+      if (isReadOnly || attSelected.size === 0) {
+          showMessage("Selecciona al menos un usuario", 'error');
           return;
       }
       try {
-          const date = mxDate || new Date().toISOString().slice(0, 10);
-          const att: Attendance = { date, time: mxTime, recorded: new Date().toISOString() };
-          await dataService.recordAttendance(attendanceUser, att);
+          const date = attDate;
+          const uidsPresent = Array.from(attSelected);
+          await dataService.recordAttendance(date, uidsPresent);
           showMessage("Asistencia registrada");
-          setAttendanceUser('');
-          setMxTime('');
+          setAttSelected(new Set());
+          setAttDate(new Date().toISOString().split('T')[0]);
+          await loadAttendanceHistory();
           await loadUsers();
       } catch (e) {
           console.error(e);
           showMessage("Error registrando asistencia", 'error');
       }
+  };
+
+  // NOTICES HANDLERS
+  const handleSaveNotice = async () => {
+      if (isReadOnly || !newNoticeTitle || !newNoticeContent) {
+          showMessage("Completa título y contenido", 'error');
+          return;
+      }
+      try {
+          setIsSubmitting(true);
+          if (editingNotice) {
+              await dataService.updateNotice(user.groupId, editingNotice.id, {
+                  title: newNoticeTitle,
+                  content: newNoticeContent,
+                  date: new Date().toISOString().split('T')[0]
+              });
+              showMessage("Aviso actualizado");
+          } else {
+              await dataService.createNotice({
+                  groupId: user.groupId,
+                  title: newNoticeTitle,
+                  content: newNoticeContent,
+                  date: new Date().toISOString().split('T')[0]
+              });
+              showMessage("Aviso creado");
+          }
+          setNewNoticeTitle('');
+          setNewNoticeContent('');
+          setEditingNotice(null);
+          await loadNotices();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error guardando aviso", 'error');
+      } finally {
+          setIsSubmitting(false);
+      }
+  };
+
+  const handleEditNotice = (notice: Notice) => {
+      setEditingNotice(notice);
+      setNewNoticeTitle(notice.title);
+      setNewNoticeContent(notice.content);
+  };
+
+  const handleDeleteNotice = (id: string) => {
+      setDeletingNoticeId(id);
+      setShowDeleteNoticeModal(true);
+  };
+
+  const handleExecuteDeleteNotice = async () => {
+      if (!deletingNoticeId) return;
+      try {
+          await dataService.deleteNotice(user.groupId, deletingNoticeId);
+          showMessage("Aviso eliminado");
+          setShowDeleteNoticeModal(false);
+          setDeletingNoticeId(null);
+          await loadNotices();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error eliminando aviso", 'error');
+      }
+  };
+
+  const handleCancelEditNotice = () => {
+      setEditingNotice(null);
+      setNewNoticeTitle('');
+      setNewNoticeContent('');
   };
 
   // Dashboard Chart Calculation
@@ -642,6 +737,7 @@ const Admin: React.FC<Props> = ({ user }) => {
             {id: 'fees', label: 'Cuotas'},
             {id: 'attendance', label: 'Asistencia'},
             {id: 'trivia', label: 'Trivia'},
+            {id: 'notices', label: 'Avisos'},
             {id: 'treasury', label: 'Tesorería'}
         ].map((t) => (
           <button
@@ -1211,6 +1307,94 @@ const Admin: React.FC<Props> = ({ user }) => {
                      </button>
                  </div>
              </div>
+        )}
+
+        {activeTab === 'notices' && (
+             <div className="space-y-6">
+                <h3 className="text-lg font-bold text-white">Gestión de Avisos</h3>
+                
+                <div className="bg-logia-800 rounded-xl p-6 border border-logia-700 shadow-lg">
+                    <h4 className="text-md font-bold text-white mb-4">{editingNotice ? 'Editar Aviso' : 'Crear Nuevo Aviso'}</h4>
+                    
+                    <div className="space-y-3">
+                        <input 
+                            type="text" 
+                            placeholder="Título del Aviso" 
+                            value={newNoticeTitle}
+                            onChange={e => setNewNoticeTitle(e.target.value)}
+                            disabled={isReadOnly}
+                            className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white font-bold"
+                        />
+                        <textarea 
+                            placeholder="Contenido del Aviso..." 
+                            value={newNoticeContent}
+                            onChange={e => setNewNoticeContent(e.target.value)}
+                            disabled={isReadOnly}
+                            rows={5}
+                            className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
+                        />
+                        
+                        <div className="flex gap-3">
+                            <button 
+                                onClick={handleSaveNotice}
+                                disabled={isReadOnly || isSubmitting}
+                                className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded disabled:opacity-50"
+                            >
+                                {isSubmitting ? 'Guardando...' : (editingNotice ? 'Actualizar Aviso' : 'Crear Aviso')}
+                            </button>
+                            {editingNotice && (
+                                <button 
+                                    onClick={handleCancelEditNotice}
+                                    className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 rounded"
+                                >
+                                    Cancelar
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="bg-logia-800 rounded-xl border border-logia-700 shadow-lg overflow-hidden">
+                    <div className="p-4 border-b border-logia-700">
+                        <h4 className="font-bold text-white">Avisos Publicados</h4>
+                    </div>
+                    <div className="p-4 space-y-3">
+                        {notices.length === 0 ? (
+                            <p className="text-gray-400 text-center py-4">No hay avisos publicados</p>
+                        ) : (
+                            notices.map(notice => (
+                                <div key={notice.id} className="bg-logia-900 p-4 rounded border border-logia-700 flex flex-col gap-2">
+                                    <div className="flex justify-between items-start gap-2">
+                                        <div className="flex-1">
+                                            <h5 className="font-bold text-white text-lg">{notice.title}</h5>
+                                            <p className="text-xs text-gray-400">{notice.date}</p>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button 
+                                                onClick={() => handleEditNotice(notice)}
+                                                disabled={isReadOnly}
+                                                className="text-gray-400 hover:text-white p-2 bg-logia-800 rounded border border-logia-700"
+                                                title="Editar"
+                                            >
+                                                ✏️
+                                            </button>
+                                            <button 
+                                                onClick={() => handleDeleteNotice(notice.id)}
+                                                disabled={isReadOnly}
+                                                className="text-white p-2 bg-red-600 rounded border border-red-700 hover:bg-red-500"
+                                                title="Eliminar"
+                                            >
+                                                🗑️
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <p className="text-gray-300 text-sm whitespace-pre-wrap">{notice.content}</p>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            </div>
         )}
 
         {activeTab === 'treasury' && (
@@ -1869,6 +2053,33 @@ service cloud.firestore {
                   </div>
               </div>
           </div>
+      )}
+
+      {/* DELETE NOTICE CONFIRM MODAL */}
+      {showDeleteNoticeModal && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-6">
+            <div className="bg-logia-800 border border-red-500 p-6 rounded-xl max-w-sm w-full text-center shadow-2xl">
+                <div className="text-4xl mb-4">⚠️</div>
+                <h3 className="text-xl font-bold text-white mb-2">¿Eliminar Aviso?</h3>
+                <p className="text-gray-400 mb-6">
+                    Esta acción es irreversible.
+                </p>
+                <div className="flex gap-3">
+                    <button 
+                        onClick={() => setShowDeleteNoticeModal(false)}
+                        className="flex-1 py-3 bg-gray-700 text-white rounded font-bold"
+                    >
+                        Cancelar
+                    </button>
+                    <button 
+                        onClick={handleExecuteDeleteNotice}
+                        className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded font-bold"
+                    >
+                        Sí, Eliminar
+                    </button>
+                </div>
+            </div>
+        </div>
       )}
 
     </div>

@@ -13,11 +13,13 @@ const Dashboard: React.FC<Props> = ({ user }) => {
   useEffect(() => {
     const loadDebt = async () => {
         const payments = await dataService.getPayments(user.uid);
-        const debt = payments.reduce((acc, p) => acc + (p.amount - p.paid), 0);
+        // Filter only payments from the user's own group
+        const filtered = payments.filter(p => !p.groupId || p.groupId === user.groupId);
+        const debt = filtered.reduce((acc, p) => acc + (p.amount - p.paid), 0);
         setTotalDebt(debt);
     };
     loadDebt();
-  }, [user.uid]);
+  }, [user.uid, user.groupId]);
 
   const isMaster = user.role === 'master';
 

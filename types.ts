@@ -84,6 +84,7 @@ export interface Payment {
   status: 'Pendiente' | 'Parcial' | 'Pagado';
   comments: string;
   paymentDate?: string | null; // ISO Date
+  groupId?: string; // Logia/Group ID para filtrado
 }
 
 export interface PriceHistoryEntry {
