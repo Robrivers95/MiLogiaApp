@@ -619,18 +619,28 @@ export const dataService = {
     }
   },
   
-  getAttendanceListForDate: async (groupId: string, date: string): Promise<{name: string, attended: boolean}[]> => {
+  getAttendanceListForDate: async (groupId: string, date: string): Promise<{name: string, attended: boolean, uid: string}[]> => {
       const users = await dataService.getUsers(groupId);
-      const activeUsers = users.filter(u => u.active && u.groupId === groupId).sort((a,b) => a.name.localeCompare(b.name));
+      // Incluir usuarios que estaban activos en esa fecha según su masonicRejoinDate
+      const eligibleUsers = users.filter(u => {
+          if (!u.groupId || u.groupId !== groupId) return false;
+          // Si tiene fecha de reingreso, debe ser anterior o igual a la fecha consultada
+          if (u.masonicRejoinDate) {
+              return u.masonicRejoinDate <= date;
+          }
+          // Si no tiene fecha de reingreso pero está activo, incluirlo
+          return u.active;
+      }).sort((a,b) => a.name.localeCompare(b.name));
       
-      const results: {name: string, attended: boolean}[] = [];
+      const results: {name: string, attended: boolean, uid: string}[] = [];
       
-      for(const u of activeUsers) {
+      for(const u of eligibleUsers) {
           const ref = doc(db, "users", u.uid, "attendance", date);
           const snap = await getDoc(ref);
           results.push({
               name: u.name,
-              attended: snap.exists() && snap.data().attended === true
+              attended: snap.exists() && snap.data().attended === true,
+              uid: u.uid
           });
       }
       return results;
@@ -694,6 +704,11 @@ export const dataService = {
       });
     }
     await batch.commit();
+  },
+
+  deleteAttendance: async (uid: string, date: string) => {
+    const ref = doc(db, "users", uid, "attendance", date);
+    await deleteDoc(ref);
   },
 
   createTrivia: async (trivia: Omit<Trivia, 'id' | 'createdAt'>) => {

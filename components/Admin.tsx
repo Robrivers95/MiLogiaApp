@@ -60,7 +60,11 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [attSelected, setAttSelected] = useState<Set<string>>(new Set());
   const [attHistory, setAttHistory] = useState<string[]>([]);
   const [viewingAttDate, setViewingAttDate] = useState<string | null>(null);
-  const [attDetailList, setAttDetailList] = useState<{name: string, attended: boolean}[]>([]);
+  const [attDetailList, setAttDetailList] = useState<{name: string, attended: boolean, uid: string}[]>([]);
+  const [editingAttDate, setEditingAttDate] = useState<string | null>(null);
+  const [editAttSelected, setEditAttSelected] = useState<Set<string>>(new Set());
+  const [showDeleteAttModal, setShowDeleteAttModal] = useState(false);
+  const [deletingAttDate, setDeletingAttDate] = useState<string | null>(null);
 
   // Treasury State
   const [treasuryEntries, setTreasuryEntries] = useState<TreasuryEntry[]>([]);
@@ -630,6 +634,61 @@ const Admin: React.FC<Props> = ({ user }) => {
       } catch (e) {
           console.error(e);
           showMessage("Error registrando asistencia", 'error');
+      }
+  };
+
+  const handleEditAttendance = async (date: string) => {
+      setEditingAttDate(date);
+      try {
+          const list = await dataService.getAttendanceListForDate(user.groupId, date);
+          const presentUids = list.filter(item => item.attended).map(item => item.uid);
+          setEditAttSelected(new Set(presentUids));
+          setAttDetailList(list);
+      } catch (e) {
+          showMessage("Error cargando asistencia", 'error');
+      }
+  };
+
+  const handleSaveEditedAttendance = async () => {
+      if (isReadOnly || !editingAttDate) return;
+      try {
+          const uidsPresent = Array.from(editAttSelected);
+          await dataService.recordAttendance(editingAttDate, uidsPresent);
+          showMessage("Asistencia actualizada");
+          setEditingAttDate(null);
+          setEditAttSelected(new Set());
+          await loadAttendanceHistory();
+          await loadUsers();
+          if (viewingAttDate) {
+              await handleViewAttDetail(viewingAttDate);
+          }
+      } catch (e) {
+          console.error(e);
+          showMessage("Error actualizando asistencia", 'error');
+      }
+  };
+
+  const handleDeleteAttendance = (date: string) => {
+      setDeletingAttDate(date);
+      setShowDeleteAttModal(true);
+  };
+
+  const executeDeleteAttendance = async () => {
+      if (isReadOnly || !deletingAttDate) return;
+      try {
+          const list = await dataService.getAttendanceListForDate(user.groupId, deletingAttDate);
+          for (const item of list) {
+              await dataService.deleteAttendance(item.uid, deletingAttDate);
+          }
+          showMessage("Asistencia eliminada");
+          setShowDeleteAttModal(false);
+          setDeletingAttDate(null);
+          setViewingAttDate(null);
+          await loadAttendanceHistory();
+          await loadUsers();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error eliminando asistencia", 'error');
       }
   };
 
@@ -1655,6 +1714,102 @@ const Admin: React.FC<Props> = ({ user }) => {
                               )}
                           </tbody>
                       </table>
+                  </div>
+                  <div className="p-4 border-t border-logia-700 flex gap-2">
+                      <button
+                          onClick={() => {
+                              handleEditAttendance(viewingAttDate);
+                          }}
+                          className="flex-1 bg-indigo-700 hover:bg-indigo-600 text-white px-4 py-2 rounded font-semibold"
+                      >
+                          ✏️ Editar
+                      </button>
+                      <button
+                          onClick={() => handleDeleteAttendance(viewingAttDate)}
+                          className="flex-1 bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded font-semibold"
+                      >
+                          🗑️ Eliminar
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* EDIT ATTENDANCE MODAL */}
+      {editingAttDate && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+              <div className="bg-logia-800 w-full max-w-md rounded-xl border border-logia-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+                  <div className="p-4 border-b border-logia-700 flex justify-between items-center bg-logia-900">
+                      <h3 className="font-bold text-white">Editar Asistencia: <span className="text-indigo-400">{editingAttDate}</span></h3>
+                      <button onClick={() => setEditingAttDate(null)} className="text-gray-400 hover:text-white text-xl">×</button>
+                  </div>
+                  <div className="p-4 overflow-y-auto flex-1">
+                      <p className="text-gray-400 text-sm mb-4">Marca quiénes asistieron ese día:</p>
+                      <div className="space-y-2">
+                          {attDetailList.map((item) => (
+                              <label key={item.uid} className="flex items-center gap-3 p-2 rounded hover:bg-logia-700/50 cursor-pointer">
+                                  <input
+                                      type="checkbox"
+                                      checked={editAttSelected.has(item.uid)}
+                                      onChange={(e) => {
+                                          const newSet = new Set(editAttSelected);
+                                          if (e.target.checked) {
+                                              newSet.add(item.uid);
+                                          } else {
+                                              newSet.delete(item.uid);
+                                          }
+                                          setEditAttSelected(newSet);
+                                      }}
+                                      className="w-4 h-4"
+                                  />
+                                  <span className="text-white">{item.name}</span>
+                              </label>
+                          ))}
+                      </div>
+                  </div>
+                  <div className="p-4 border-t border-logia-700 flex gap-2">
+                      <button
+                          onClick={() => setEditingAttDate(null)}
+                          className="flex-1 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded font-semibold"
+                      >
+                          Cancelar
+                      </button>
+                      <button
+                          onClick={handleSaveEditedAttendance}
+                          className="flex-1 bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded font-semibold"
+                      >
+                          💾 Guardar
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* DELETE ATTENDANCE CONFIRMATION MODAL */}
+      {showDeleteAttModal && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+              <div className="bg-logia-800 w-full max-w-sm rounded-xl border border-red-700 shadow-2xl p-6">
+                  <h3 className="text-xl font-bold text-red-400 mb-4">⚠️ Confirmar Eliminación</h3>
+                  <p className="text-gray-300 mb-6">
+                      ¿Estás seguro que deseas eliminar el registro de asistencia del <span className="font-bold text-white">{deletingAttDate}</span>?
+                  </p>
+                  <p className="text-sm text-gray-400 mb-6">Esta acción no se puede deshacer.</p>
+                  <div className="flex gap-3">
+                      <button
+                          onClick={() => {
+                              setShowDeleteAttModal(false);
+                              setDeletingAttDate(null);
+                          }}
+                          className="flex-1 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded font-semibold"
+                      >
+                          Cancelar
+                      </button>
+                      <button
+                          onClick={executeDeleteAttendance}
+                          className="flex-1 bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded font-semibold"
+                      >
+                          Eliminar
+                      </button>
                   </div>
               </div>
           </div>
