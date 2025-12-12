@@ -155,6 +155,12 @@ export const dataService = {
     await updateDoc(ref, data);
   },
 
+  deleteGroup: async (groupId: string) => {
+    if (!groupId) return;
+    const ref = doc(db, "groups", groupId);
+    await deleteDoc(ref);
+  },
+
   getGroupDetails: async (groupId: string): Promise<Group | null> => {
     if (!groupId) return null;
     const snap = await getDoc(doc(db, "groups", groupId));
