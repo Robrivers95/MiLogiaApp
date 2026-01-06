@@ -10,12 +10,14 @@ service cloud.firestore {
     // Helper function to check if user is admin or master
     function isAdminOrMaster() {
       return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'master'];
     }
     
     // Helper function to check if user belongs to a group
     function belongsToGroup(groupId) {
       return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId;
     }
     
@@ -27,6 +29,8 @@ service cloud.firestore {
       allow read: if isAdminOrMaster();
       // Users can create their own profile (during registration)
       allow create: if isSignedIn() && request.auth.uid == userId;
+      // Users can update their own profile
+      allow update: if isSignedIn() && request.auth.uid == userId;
       // Admin/Master can update any user
       allow update: if isAdminOrMaster();
       // Admin/Master can delete users
@@ -44,8 +48,10 @@ service cloud.firestore {
       }
       
       match /triviaAnswers/{answerId} {
-        allow read, write: if isSignedIn() && 
-                              (request.auth.uid == userId || isAdminOrMaster());
+        // Users can read/write their own trivia answers
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+        // Admin/Master can also access
+        allow read, write: if isAdminOrMaster();
       }
     }
     
@@ -70,7 +76,7 @@ service cloud.firestore {
     
     // Trivias collection
     match /trivias/{triviaId} {
-      // Anyone can read trivias from their group
+      // Anyone authenticated can read trivias
       allow read: if isSignedIn();
       // Only admin/master can create/update/delete trivias
       allow write: if isAdminOrMaster();
@@ -78,8 +84,8 @@ service cloud.firestore {
     
     // Visit Requests collection
     match /visitRequests/{requestId} {
-      // Admin/Master can read all visit requests
-      allow read: if isAdminOrMaster();
+      // Anyone authenticated can read visit requests (to see their own)
+      allow read: if isSignedIn();
       // Admin/Master can create visit requests
       allow create: if isAdminOrMaster();
       // Admin/Master can update visit requests

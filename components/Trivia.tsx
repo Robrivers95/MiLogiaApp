@@ -38,13 +38,16 @@ const TriviaView: React.FC<Props> = ({ user }) => {
     if (selectedOption === null || !trivia) return;
     setSubmitting(true);
     try {
+      console.log("Submitting answer:", { uid: user.uid, triviaId: trivia.id, answerIndex: selectedOption });
       const result = await dataService.submitAnswer(user.uid, trivia.id, selectedOption);
+      console.log("Submit result:", result);
       setAnswer(result);
       // Refresh leaderboard
       const lb = await dataService.getLeaderboard(user.groupId);
       setLeaderboard(lb);
     } catch (e) {
-      console.error(e);
+      console.error("Error submitting answer:", e);
+      alert("Error al guardar respuesta: " + ((e as any)?.message || e));
     } finally {
       setSubmitting(false);
     }

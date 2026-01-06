@@ -754,6 +754,8 @@ export const dataService = {
   submitAnswer: async (uid: string, triviaId: string, answerIndex: number): Promise<TriviaAnswer> => {
     if (!uid || !triviaId) throw new Error("Missing uid or triviaId");
     
+    console.log("submitAnswer called with:", { uid, triviaId, answerIndex });
+    
     // Get the trivia to check correct answer
     const triviaQuery = query(collection(db, "trivias"), where("id", "==", triviaId), limit(1));
     const triviaSnap = await getDocs(triviaQuery);
@@ -763,6 +765,8 @@ export const dataService = {
     const trivia = triviaSnap.docs[0].data() as Trivia;
     const correct = answerIndex === trivia.correctIndex;
     const points = correct ? 10 : 0;
+
+    console.log("Answer evaluation:", { correct, points, correctIndex: trivia.correctIndex, answerIndex });
 
     const answer: TriviaAnswer = {
       uid,
@@ -774,15 +778,29 @@ export const dataService = {
     };
 
     // Save answer
-    const answerRef = doc(db, "users", uid, "triviaAnswers", triviaId);
-    await setDoc(answerRef, answer);
+    try {
+      const answerRef = doc(db, "users", uid, "triviaAnswers", triviaId);
+      console.log("Saving answer to:", answerRef.path);
+      await setDoc(answerRef, answer);
+      console.log("Answer saved successfully");
+    } catch (e) {
+      console.error("Error saving answer:", e);
+      throw new Error("Error guardando respuesta: " + ((e as any)?.message || e));
+    }
 
     // Update total points if correct
     if (correct) {
-      const userRef = doc(db, "users", uid);
-      await updateDoc(userRef, {
-        totalPoints: increment(points)
-      });
+      try {
+        const userRef = doc(db, "users", uid);
+        console.log("Updating totalPoints for user:", uid);
+        await updateDoc(userRef, {
+          totalPoints: increment(points)
+        });
+        console.log("Points updated successfully");
+      } catch (e) {
+        console.error("Error updating points:", e);
+        throw new Error("Error actualizando puntos: " + ((e as any)?.message || e));
+      }
     }
 
     return answer;
