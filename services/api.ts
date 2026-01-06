@@ -792,6 +792,7 @@ export const dataService = {
     try {
       let q;
       if (groupId) {
+        // Try with groupId filter first
         q = query(
           collection(db, "users"),
           where("groupId", "==", groupId),
@@ -814,6 +815,28 @@ export const dataService = {
       });
     } catch (e) {
       console.error("Error fetching leaderboard", e);
+      // If composite index error, try without groupId filter
+      if (groupId && (e as any)?.message?.includes('index')) {
+        console.warn("Composite index missing, fetching all users");
+        try {
+          const q = query(
+            collection(db, "users"),
+            where("totalPoints", ">", 0),
+            orderBy("totalPoints", "desc"),
+            limit(10)
+          );
+          const snapshot = await getDocs(q);
+          const allUsers = snapshot.docs.map(d => {
+            const data = d.data() as User;
+            return { name: data.name, points: data.totalPoints || 0, groupId: data.groupId };
+          });
+          // Filter by groupId locally
+          return allUsers.filter(u => u.groupId === groupId).map(u => ({name: u.name, points: u.points}));
+        } catch (e2) {
+          console.error("Fallback also failed", e2);
+          return [];
+        }
+      }
       return [];
     }
   },
@@ -909,14 +932,23 @@ export const dataService = {
 
   // VISIT REQUESTS
   createVisitRequest: async (request: Omit<VisitRequest, 'id' | 'createdAt' | 'messages'>) => {
-    const ref = doc(collection(db, "visitRequests"));
-    await setDoc(ref, {
-      ...request,
-      id: ref.id,
-      createdAt: Date.now(),
-      messages: []
-    });
-    return ref.id;
+    try {
+      const ref = doc(collection(db, "visitRequests"));
+      await setDoc(ref, {
+        ...request,
+        id: ref.id,
+        createdAt: Date.now(),
+        messages: []
+      });
+      return ref.id;
+    } catch (e) {
+      console.error("Error creating visit request:", e);
+      const errorMsg = (e as any)?.message || '';
+      if (errorMsg.includes('permission') || errorMsg.includes('Missing or insufficient')) {
+        throw new Error("Error de permisos: Contacta al administrador para configurar las reglas de Firestore");
+      }
+      throw e;
+    }
   },
 
   getVisitRequestsForGroup: async (groupId: string): Promise<VisitRequest[]> => {

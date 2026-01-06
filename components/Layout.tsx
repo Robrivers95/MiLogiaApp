@@ -22,11 +22,6 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
     { id: 'trivia', label: 'Trivia', icon: '❓' },
   ];
 
-  // Add visits tab only for admin and master
-  if (user.role === 'admin' || user.role === 'master') {
-    navItems.push({ id: 'visits', label: 'Visitas', icon: '✈️' });
-  }
-
   if (user.role === 'admin' || user.role === 'viewer' || user.role === 'master') {
     navItems.push({ id: 'admin', label: 'Admin', icon: '⚙️' });
   }
@@ -69,7 +64,7 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
 
       {/* Version Indicator */}
       <div className="fixed bottom-20 left-2 text-[10px] text-gray-600 font-mono bg-logia-900/80 px-2 py-1 rounded border border-logia-700/50 z-10">
-        v2.1.0
+        v2.2.0
       </div>
 
       {/* Bottom Nav (Mobile First) */}

@@ -479,8 +479,25 @@ const Admin: React.FC<Props> = ({ user }) => {
           const quotas = await dataService.getDetailedQuotaTransactions(user.groupId!);
           const combined = [...entries, ...quotas].sort((a, b) => b.date.localeCompare(a.date));
           
-          const csv = "Fecha,Tipo,Categoría,Descripción,Monto\n" +
-              combined.map(e => `${e.date},"${e.type}","${e.category}","${e.description}",${e.amount}`).join('\n');
+          // Build CSV with multiple rows per entry if it has multiple allocations
+          const csvRows: string[] = ["Fecha,Tipo,Categoría,Descripción,Monto,Origen/Destino Fondos,Monto Asignado"];
+          
+          combined.forEach(e => {
+              const baseInfo = `${e.date},"${e.type}","${e.category}","${e.description}",${e.amount}`;
+              
+              // Check if entry has allocations
+              if (e.allocations && e.allocations.length > 0) {
+                  // Create one row per allocation
+                  e.allocations.forEach(alloc => {
+                      csvRows.push(`${baseInfo},"${alloc.source}",${alloc.amount}`);
+                  });
+              } else {
+                  // No allocations, just add a single row with empty allocation columns
+                  csvRows.push(`${baseInfo},"N/A",0`);
+              }
+          });
+          
+          const csv = csvRows.join('\n');
           
           const blob = new Blob([csv], { type: 'text/csv' });
           const url = URL.createObjectURL(blob);

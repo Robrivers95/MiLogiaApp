@@ -121,7 +121,6 @@ const App: React.FC = () => {
       {view === 'attendance' && <Attendance user={activeUserContext} />}
       {/* {view === 'rpg' && <RPG user={activeUserContext} onUpdateUser={() => {}} />} */}
       {view === 'trivia' && <Trivia user={activeUserContext} />}
-      {view === 'visits' && (activeUserContext.role === 'admin' || activeUserContext.role === 'master') && <Visits user={activeUserContext} />}
       {view === 'profile' && <Profile user={activeUserContext} />}
       {view === 'admin' && isAdminOrViewer && <Admin user={activeUserContext} />}
       

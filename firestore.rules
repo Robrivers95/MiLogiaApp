@@ -1,0 +1,91 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user is admin or master
+    function isAdminOrMaster() {
+      return isSignedIn() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'master'];
+    }
+    
+    // Helper function to check if user belongs to a group
+    function belongsToGroup(groupId) {
+      return isSignedIn() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId;
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // Anyone can read their own profile
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      // Admin/Master can read all users
+      allow read: if isAdminOrMaster();
+      // Users can create their own profile (during registration)
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      // Admin/Master can update any user
+      allow update: if isAdminOrMaster();
+      // Admin/Master can delete users
+      allow delete: if isAdminOrMaster();
+      
+      // Subcollections
+      match /ledger/{ledgerId} {
+        allow read, write: if isSignedIn() && 
+                              (request.auth.uid == userId || isAdminOrMaster());
+      }
+      
+      match /attendance/{attendanceId} {
+        allow read, write: if isSignedIn() && 
+                              (request.auth.uid == userId || isAdminOrMaster());
+      }
+      
+      match /triviaAnswers/{answerId} {
+        allow read, write: if isSignedIn() && 
+                              (request.auth.uid == userId || isAdminOrMaster());
+      }
+    }
+    
+    // Groups collection
+    match /groups/{groupId} {
+      // Anyone authenticated can read groups (for selecting during registration)
+      allow read: if isSignedIn();
+      // Only admin/master can create/update/delete groups
+      allow write: if isAdminOrMaster();
+      
+      // Subcollections
+      match /treasury/{entryId} {
+        allow read: if belongsToGroup(groupId) || isAdminOrMaster();
+        allow write: if isAdminOrMaster();
+      }
+      
+      match /notices/{noticeId} {
+        allow read: if belongsToGroup(groupId) || isAdminOrMaster();
+        allow write: if isAdminOrMaster();
+      }
+    }
+    
+    // Trivias collection
+    match /trivias/{triviaId} {
+      // Anyone can read trivias from their group
+      allow read: if isSignedIn();
+      // Only admin/master can create/update/delete trivias
+      allow write: if isAdminOrMaster();
+    }
+    
+    // Visit Requests collection
+    match /visitRequests/{requestId} {
+      // Admin/Master can read all visit requests
+      allow read: if isAdminOrMaster();
+      // Admin/Master can create visit requests
+      allow create: if isAdminOrMaster();
+      // Admin/Master can update visit requests
+      allow update: if isAdminOrMaster();
+      // Admin/Master can delete visit requests
+      allow delete: if isAdminOrMaster();
+    }
+  }
+}
