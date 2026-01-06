@@ -62,6 +62,11 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
         {children}
       </main>
 
+      {/* Version Indicator */}
+      <div className="fixed bottom-20 left-2 text-[10px] text-gray-600 font-mono bg-logia-900/80 px-2 py-1 rounded border border-logia-700/50 z-10">
+        v2.0.0
+      </div>
+
       {/* Bottom Nav (Mobile First) */}
       <nav className="fixed bottom-0 left-0 w-full bg-logia-800 border-t border-logia-700 pb-safe z-30 overflow-x-auto">
         <div className="max-w-3xl mx-auto flex justify-between items-center h-16 min-w-[350px]">

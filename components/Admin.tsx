@@ -1,13 +1,15 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, Payment, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice } from '../types';
+import { User, Payment, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Trivia, VisitRequest, Group } from '../types';
 import { dataService, generateTriviaWithAI } from '../services/api';
+import { doc, deleteDoc } from 'firebase/firestore';
+import { db } from '../services/firebase';
 
 interface Props {
   user: User;
 }
 
-type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'notices';
+type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'notices' | 'visits';
 
 const Admin: React.FC<Props> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
@@ -54,6 +56,9 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [triviaOpts, setTriviaOpts] = useState(['', '', '', '']);
   const [triviaCorrect, setTriviaCorrect] = useState(0);
   const [aiLoading, setAiLoading] = useState(false);
+  const [allTrivias, setAllTrivias] = useState<Trivia[]>([]);
+  const [showDeleteTriviaModal, setShowDeleteTriviaModal] = useState(false);
+  const [deletingTriviaId, setDeletingTriviaId] = useState<string | null>(null);
 
   // Attendance State
   const [attDate, setAttDate] = useState(new Date().toISOString().split('T')[0]);
@@ -92,6 +97,18 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [editingNotice, setEditingNotice] = useState<Notice | null>(null);
   const [deletingNoticeId, setDeletingNoticeId] = useState<string | null>(null);
   const [showDeleteNoticeModal, setShowDeleteNoticeModal] = useState(false);
+
+  // Visit Requests State
+  const [visitRequests, setVisitRequests] = useState<VisitRequest[]>([]);
+  const [allGroups, setAllGroups] = useState<Group[]>([]);
+  const [newVisitToGroupId, setNewVisitToGroupId] = useState('');
+  const [newVisitDate, setNewVisitDate] = useState('');
+  const [newVisitCount, setNewVisitCount] = useState(1);
+  const [newVisitMessage, setNewVisitMessage] = useState('');
+  const [viewingVisitRequest, setViewingVisitRequest] = useState<VisitRequest | null>(null);
+  const [newChatMessage, setNewChatMessage] = useState('');
+  const [deletingVisitId, setDeletingVisitId] = useState<string | null>(null);
+  const [showDeleteVisitModal, setShowDeleteVisitModal] = useState(false);
 
   // Modals
   const [editingUserLedger, setEditingUserLedger] = useState<string | null>(null);
@@ -133,6 +150,13 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
       if (activeTab === 'notices') {
           loadNotices();
+      }
+      if (activeTab === 'trivia') {
+          loadTrivias();
+      }
+      if (activeTab === 'visits') {
+          loadVisits();
+          loadAllGroups();
       }
   }, [activeTab, dashboardStart, dashboardEnd]);
 
@@ -256,6 +280,35 @@ const Admin: React.FC<Props> = ({ user }) => {
       } catch (e) {
           console.error("Error cargando avisos", e);
           showMessage("Error cargando avisos", 'error');
+      }
+  };
+
+  const loadTrivias = async () => {
+      try {
+          const data = await dataService.getAllTrivias(user.groupId);
+          setAllTrivias(data);
+      } catch (e) {
+          console.error("Error cargando trivias", e);
+          showMessage("Error cargando trivias", 'error');
+      }
+  };
+
+  const loadVisits = async () => {
+      try {
+          const data = await dataService.getVisitRequestsForGroup(user.groupId);
+          setVisitRequests(data);
+      } catch (e) {
+          console.error("Error cargando solicitudes de visita", e);
+          showMessage("Error cargando solicitudes de visita", 'error');
+      }
+  };
+
+  const loadAllGroups = async () => {
+      try {
+          const data = await dataService.getAllGroups();
+          setAllGroups(data);
+      } catch (e) {
+          console.error("Error cargando logias", e);
       }
   };
   
@@ -759,6 +812,151 @@ const Admin: React.FC<Props> = ({ user }) => {
       setNewNoticeContent('');
   };
 
+  // TRIVIA HANDLERS
+  const handleDeleteTrivia = (triviaId: string) => {
+      setDeletingTriviaId(triviaId);
+      setShowDeleteTriviaModal(true);
+  };
+
+  const handleExecuteDeleteTrivia = async () => {
+      if (!deletingTriviaId) return;
+      try {
+          await dataService.deleteTrivia(deletingTriviaId);
+          showMessage("Trivia eliminada");
+          setShowDeleteTriviaModal(false);
+          setDeletingTriviaId(null);
+          await loadTrivias();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error eliminando trivia", 'error');
+      }
+  };
+
+  const handleResetAllAnswers = async () => {
+      if (!confirm('¿Estás seguro de resetear TODAS las respuestas de trivia para todos los usuarios? Esta acción no se puede deshacer.')) {
+          return;
+      }
+      try {
+          await dataService.resetAllTriviaAnswers(user.groupId);
+          showMessage("Respuestas de trivia reseteadas para todos los usuarios");
+      } catch (e) {
+          console.error(e);
+          showMessage("Error reseteando respuestas", 'error');
+      }
+  };
+
+  const handleRejectUser = async (uid: string) => {
+      if (!confirm('¿Estás seguro de rechazar esta solicitud? El usuario será eliminado del sistema.')) {
+          return;
+      }
+      try {
+          // Delete user document from Firestore
+          await deleteDoc(doc(db, "users", uid));
+          showMessage("Solicitud rechazada y usuario eliminado");
+          await loadUsers();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error rechazando solicitud", 'error');
+      }
+  };
+
+  // VISIT REQUESTS HANDLERS
+  const handleCreateVisitRequest = async () => {
+      if (isReadOnly || !newVisitToGroupId || !newVisitDate || newVisitCount < 1 || !newVisitMessage) {
+          showMessage("Completa todos los campos", 'error');
+          return;
+      }
+      try {
+          const currentGroup = await dataService.getGroupDetails(user.groupId);
+          const targetGroup = allGroups.find(g => g.id === newVisitToGroupId);
+          
+          if (!currentGroup || !targetGroup) {
+              showMessage("Error obteniendo información de logias", 'error');
+              return;
+          }
+
+          await dataService.createVisitRequest({
+              fromGroupId: user.groupId,
+              fromGroupName: currentGroup.name,
+              toGroupId: newVisitToGroupId,
+              toGroupName: targetGroup.name,
+              requestedBy: user.uid,
+              requestedByName: user.name,
+              visitDate: newVisitDate,
+              numberOfVisitors: newVisitCount,
+              message: newVisitMessage,
+              status: 'pending'
+          });
+
+          showMessage("Solicitud de visita enviada");
+          setNewVisitToGroupId('');
+          setNewVisitDate('');
+          setNewVisitCount(1);
+          setNewVisitMessage('');
+          await loadVisits();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error creando solicitud", 'error');
+      }
+  };
+
+  const handleUpdateVisitStatus = async (requestId: string, status: 'accepted' | 'rejected' | 'completed') => {
+      if (isReadOnly) return;
+      try {
+          await dataService.updateVisitRequestStatus(requestId, status);
+          showMessage(`Solicitud ${status === 'accepted' ? 'aceptada' : status === 'rejected' ? 'rechazada' : 'completada'}`);
+          await loadVisits();
+          if (viewingVisitRequest && viewingVisitRequest.id === requestId) {
+              setViewingVisitRequest(null);
+          }
+      } catch (e) {
+          console.error(e);
+          showMessage("Error actualizando estado", 'error');
+      }
+  };
+
+  const handleSendVisitMessage = async () => {
+      if (!viewingVisitRequest || !newChatMessage.trim()) return;
+      try {
+          await dataService.addMessageToVisitRequest(viewingVisitRequest.id, {
+              senderId: user.uid,
+              senderName: user.name,
+              text: newChatMessage
+          });
+          setNewChatMessage('');
+          // Reload the specific request
+          const updated = await dataService.getVisitRequestsForGroup(user.groupId);
+          const updatedRequest = updated.find(r => r.id === viewingVisitRequest.id);
+          if (updatedRequest) {
+              setViewingVisitRequest(updatedRequest);
+          }
+          await loadVisits();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error enviando mensaje", 'error');
+      }
+  };
+
+  const handleDeleteVisit = (requestId: string) => {
+      setDeletingVisitId(requestId);
+      setShowDeleteVisitModal(true);
+  };
+
+  const handleExecuteDeleteVisit = async () => {
+      if (!deletingVisitId) return;
+      try {
+          await dataService.deleteVisitRequest(deletingVisitId);
+          showMessage("Solicitud eliminada");
+          setShowDeleteVisitModal(false);
+          setDeletingVisitId(null);
+          setViewingVisitRequest(null);
+          await loadVisits();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error eliminando solicitud", 'error');
+      }
+  };
+
   // Dashboard Chart Calculation
   const dbInc = Number(dashboardData.income) || 0;
   const dbExp = Number(dashboardData.expense) || 0;
@@ -822,7 +1020,8 @@ const Admin: React.FC<Props> = ({ user }) => {
             {id: 'attendance', label: 'Asistencia'},
             {id: 'trivia', label: 'Trivia'},
             {id: 'notices', label: 'Avisos'},
-            {id: 'treasury', label: 'Tesorería'}
+            {id: 'treasury', label: 'Tesorería'},
+            {id: 'visits', label: 'Visitas'}
         ].map((t) => (
           <button
             key={t.id}
@@ -967,6 +1166,13 @@ const Admin: React.FC<Props> = ({ user }) => {
                                         className="bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-6 rounded shadow-lg transform active:scale-95 transition-all"
                                     >
                                         ✅ Dar Entrada
+                                    </button>
+                                    <button 
+                                        onClick={() => handleRejectUser(u.uid)}
+                                        disabled={isReadOnly}
+                                        className="bg-red-600 hover:bg-red-500 text-white font-bold py-3 px-6 rounded shadow-lg transform active:scale-95 transition-all disabled:opacity-50"
+                                    >
+                                        ❌ Rechazar
                                     </button>
                                 </div>
                             </div>
@@ -1302,93 +1508,146 @@ const Admin: React.FC<Props> = ({ user }) => {
         )}
 
         {activeTab === 'trivia' && (
-             <div className="bg-logia-800 rounded-xl p-6 border border-logia-700 shadow-lg space-y-4">
-                 <h3 className="text-lg font-bold text-white mb-4">Nueva Trivia Semanal</h3>
-                 
-                 <div className="space-y-3">
-                     <input 
-                        type="text" 
-                        placeholder="Pregunta" 
-                        value={triviaQ}
-                        onChange={e => setTriviaQ(e.target.value)}
-                        disabled={isReadOnly}
-                        className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
-                     />
-                     {triviaOpts.map((opt, idx) => (
-                         <div key={idx} className="flex gap-2 items-center">
-                             <input 
-                                type="radio" 
-                                name="correctOpt" 
-                                checked={triviaCorrect === idx}
-                                onChange={() => setTriviaCorrect(idx)}
-                                disabled={isReadOnly}
-                                className="w-4 h-4 accent-green-500"
-                             />
-                             <input 
-                                type="text" 
-                                placeholder={`Opción ${idx + 1}`}
-                                value={opt}
-                                onChange={e => {
-                                    const newOpts = [...triviaOpts];
-                                    newOpts[idx] = e.target.value;
-                                    setTriviaOpts(newOpts);
-                                }}
-                                disabled={isReadOnly}
-                                className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-sm"
-                             />
-                         </div>
-                     ))}
-                 </div>
-                 
-                 <div className="flex gap-4 mt-4">
-                     <button 
-                        onClick={async () => {
-                            if (isReadOnly) return;
-                            setAiLoading(true);
-                            try {
-                                const aiData = await generateTriviaWithAI();
-                                if (aiData.question) setTriviaQ(aiData.question);
-                                if (aiData.options) setTriviaOpts(aiData.options);
-                                if (typeof aiData.correctIndex === 'number') setTriviaCorrect(aiData.correctIndex);
-                            } catch (e) {
-                                showMessage('Error generando con IA', 'error');
-                            } finally {
-                                setAiLoading(false);
-                            }
-                        }}
-                        disabled={aiLoading || isReadOnly}
-                        className="flex-1 bg-purple-700 hover:bg-purple-600 text-white font-bold py-3 rounded disabled:opacity-50"
-                     >
-                        {aiLoading ? '✨ Generando...' : '✨ Generar con IA'}
-                     </button>
+             <div className="space-y-6">
+                 <h3 className="text-lg font-bold text-white">Gestión de Trivia</h3>
+
+                 <div className="bg-logia-800 rounded-xl p-6 border border-logia-700 shadow-lg space-y-4">
+                     <h4 className="text-md font-bold text-white mb-4">Nueva Trivia Semanal</h4>
                      
-                     <button 
-                        onClick={async () => {
-                            if (isReadOnly) return;
-                            if (!triviaQ || triviaOpts.some(o => !o)) {
-                                showMessage('Completa todos los campos', 'error');
-                                return;
-                            }
-                            try {
-                                await dataService.createTrivia({
-                                    groupId: user.groupId,
-                                    week: new Date().toISOString().slice(0, 10), // Simple week ID
-                                    question: triviaQ,
-                                    options: triviaOpts,
-                                    correctIndex: triviaCorrect
-                                });
-                                showMessage('Trivia publicada!');
-                                setTriviaQ('');
-                                setTriviaOpts(['','','','']);
-                            } catch (e) {
-                                showMessage('Error publicando', 'error');
-                            }
-                        }}
-                        disabled={isReadOnly}
-                        className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded disabled:opacity-50"
-                     >
-                        Publicar Trivia
-                     </button>
+                     <div className="space-y-3">
+                         <input 
+                            type="text" 
+                            placeholder="Pregunta" 
+                            value={triviaQ}
+                            onChange={e => setTriviaQ(e.target.value)}
+                            disabled={isReadOnly}
+                            className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
+                         />
+                         {triviaOpts.map((opt, idx) => (
+                             <div key={idx} className="flex gap-2 items-center">
+                                 <input 
+                                    type="radio" 
+                                    name="correctOpt" 
+                                    checked={triviaCorrect === idx}
+                                    onChange={() => setTriviaCorrect(idx)}
+                                    disabled={isReadOnly}
+                                    className="w-4 h-4 accent-green-500"
+                                 />
+                                 <input 
+                                    type="text" 
+                                    placeholder={`Opción ${idx + 1}`}
+                                    value={opt}
+                                    onChange={e => {
+                                        const newOpts = [...triviaOpts];
+                                        newOpts[idx] = e.target.value;
+                                        setTriviaOpts(newOpts);
+                                    }}
+                                    disabled={isReadOnly}
+                                    className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-sm"
+                                 />
+                             </div>
+                         ))}
+                     </div>
+                     
+                     <div className="flex gap-4 mt-4">
+                         <button 
+                            onClick={async () => {
+                                if (isReadOnly) return;
+                                setAiLoading(true);
+                                try {
+                                    const aiData = await generateTriviaWithAI();
+                                    if (aiData.question) setTriviaQ(aiData.question);
+                                    if (aiData.options) setTriviaOpts(aiData.options);
+                                    if (typeof aiData.correctIndex === 'number') setTriviaCorrect(aiData.correctIndex);
+                                } catch (e) {
+                                    showMessage('Error generando con IA', 'error');
+                                } finally {
+                                    setAiLoading(false);
+                                }
+                            }}
+                            disabled={aiLoading || isReadOnly}
+                            className="flex-1 bg-purple-700 hover:bg-purple-600 text-white font-bold py-3 rounded disabled:opacity-50"
+                         >
+                            {aiLoading ? '✨ Generando...' : '✨ Generar con IA'}
+                         </button>
+                         
+                         <button 
+                            onClick={async () => {
+                                if (isReadOnly) return;
+                                if (!triviaQ || triviaOpts.some(o => !o)) {
+                                    showMessage('Completa todos los campos', 'error');
+                                    return;
+                                }
+                                try {
+                                    await dataService.createTrivia({
+                                        groupId: user.groupId,
+                                        week: new Date().toISOString().slice(0, 10), // Simple week ID
+                                        question: triviaQ,
+                                        options: triviaOpts,
+                                        correctIndex: triviaCorrect
+                                    });
+                                    showMessage('Trivia publicada!');
+                                    setTriviaQ('');
+                                    setTriviaOpts(['','','','']);
+                                    await loadTrivias();
+                                } catch (e) {
+                                    showMessage('Error publicando', 'error');
+                                }
+                            }}
+                            disabled={isReadOnly}
+                            className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded disabled:opacity-50"
+                         >
+                            Publicar Trivia
+                         </button>
+                     </div>
+                 </div>
+
+                 {/* Trivia Management Section */}
+                 <div className="bg-logia-800 rounded-xl border border-logia-700 shadow-lg overflow-hidden">
+                     <div className="p-4 border-b border-logia-700 flex justify-between items-center">
+                         <h4 className="font-bold text-white">Trivias Publicadas</h4>
+                         <button 
+                             onClick={handleResetAllAnswers}
+                             disabled={isReadOnly}
+                             className="bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold px-3 py-2 rounded disabled:opacity-50"
+                             title="Resetear todas las respuestas de todos los usuarios (Nuevo Periodo/Temporada)"
+                         >
+                             🔄 Resetear Temporada
+                         </button>
+                     </div>
+                     <div className="p-4 space-y-3">
+                         {allTrivias.length === 0 ? (
+                             <p className="text-gray-400 text-center py-4">No hay trivias publicadas</p>
+                         ) : (
+                             allTrivias.map(trivia => (
+                                 <div key={trivia.id} className="bg-logia-900 p-4 rounded border border-logia-700 flex flex-col gap-2">
+                                     <div className="flex justify-between items-start gap-2">
+                                         <div className="flex-1">
+                                             <h5 className="font-bold text-white text-lg">{trivia.question}</h5>
+                                             <p className="text-xs text-gray-400 mb-2">{trivia.week}</p>
+                                             <div className="space-y-1 text-sm">
+                                                 {trivia.options.map((opt, idx) => (
+                                                     <div key={idx} className={`${idx === trivia.correctIndex ? 'text-green-400 font-bold' : 'text-gray-400'}`}>
+                                                         {String.fromCharCode(65 + idx)}. {opt} {idx === trivia.correctIndex && '✓'}
+                                                     </div>
+                                                 ))}
+                                             </div>
+                                         </div>
+                                         <div className="flex gap-2">
+                                             <button 
+                                                 onClick={() => handleDeleteTrivia(trivia.id)}
+                                                 disabled={isReadOnly}
+                                                 className="text-white p-2 bg-red-600 rounded border border-red-700 hover:bg-red-500"
+                                                 title="Eliminar Trivia"
+                                             >
+                                                 🗑️
+                                             </button>
+                                         </div>
+                                     </div>
+                                 </div>
+                             ))
+                         )}
+                     </div>
                  </div>
              </div>
         )}
@@ -1681,7 +1940,224 @@ const Admin: React.FC<Props> = ({ user }) => {
             </div>
         )}
 
+        {/* --- VISITS TAB (SOLICITUDES DE VISITA) --- */}
+        {activeTab === 'visits' && (
+            <div className="space-y-6">
+                <h3 className="text-lg font-bold text-white">Solicitudes de Visita entre Logias</h3>
+                
+                {/* Create New Visit Request */}
+                <div className="bg-logia-800 rounded-xl p-6 border border-logia-700 shadow-lg">
+                    <h4 className="text-md font-bold text-white mb-4">Solicitar Visita a otra Logia</h4>
+                    <div className="space-y-3">
+                        <div>
+                            <label className="text-xs text-gray-400 uppercase block mb-1">Logia a Visitar</label>
+                            <select 
+                                value={newVisitToGroupId}
+                                onChange={e => setNewVisitToGroupId(e.target.value)}
+                                disabled={isReadOnly}
+                                className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
+                            >
+                                <option value="">Seleccionar Logia...</option>
+                                {allGroups.filter(g => g.id !== user.groupId).map(g => (
+                                    <option key={g.id} value={g.id}>{g.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="text-xs text-gray-400 uppercase block mb-1">Fecha de Visita</label>
+                                <input 
+                                    type="date"
+                                    value={newVisitDate}
+                                    onChange={e => setNewVisitDate(e.target.value)}
+                                    disabled={isReadOnly}
+                                    className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-xs text-gray-400 uppercase block mb-1">Número de Visitantes</label>
+                                <input 
+                                    type="number"
+                                    min="1"
+                                    value={newVisitCount}
+                                    onChange={e => setNewVisitCount(Number(e.target.value))}
+                                    disabled={isReadOnly}
+                                    className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-xs text-gray-400 uppercase block mb-1">Mensaje / Detalles</label>
+                            <textarea 
+                                value={newVisitMessage}
+                                onChange={e => setNewVisitMessage(e.target.value)}
+                                disabled={isReadOnly}
+                                rows={3}
+                                placeholder="Escribe detalles de la visita..."
+                                className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
+                            />
+                        </div>
+                        <button 
+                            onClick={handleCreateVisitRequest}
+                            disabled={isReadOnly || isSubmitting}
+                            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded disabled:opacity-50"
+                        >
+                            Enviar Solicitud
+                        </button>
+                    </div>
+                </div>
+
+                {/* Visit Requests List */}
+                <div className="bg-logia-800 rounded-xl border border-logia-700 shadow-lg overflow-hidden">
+                    <div className="p-4 border-b border-logia-700">
+                        <h4 className="font-bold text-white">Historial de Solicitudes</h4>
+                    </div>
+                    <div className="p-4 space-y-3">
+                        {visitRequests.length === 0 ? (
+                            <p className="text-gray-400 text-center py-4">No hay solicitudes de visita</p>
+                        ) : (
+                            visitRequests.map(request => {
+                                const isReceived = request.toGroupId === user.groupId;
+                                const isSent = request.fromGroupId === user.groupId;
+                                
+                                return (
+                                    <div key={request.id} className={`bg-logia-900 p-4 rounded border ${
+                                        request.status === 'pending' ? 'border-yellow-500' :
+                                        request.status === 'accepted' ? 'border-green-500' :
+                                        request.status === 'rejected' ? 'border-red-500' :
+                                        'border-gray-700'
+                                    }`}>
+                                        <div className="flex justify-between items-start gap-2">
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-2 mb-2">
+                                                    <span className={`text-xs px-2 py-1 rounded ${
+                                                        request.status === 'pending' ? 'bg-yellow-900/50 text-yellow-400' :
+                                                        request.status === 'accepted' ? 'bg-green-900/50 text-green-400' :
+                                                        request.status === 'rejected' ? 'bg-red-900/50 text-red-400' :
+                                                        'bg-gray-700 text-gray-400'
+                                                    }`}>
+                                                        {request.status === 'pending' ? '⏳ Pendiente' :
+                                                         request.status === 'accepted' ? '✅ Aceptada' :
+                                                         request.status === 'rejected' ? '❌ Rechazada' :
+                                                         '✔️ Completada'}
+                                                    </span>
+                                                    <span className="text-xs text-gray-500">
+                                                        {isReceived ? `📥 Recibida de` : `📤 Enviada a`}
+                                                    </span>
+                                                </div>
+                                                <h5 className="font-bold text-white text-lg">
+                                                    {isReceived ? request.fromGroupName : request.toGroupName}
+                                                </h5>
+                                                <p className="text-sm text-gray-400">Fecha: {request.visitDate}</p>
+                                                <p className="text-sm text-gray-400">Visitantes: {request.numberOfVisitors}</p>
+                                                <p className="text-sm text-gray-300 mt-2">{request.message}</p>
+                                                <p className="text-xs text-gray-500 mt-1">Por: {request.requestedByName}</p>
+                                            </div>
+                                            <div className="flex gap-2 flex-col">
+                                                <button 
+                                                    onClick={() => setViewingVisitRequest(request)}
+                                                    className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded"
+                                                >
+                                                    💬 Ver Chat
+                                                </button>
+                                                {isReceived && request.status === 'pending' && !isReadOnly && (
+                                                    <>
+                                                        <button 
+                                                            onClick={() => handleUpdateVisitStatus(request.id, 'accepted')}
+                                                            className="text-xs bg-green-600 hover:bg-green-500 text-white px-3 py-2 rounded"
+                                                        >
+                                                            ✅ Aceptar
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => handleUpdateVisitStatus(request.id, 'rejected')}
+                                                            className="text-xs bg-red-600 hover:bg-red-500 text-white px-3 py-2 rounded"
+                                                        >
+                                                            ❌ Rechazar
+                                                        </button>
+                                                    </>
+                                                )}
+                                                {request.status === 'accepted' && !isReadOnly && (
+                                                    <button 
+                                                        onClick={() => handleUpdateVisitStatus(request.id, 'completed')}
+                                                        className="text-xs bg-gray-600 hover:bg-gray-500 text-white px-3 py-2 rounded"
+                                                    >
+                                                        ✔️ Completada
+                                                    </button>
+                                                )}
+                                                {(request.status === 'completed' || request.status === 'rejected') && !isReadOnly && (
+                                                    <button 
+                                                        onClick={() => handleDeleteVisit(request.id)}
+                                                        className="text-xs bg-red-600 hover:bg-red-500 text-white px-3 py-2 rounded"
+                                                    >
+                                                        🗑️ Eliminar
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
+                </div>
+            </div>
+        )}
+
       </div>
+      
+      {/* VISIT REQUEST CHAT MODAL */}
+      {viewingVisitRequest && (
+          <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
+              <div className="bg-logia-800 w-full max-w-2xl rounded-xl border border-logia-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+                  <div className="p-4 border-b border-logia-700 bg-logia-900">
+                      <div className="flex justify-between items-start">
+                          <div>
+                              <h3 className="font-bold text-white text-lg">
+                                  {viewingVisitRequest.fromGroupName} → {viewingVisitRequest.toGroupName}
+                              </h3>
+                              <p className="text-xs text-gray-400">Fecha: {viewingVisitRequest.visitDate} | Visitantes: {viewingVisitRequest.numberOfVisitors}</p>
+                          </div>
+                          <button onClick={() => setViewingVisitRequest(null)} className="text-gray-400 hover:text-white text-2xl">×</button>
+                      </div>
+                  </div>
+                  
+                  <div className="p-4 overflow-y-auto flex-1 space-y-3 bg-logia-900">
+                      {(viewingVisitRequest.messages || []).length === 0 ? (
+                          <p className="text-gray-500 text-center py-8">No hay mensajes aún. Inicia la conversación.</p>
+                      ) : (
+                          viewingVisitRequest.messages.map(msg => (
+                              <div key={msg.id} className={`p-3 rounded ${
+                                  msg.senderId === user.uid ? 'bg-indigo-900/50 ml-8' : 'bg-logia-800 mr-8'
+                              }`}>
+                                  <p className="text-xs text-gray-400 mb-1">{msg.senderName} • {new Date(msg.timestamp).toLocaleString('es-MX')}</p>
+                                  <p className="text-white">{msg.text}</p>
+                              </div>
+                          ))
+                      )}
+                  </div>
+                  
+                  <div className="p-4 border-t border-logia-700 bg-logia-800">
+                      <div className="flex gap-2">
+                          <input 
+                              type="text"
+                              value={newChatMessage}
+                              onChange={e => setNewChatMessage(e.target.value)}
+                              onKeyPress={e => e.key === 'Enter' && handleSendVisitMessage()}
+                              placeholder="Escribe un mensaje..."
+                              className="flex-1 bg-logia-900 border border-logia-700 rounded p-2 text-white text-sm"
+                          />
+                          <button 
+                              onClick={handleSendVisitMessage}
+                              disabled={!newChatMessage.trim()}
+                              className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 rounded disabled:opacity-50"
+                          >
+                              Enviar
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
       
       {/* ATTENDANCE DETAIL MODAL - same logic */}
       {viewingAttDate && (
@@ -2253,6 +2729,60 @@ service cloud.firestore {
                     </button>
                     <button 
                         onClick={handleExecuteDeleteNotice}
+                        className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded font-bold"
+                    >
+                        Sí, Eliminar
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* DELETE TRIVIA CONFIRM MODAL */}
+      {showDeleteTriviaModal && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-6">
+            <div className="bg-logia-800 border border-red-500 p-6 rounded-xl max-w-sm w-full text-center shadow-2xl">
+                <div className="text-4xl mb-4">⚠️</div>
+                <h3 className="text-xl font-bold text-white mb-2">¿Eliminar Trivia?</h3>
+                <p className="text-gray-400 mb-6">
+                    Esta acción eliminará la pregunta y todas las respuestas asociadas.
+                </p>
+                <div className="flex gap-3">
+                    <button 
+                        onClick={() => setShowDeleteTriviaModal(false)}
+                        className="flex-1 py-3 bg-gray-700 text-white rounded font-bold"
+                    >
+                        Cancelar
+                    </button>
+                    <button 
+                        onClick={handleExecuteDeleteTrivia}
+                        className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded font-bold"
+                    >
+                        Sí, Eliminar
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* DELETE VISIT REQUEST CONFIRM MODAL */}
+      {showDeleteVisitModal && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-6">
+            <div className="bg-logia-800 border border-red-500 p-6 rounded-xl max-w-sm w-full text-center shadow-2xl">
+                <div className="text-4xl mb-4">⚠️</div>
+                <h3 className="text-xl font-bold text-white mb-2">¿Eliminar Solicitud de Visita?</h3>
+                <p className="text-gray-400 mb-6">
+                    Esta acción eliminará la solicitud y todo el historial de chat asociado.
+                </p>
+                <div className="flex gap-3">
+                    <button 
+                        onClick={() => setShowDeleteVisitModal(false)}
+                        className="flex-1 py-3 bg-gray-700 text-white rounded font-bold"
+                    >
+                        Cancelar
+                    </button>
+                    <button 
+                        onClick={handleExecuteDeleteVisit}
                         className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded font-bold"
                     >
                         Sí, Eliminar

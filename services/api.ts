@@ -1,5 +1,5 @@
 
-import { User, Payment, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Group } from '../types';
+import { User, Payment, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Group, VisitRequest, VisitMessage } from '../types';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { auth, db } from './firebase';
 import { 
@@ -721,6 +721,141 @@ export const dataService = {
     });
   },
 
+  getActiveTrivia: async (groupId: string): Promise<Trivia | null> => {
+    if (!groupId) return null;
+    try {
+      const q = query(
+        collection(db, "trivias"),
+        where("groupId", "==", groupId),
+        orderBy("createdAt", "desc"),
+        limit(1)
+      );
+      const snapshot = await getDocs(q);
+      if (snapshot.empty) return null;
+      return snapshot.docs[0].data() as Trivia;
+    } catch (e) {
+      console.error("Error fetching active trivia", e);
+      return null;
+    }
+  },
+
+  getUserAnswer: async (uid: string, triviaId: string): Promise<TriviaAnswer | undefined> => {
+    if (!uid || !triviaId) return undefined;
+    try {
+      const docRef = doc(db, "users", uid, "triviaAnswers", triviaId);
+      const snap = await getDoc(docRef);
+      return snap.exists() ? snap.data() as TriviaAnswer : undefined;
+    } catch (e) {
+      console.error("Error fetching user answer", e);
+      return undefined;
+    }
+  },
+
+  submitAnswer: async (uid: string, triviaId: string, answerIndex: number): Promise<TriviaAnswer> => {
+    if (!uid || !triviaId) throw new Error("Missing uid or triviaId");
+    
+    // Get the trivia to check correct answer
+    const triviaQuery = query(collection(db, "trivias"), where("id", "==", triviaId), limit(1));
+    const triviaSnap = await getDocs(triviaQuery);
+    
+    if (triviaSnap.empty) throw new Error("Trivia not found");
+    
+    const trivia = triviaSnap.docs[0].data() as Trivia;
+    const correct = answerIndex === trivia.correctIndex;
+    const points = correct ? 10 : 0;
+
+    const answer: TriviaAnswer = {
+      uid,
+      triviaId,
+      answerIndex,
+      correct,
+      points,
+      answeredAt: new Date().toISOString()
+    };
+
+    // Save answer
+    const answerRef = doc(db, "users", uid, "triviaAnswers", triviaId);
+    await setDoc(answerRef, answer);
+
+    // Update total points if correct
+    if (correct) {
+      const userRef = doc(db, "users", uid);
+      await updateDoc(userRef, {
+        totalPoints: increment(points)
+      });
+    }
+
+    return answer;
+  },
+
+  getLeaderboard: async (): Promise<{name: string, points: number}[]> => {
+    try {
+      const q = query(
+        collection(db, "users"),
+        where("totalPoints", ">", 0),
+        orderBy("totalPoints", "desc"),
+        limit(10)
+      );
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(d => {
+        const data = d.data() as User;
+        return { name: data.name, points: data.totalPoints || 0 };
+      });
+    } catch (e) {
+      console.error("Error fetching leaderboard", e);
+      return [];
+    }
+  },
+
+  deleteTrivia: async (triviaId: string) => {
+    if (!triviaId) return;
+    const ref = doc(db, "trivias", triviaId);
+    await deleteDoc(ref);
+  },
+
+  getAllTrivias: async (groupId: string): Promise<Trivia[]> => {
+    if (!groupId) return [];
+    try {
+      const q = query(
+        collection(db, "trivias"),
+        where("groupId", "==", groupId),
+        orderBy("createdAt", "desc")
+      );
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(d => d.data() as Trivia);
+    } catch (e) {
+      console.error("Error fetching all trivias", e);
+      return [];
+    }
+  },
+
+  resetTriviaAnswersForUser: async (uid: string) => {
+    if (!uid) return;
+    try {
+      const answersQuery = query(collection(db, "users", uid, "triviaAnswers"));
+      const snapshot = await getDocs(answersQuery);
+      const batch = writeBatch(db);
+      snapshot.docs.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+      await batch.commit();
+    } catch (e) {
+      console.error("Error resetting trivia answers", e);
+    }
+  },
+
+  resetAllTriviaAnswers: async (groupId: string) => {
+    if (!groupId) return;
+    try {
+      const users = await dataService.getUsers(groupId);
+      for (const user of users) {
+        await dataService.resetTriviaAnswersForUser(user.uid);
+      }
+    } catch (e) {
+      console.error("Error resetting all trivia answers", e);
+    }
+  },
+
   // --- NOTICES ---
   getNotices: async (groupId: string): Promise<Notice[]> => {
     if (!groupId) return [];
@@ -752,6 +887,67 @@ export const dataService = {
 
   deleteNotice: async (groupId: string, noticeId: string) => {
     const ref = doc(db, "groups", groupId, "notices", noticeId);
+    await deleteDoc(ref);
+  },
+
+  // VISIT REQUESTS
+  createVisitRequest: async (request: Omit<VisitRequest, 'id' | 'createdAt' | 'messages'>) => {
+    const ref = doc(collection(db, "visitRequests"));
+    await setDoc(ref, {
+      ...request,
+      id: ref.id,
+      createdAt: Date.now(),
+      messages: []
+    });
+    return ref.id;
+  },
+
+  getVisitRequestsForGroup: async (groupId: string): Promise<VisitRequest[]> => {
+    try {
+      // Get requests where the group is either sender or receiver
+      const sentQ = query(collection(db, "visitRequests"), where("fromGroupId", "==", groupId));
+      const receivedQ = query(collection(db, "visitRequests"), where("toGroupId", "==", groupId));
+      
+      const [sentSnap, receivedSnap] = await Promise.all([
+        getDocs(sentQ),
+        getDocs(receivedQ)
+      ]);
+      
+      const requests: VisitRequest[] = [];
+      sentSnap.docs.forEach(d => requests.push(d.data() as VisitRequest));
+      receivedSnap.docs.forEach(d => requests.push(d.data() as VisitRequest));
+      
+      // Sort by creation date descending
+      return requests.sort((a, b) => b.createdAt - a.createdAt);
+    } catch (e) {
+      console.error("Error fetching visit requests", e);
+      return [];
+    }
+  },
+
+  updateVisitRequestStatus: async (requestId: string, status: 'accepted' | 'rejected' | 'completed') => {
+    const ref = doc(db, "visitRequests", requestId);
+    await updateDoc(ref, { status });
+  },
+
+  addMessageToVisitRequest: async (requestId: string, message: Omit<VisitMessage, 'id' | 'timestamp'>) => {
+    const ref = doc(db, "visitRequests", requestId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) throw new Error("Visit request not found");
+    
+    const request = snap.data() as VisitRequest;
+    const newMessage: VisitMessage = {
+      ...message,
+      id: `msg_${Date.now()}`,
+      timestamp: Date.now()
+    };
+    
+    const updatedMessages = [...(request.messages || []), newMessage];
+    await updateDoc(ref, { messages: updatedMessages });
+  },
+
+  deleteVisitRequest: async (requestId: string) => {
+    const ref = doc(db, "visitRequests", requestId);
     await deleteDoc(ref);
   }
 };

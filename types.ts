@@ -156,3 +156,27 @@ export interface TreasuryEntry {
   createdBy: string;
   createdAt: number;
 }
+
+export interface VisitRequest {
+  id: string;
+  fromGroupId: string; // Logia que solicita la visita
+  fromGroupName: string;
+  toGroupId: string; // Logia que recibe la solicitud
+  toGroupName: string;
+  requestedBy: string; // uid del admin que solicita
+  requestedByName: string;
+  visitDate: string; // YYYY-MM-DD
+  numberOfVisitors: number;
+  message: string; // Mensaje inicial
+  status: 'pending' | 'accepted' | 'rejected' | 'completed';
+  createdAt: number;
+  messages: VisitMessage[]; // Chat dentro de la solicitud
+}
+
+export interface VisitMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  timestamp: number;
+}
