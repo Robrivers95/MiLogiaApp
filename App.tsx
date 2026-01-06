@@ -17,6 +17,7 @@ import Setup from './components/Setup';
 import Notices from './components/Notices';
 import MasterDashboard from './components/MasterDashboard';
 import PendingApproval from './components/PendingApproval';
+import Visits from './components/Visits';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -120,6 +121,7 @@ const App: React.FC = () => {
       {view === 'attendance' && <Attendance user={activeUserContext} />}
       {/* {view === 'rpg' && <RPG user={activeUserContext} onUpdateUser={() => {}} />} */}
       {view === 'trivia' && <Trivia user={activeUserContext} />}
+      {view === 'visits' && (activeUserContext.role === 'admin' || activeUserContext.role === 'master') && <Visits user={activeUserContext} />}
       {view === 'profile' && <Profile user={activeUserContext} />}
       {view === 'admin' && isAdminOrViewer && <Admin user={activeUserContext} />}
       

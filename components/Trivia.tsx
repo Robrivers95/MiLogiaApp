@@ -27,7 +27,7 @@ const TriviaView: React.FC<Props> = ({ user }) => {
         setAnswer(existingAnswer);
       }
 
-      const lb = await dataService.getLeaderboard();
+      const lb = await dataService.getLeaderboard(user.groupId);
       setLeaderboard(lb);
       setLoading(false);
     };
@@ -41,7 +41,7 @@ const TriviaView: React.FC<Props> = ({ user }) => {
       const result = await dataService.submitAnswer(user.uid, trivia.id, selectedOption);
       setAnswer(result);
       // Refresh leaderboard
-      const lb = await dataService.getLeaderboard();
+      const lb = await dataService.getLeaderboard(user.groupId);
       setLeaderboard(lb);
     } catch (e) {
       console.error(e);

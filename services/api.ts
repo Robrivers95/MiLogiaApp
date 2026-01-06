@@ -788,14 +788,25 @@ export const dataService = {
     return answer;
   },
 
-  getLeaderboard: async (): Promise<{name: string, points: number}[]> => {
+  getLeaderboard: async (groupId?: string): Promise<{name: string, points: number}[]> => {
     try {
-      const q = query(
-        collection(db, "users"),
-        where("totalPoints", ">", 0),
-        orderBy("totalPoints", "desc"),
-        limit(10)
-      );
+      let q;
+      if (groupId) {
+        q = query(
+          collection(db, "users"),
+          where("groupId", "==", groupId),
+          where("totalPoints", ">", 0),
+          orderBy("totalPoints", "desc"),
+          limit(10)
+        );
+      } else {
+        q = query(
+          collection(db, "users"),
+          where("totalPoints", ">", 0),
+          orderBy("totalPoints", "desc"),
+          limit(10)
+        );
+      }
       const snapshot = await getDocs(q);
       return snapshot.docs.map(d => {
         const data = d.data() as User;
