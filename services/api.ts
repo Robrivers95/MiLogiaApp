@@ -685,9 +685,21 @@ export const dataService = {
   
   getUsers: async (groupId: string): Promise<User[]> => {
     if (!groupId) return [];
-    const q = query(collection(db, "users"), where("groupId", "==", groupId));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(d => d.data() as User);
+    try {
+      console.log("getUsers: Fetching users for groupId:", groupId);
+      const q = query(collection(db, "users"), where("groupId", "==", groupId));
+      const snapshot = await getDocs(q);
+      console.log("getUsers: Found", snapshot.docs.length, "users");
+      const users = snapshot.docs.map(d => {
+        const data = d.data() as User;
+        console.log("User:", data.name, "- active:", data.active, "- role:", data.role);
+        return data;
+      });
+      return users;
+    } catch (e) {
+      console.error("Error in getUsers:", e);
+      throw e;
+    }
   },
 
   updateUserStatus: async (uid: string, active: boolean) => {

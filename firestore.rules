@@ -23,10 +23,10 @@ service cloud.firestore {
     
     // Users collection
     match /users/{userId} {
+      // Admin/Master can read all users (FIRST - highest priority)
+      allow read: if isAdminOrMaster();
       // Anyone can read their own profile
       allow read: if isSignedIn() && request.auth.uid == userId;
-      // Admin/Master can read all users
-      allow read: if isAdminOrMaster();
       // Users can create their own profile (during registration)
       allow create: if isSignedIn() && request.auth.uid == userId;
       // Users can update their own profile
