@@ -848,9 +848,15 @@ export const dataService = {
     if (!groupId) return;
     try {
       const users = await dataService.getUsers(groupId);
+      const batch = writeBatch(db);
       for (const user of users) {
+        // Reset trivia answers
         await dataService.resetTriviaAnswersForUser(user.uid);
+        // Reset total points to 0
+        const userRef = doc(db, "users", user.uid);
+        batch.update(userRef, { totalPoints: 0 });
       }
+      await batch.commit();
     } catch (e) {
       console.error("Error resetting all trivia answers", e);
     }

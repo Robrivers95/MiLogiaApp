@@ -866,12 +866,25 @@ const Admin: React.FC<Props> = ({ user }) => {
           showMessage("Completa todos los campos", 'error');
           return;
       }
+      
+      if (!user.groupId) {
+          showMessage("Error: No tienes una logia asignada", 'error');
+          return;
+      }
+      
       try {
           const currentGroup = await dataService.getGroupDetails(user.groupId);
           const targetGroup = allGroups.find(g => g.id === newVisitToGroupId);
           
-          if (!currentGroup || !targetGroup) {
-              showMessage("Error obteniendo información de logias", 'error');
+          if (!currentGroup) {
+              showMessage("Error: No se pudo obtener info de tu logia", 'error');
+              console.error("Current group not found:", user.groupId);
+              return;
+          }
+          
+          if (!targetGroup) {
+              showMessage("Error: Logia destino no encontrada", 'error');
+              console.error("Target group not found:", newVisitToGroupId);
               return;
           }
 
@@ -895,8 +908,9 @@ const Admin: React.FC<Props> = ({ user }) => {
           setNewVisitMessage('');
           await loadVisits();
       } catch (e) {
-          console.error(e);
-          showMessage("Error creando solicitud", 'error');
+          console.error("Error creating visit request:", e);
+          const errorMsg = (e as any)?.message || "Error creando solicitud";
+          showMessage(errorMsg, 'error');
       }
   };
 
