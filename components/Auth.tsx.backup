@@ -117,7 +117,6 @@ const Auth: React.FC<Props> = ({ onLogin }) => {
               placeholder="tucorreo@example.com"
             />
           </div>
-
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">Contraseña</label>
             <input
@@ -126,13 +125,6 @@ const Auth: React.FC<Props> = ({ onLogin }) => {
               className="w-full bg-logia-900 border border-logia-700 rounded-lg p-3 text-white"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              placeholder="******"
-            />
-          </div>
-
-          {isRegistering && (
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">
                 Logia <span className="text-red-400">*</span>
               </label>
               {loadingGroups ? (
@@ -155,7 +147,14 @@ const Auth: React.FC<Props> = ({ onLogin }) => {
                     <option key={g.id} value={g.id}>{g.name}</option>
                   ))}
                 </select>
-              )}
+              )}selectedGroupId}
+                onChange={e => setSelectedGroupId(e.target.value)}
+                disabled={loadingGroups}
+              >
+                {groups.map(g => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
             </div>
           )}
 
