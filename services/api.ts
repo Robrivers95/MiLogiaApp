@@ -687,14 +687,27 @@ export const dataService = {
     if (!groupId) return [];
     try {
       console.log("getUsers: Fetching users for groupId:", groupId);
-      const q = query(collection(db, "users"), where("groupId", "==", groupId));
-      const snapshot = await getDocs(q);
-      console.log("getUsers: Found", snapshot.docs.length, "users");
-      const users = snapshot.docs.map(d => {
-        const data = d.data() as User;
-        console.log("User:", data.name, "- active:", data.active, "- role:", data.role);
-        return data;
+      
+      // Query 1: Users with matching groupId
+      const q1 = query(collection(db, "users"), where("groupId", "==", groupId));
+      const snapshot1 = await getDocs(q1);
+      
+      // Query 2: Users with empty or missing groupId (pending assignment)
+      const q2 = query(collection(db, "users"), where("groupId", "==", ""));
+      const snapshot2 = await getDocs(q2);
+      
+      console.log("getUsers: Found", snapshot1.docs.length, "users with groupId");
+      console.log("getUsers: Found", snapshot2.docs.length, "users without groupId");
+      
+      const users = [
+        ...snapshot1.docs.map(d => d.data() as User),
+        ...snapshot2.docs.map(d => d.data() as User)
+      ];
+      
+      users.forEach(data => {
+        console.log("User:", data.name, "- active:", data.active, "- role:", data.role, "- groupId:", data.groupId || "(empty)");
       });
+      
       return users;
     } catch (e) {
       console.error("Error in getUsers:", e);
@@ -704,6 +717,10 @@ export const dataService = {
 
   updateUserStatus: async (uid: string, active: boolean) => {
     await updateDoc(doc(db, "users", uid), { active });
+  },
+
+  assignUserToGroup: async (uid: string, groupId: string) => {
+    await updateDoc(doc(db, "users", uid), { groupId });
   },
 
   recordAttendance: async (date: string, uidsPresent: string[]) => {

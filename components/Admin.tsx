@@ -350,6 +350,16 @@ const Admin: React.FC<Props> = ({ user }) => {
 
   const handleToggleActive = async (uid: string, current: boolean) => {
     if (isReadOnly) return;
+    
+    // Find the user to check if they need groupId assignment
+    const targetUser = users.find(u => u.uid === uid);
+    
+    // If activating a user without groupId, assign them to this group
+    if (!current && targetUser && !targetUser.groupId) {
+      await dataService.assignUserToGroup(uid, user.groupId);
+      console.log("Assigned user to groupId:", user.groupId);
+    }
+    
     await dataService.updateUserStatus(uid, !current);
     loadUsers();
     showMessage(current ? 'Usuario desactivado' : 'Usuario aceptado y activado');
@@ -1193,6 +1203,9 @@ const Admin: React.FC<Props> = ({ user }) => {
                                     <h4 className="text-xl font-bold text-white">{u.name}</h4>
                                     <p className="text-gray-400 text-sm">{u.email}</p>
                                     <p className="text-xs text-gray-500 mt-2">Registrado: {new Date(u.joinDate).toLocaleDateString()}</p>
+                                    {!u.groupId && (
+                                        <p className="text-xs text-orange-400 mt-1 font-semibold">⚠️ Sin logia asignada - se asignará al aceptar</p>
+                                    )}
                                 </div>
                                 <div className="flex gap-3">
                                     <button 
