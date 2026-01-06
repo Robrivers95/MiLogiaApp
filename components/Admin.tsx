@@ -158,6 +158,9 @@ const Admin: React.FC<Props> = ({ user }) => {
           loadVisits();
           loadAllGroups();
       }
+      if (activeTab === 'requests') {
+          loadUsers();
+      }
   }, [activeTab, dashboardStart, dashboardEnd]);
 
   const refreshAllData = async () => {
