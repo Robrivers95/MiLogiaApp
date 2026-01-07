@@ -350,9 +350,11 @@ const Admin: React.FC<Props> = ({ user }) => {
               name: bankFormData.name,
               amount: Number(bankFormData.amount),
               lastUpdated: new Date().toISOString(),
-              comment: bankFormData.comment || undefined,
-              updatedBy: user.uid
+              updatedBy: user.uid,
+              ...(bankFormData.comment && { comment: bankFormData.comment })
           };
+
+          console.log('Guardando balance:', balance); // Debug log
 
           if (editingBankId) {
               await dataService.updateBankBalance(editingBankId, balance);
