@@ -1051,11 +1051,12 @@ export const dataService = {
   getBankBalances: async (groupId: string): Promise<BankBalance[]> => {
     const q = query(
       collection(db, "bankBalances"),
-      where("groupId", "==", groupId),
-      orderBy("lastUpdated", "desc")
+      where("groupId", "==", groupId)
     );
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as BankBalance));
+    // Sort in memory instead of using orderBy (to avoid composite index requirement)
+    const balances = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as BankBalance));
+    return balances.sort((a, b) => new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime());
   },
 
   createBankBalance: async (balance: Omit<BankBalance, 'id'>): Promise<string> => {
