@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, Payment, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Trivia, VisitRequest, Group } from '../types';
+import { User, Payment, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Trivia, VisitRequest, Group, BankBalance } from '../types';
 import { dataService, generateTriviaWithAI } from '../services/api';
 import { doc, deleteDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -9,7 +9,7 @@ interface Props {
   user: User;
 }
 
-type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'notices' | 'visits';
+type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'notices' | 'banks' | 'visits';
 
 const Admin: React.FC<Props> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
@@ -110,6 +110,17 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [deletingVisitId, setDeletingVisitId] = useState<string | null>(null);
   const [showDeleteVisitModal, setShowDeleteVisitModal] = useState(false);
 
+  // Bank Balances State
+  const [bankBalances, setBankBalances] = useState<BankBalance[]>([]);
+  const [showBankForm, setShowBankForm] = useState(false);
+  const [editingBankId, setEditingBankId] = useState<string | null>(null);
+  const [bankFormData, setBankFormData] = useState({
+    type: 'bank' as 'bank' | 'cash',
+    name: '',
+    amount: 0,
+    comment: ''
+  });
+
   // Modals
   const [editingUserLedger, setEditingUserLedger] = useState<string | null>(null);
   const [editPayments, setEditPayments] = useState<Payment[]>([]);
@@ -157,6 +168,9 @@ const Admin: React.FC<Props> = ({ user }) => {
       if (activeTab === 'visits') {
           loadVisits();
           loadAllGroups();
+      }
+      if (activeTab === 'banks') {
+          loadBankBalances();
       }
       if (activeTab === 'requests') {
           loadUsers();
@@ -212,6 +226,9 @@ const Admin: React.FC<Props> = ({ user }) => {
       try {
           const stats = await dataService.getGlobalFinancials(user.groupId, dashboardStart, dashboardEnd);
           setDashboardData(stats);
+          // Also load bank balances to show in dashboard
+          const balances = await dataService.getBankBalances(user.groupId);
+          setBankBalances(balances);
       } catch (e) {
           console.error(e);
       } finally {
@@ -313,6 +330,84 @@ const Admin: React.FC<Props> = ({ user }) => {
       } catch (e) {
           console.error("Error cargando logias", e);
       }
+  };
+
+  const loadBankBalances = async () => {
+      try {
+          const data = await dataService.getBankBalances(user.groupId);
+          setBankBalances(data);
+      } catch (e) {
+          console.error("Error cargando balances bancarios", e);
+      }
+  };
+
+  const handleBankFormSubmit = async (e: React.FormEvent) => {
+      e.preventDefault();
+      try {
+          const balance: Omit<BankBalance, 'id'> = {
+              groupId: user.groupId,
+              type: bankFormData.type,
+              name: bankFormData.name,
+              amount: Number(bankFormData.amount),
+              lastUpdated: new Date().toISOString(),
+              comment: bankFormData.comment || undefined,
+              updatedBy: user.uid
+          };
+
+          if (editingBankId) {
+              await dataService.updateBankBalance(editingBankId, balance);
+              showMessage("Balance actualizado", "success");
+          } else {
+              await dataService.createBankBalance(balance);
+              showMessage("Balance agregado", "success");
+          }
+
+          resetBankForm();
+          await loadBankBalances();
+          await loadDashboardStats(); // Refresh dashboard to show new total
+      } catch (e) {
+          console.error("Error guardando balance", e);
+          showMessage("Error guardando balance", "error");
+      }
+  };
+
+  const handleEditBank = (balance: BankBalance) => {
+      setEditingBankId(balance.id);
+      setBankFormData({
+          type: balance.type,
+          name: balance.name,
+          amount: balance.amount,
+          comment: balance.comment || ''
+      });
+      setShowBankForm(true);
+  };
+
+  const handleDeleteBank = async (id: string) => {
+      if (!confirm('¿Eliminar este registro bancario?')) return;
+      try {
+          await dataService.deleteBankBalance(id);
+          showMessage("Registro eliminado", "success");
+          await loadBankBalances();
+          await loadDashboardStats(); // Refresh dashboard
+      } catch (e) {
+          console.error("Error eliminando balance", e);
+          showMessage("Error eliminando balance", "error");
+      }
+  };
+
+  const resetBankForm = () => {
+      setShowBankForm(false);
+      setEditingBankId(null);
+      setBankFormData({
+          type: 'bank',
+          name: '',
+          amount: 0,
+          comment: ''
+      });
+  };
+
+  const getTotalBankBalance = () => {
+      return bankBalances.reduce((acc, b) => acc + b.amount, 0);
   };
   
   // ... (Other functions remain the same) ...
@@ -1065,6 +1160,7 @@ const Admin: React.FC<Props> = ({ user }) => {
             {id: 'trivia', label: 'Trivia'},
             {id: 'notices', label: 'Avisos'},
             {id: 'treasury', label: 'Tesorería'},
+            {id: 'banks', label: 'Bancos'},
             {id: 'visits', label: 'Visitas'}
         ].map((t) => (
           <button
@@ -1161,7 +1257,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div className="bg-logia-800 p-4 rounded-xl border border-logia-700 text-center">
                         <p className="text-xs text-gray-400 uppercase">Miembros Activos</p>
                         <p className="text-2xl font-bold text-white">{activeUsers}</p>
@@ -1170,6 +1266,12 @@ const Admin: React.FC<Props> = ({ user }) => {
                          <p className="text-xs text-gray-400 uppercase">Balance Global (Histórico)</p>
                          <p className="text-2xl font-bold text-blue-400">
                              ${(treasuryBalance.general + treasuryBalance.charity + treasuryBalance.quotas).toLocaleString()}
+                         </p>
+                    </div>
+                    <div className="bg-gradient-to-br from-green-900/40 to-green-800/30 p-4 rounded-xl border border-green-500/50 text-center shadow-lg">
+                         <p className="text-xs text-green-300 uppercase">💰 Bancos + Efectivo</p>
+                         <p className="text-2xl font-bold text-white">
+                             ${getTotalBankBalance().toLocaleString()}
                          </p>
                     </div>
                     <div className="bg-logia-800 p-4 rounded-xl border border-logia-700 text-center">
@@ -1983,6 +2085,168 @@ const Admin: React.FC<Props> = ({ user }) => {
                             </tbody>
                         </table>
                     </div>
+                </div>
+            </div>
+        )}
+
+        {/* --- BANKS TAB (BANCOS Y EFECTIVO) --- */}
+        {activeTab === 'banks' && (
+            <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                    <h3 className="text-lg font-bold text-white">Gestión de Bancos y Efectivo</h3>
+                    <button 
+                        onClick={() => setShowBankForm(!showBankForm)}
+                        disabled={isReadOnly}
+                        className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded font-bold disabled:opacity-50"
+                    >
+                        {showBankForm ? 'Cancelar' : '+ Agregar Registro'}
+                    </button>
+                </div>
+
+                {/* Total Balance Card */}
+                <div className="bg-gradient-to-r from-green-900/40 to-green-800/40 rounded-xl p-6 border border-green-500/50 shadow-lg">
+                    <div className="flex justify-between items-center">
+                        <div>
+                            <p className="text-xs text-green-300 uppercase tracking-wider mb-1">Balance Total Disponible</p>
+                            <p className="text-3xl font-bold text-white">${getTotalBankBalance().toLocaleString()}</p>
+                        </div>
+                        <div className="text-4xl">💰</div>
+                    </div>
+                </div>
+
+                {/* Form */}
+                {showBankForm && (
+                    <form onSubmit={handleBankFormSubmit} className="bg-logia-800 rounded-xl p-6 border border-logia-700 shadow-lg space-y-4">
+                        <h4 className="text-md font-bold text-white">{editingBankId ? 'Editar Registro' : 'Nuevo Registro Bancario'}</h4>
+                        
+                        <div>
+                            <label className="text-xs text-gray-400 uppercase block mb-1">Tipo</label>
+                            <select
+                                value={bankFormData.type}
+                                onChange={e => setBankFormData({...bankFormData, type: e.target.value as 'bank' | 'cash'})}
+                                className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
+                                required
+                            >
+                                <option value="bank">Banco</option>
+                                <option value="cash">Efectivo</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="text-xs text-gray-400 uppercase block mb-1">
+                                {bankFormData.type === 'bank' ? 'Nombre del Banco' : 'Descripción'}
+                            </label>
+                            <input
+                                type="text"
+                                value={bankFormData.name}
+                                onChange={e => setBankFormData({...bankFormData, name: e.target.value})}
+                                placeholder={bankFormData.type === 'bank' ? 'Ej: Banco Santander' : 'Ej: Efectivo en Caja Chica'}
+                                className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
+                                required
+                            />
+                        </div>
+
+                        <div>
+                            <label className="text-xs text-gray-400 uppercase block mb-1">Monto Actual</label>
+                            <input
+                                type="number"
+                                step="0.01"
+                                value={bankFormData.amount}
+                                onChange={e => setBankFormData({...bankFormData, amount: Number(e.target.value)})}
+                                className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
+                                required
+                            />
+                        </div>
+
+                        <div>
+                            <label className="text-xs text-gray-400 uppercase block mb-1">Comentario (Opcional)</label>
+                            <textarea
+                                value={bankFormData.comment}
+                                onChange={e => setBankFormData({...bankFormData, comment: e.target.value})}
+                                placeholder="Notas adicionales sobre este balance..."
+                                className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white h-20"
+                            />
+                        </div>
+
+                        <div className="flex gap-3">
+                            <button
+                                type="button"
+                                onClick={resetBankForm}
+                                className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 rounded"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={isReadOnly}
+                                className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded disabled:opacity-50"
+                            >
+                                {editingBankId ? 'Actualizar' : 'Guardar'}
+                            </button>
+                        </div>
+                    </form>
+                )}
+
+                {/* Balances List */}
+                <div className="space-y-4">
+                    <h4 className="font-bold text-white">Registros Bancarios</h4>
+                    
+                    {bankBalances.length === 0 ? (
+                        <p className="text-gray-400 text-center py-8">No hay registros bancarios aún</p>
+                    ) : (
+                        <div className="grid gap-4">
+                            {bankBalances.map(balance => (
+                                <div key={balance.id} className="bg-logia-800 rounded-xl p-5 border border-logia-700 shadow-lg">
+                                    <div className="flex justify-between items-start mb-3">
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <span className="text-2xl">{balance.type === 'bank' ? '🏦' : '💵'}</span>
+                                                <div>
+                                                    <h5 className="text-lg font-bold text-white">{balance.name}</h5>
+                                                    <p className="text-xs text-gray-400">
+                                                        {balance.type === 'bank' ? 'Cuenta Bancaria' : 'Efectivo'}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <p className="text-2xl font-bold text-green-400 mb-2">
+                                                ${balance.amount.toLocaleString()}
+                                            </p>
+                                            <p className="text-xs text-gray-500">
+                                                Actualizado: {new Date(balance.lastUpdated).toLocaleDateString('es-ES', {
+                                                    day: 'numeric',
+                                                    month: 'long',
+                                                    year: 'numeric',
+                                                    hour: '2-digit',
+                                                    minute: '2-digit'
+                                                })}
+                                            </p>
+                                            {balance.comment && (
+                                                <p className="text-sm text-gray-400 mt-2 italic">"{balance.comment}"</p>
+                                            )}
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button 
+                                                onClick={() => handleEditBank(balance)}
+                                                disabled={isReadOnly}
+                                                className="text-indigo-400 hover:text-indigo-300 p-2 disabled:opacity-50"
+                                                title="Editar"
+                                            >
+                                                ✏️
+                                            </button>
+                                            <button 
+                                                onClick={() => handleDeleteBank(balance.id)}
+                                                disabled={isReadOnly}
+                                                className="text-red-400 hover:text-red-300 p-2 disabled:opacity-50"
+                                                title="Eliminar"
+                                            >
+                                                🗑️
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             </div>
         )}

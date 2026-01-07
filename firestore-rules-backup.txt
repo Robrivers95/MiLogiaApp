@@ -93,13 +93,5 @@ service cloud.firestore {
       // Admin/Master can delete visit requests
       allow delete: if isAdminOrMaster();
     }
-
-    // Bank Balances collection
-    match /bankBalances/{balanceId} {
-      // Only admin/master can read bank balances
-      allow read: if isAdminOrMaster();
-      // Only admin/master can create/update/delete bank balances
-      allow write: if isAdminOrMaster();
-    }
   }
 }

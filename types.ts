@@ -180,3 +180,14 @@ export interface VisitMessage {
   text: string;
   timestamp: number;
 }
+
+export interface BankBalance {
+  id: string;
+  groupId: string;
+  type: 'bank' | 'cash'; // Banco o Efectivo
+  name: string; // Nombre del banco o "Efectivo"
+  amount: number;
+  lastUpdated: string; // ISO date
+  comment?: string;
+  updatedBy: string; // uid del admin que actualizó
+}

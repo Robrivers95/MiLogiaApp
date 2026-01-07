@@ -1,5 +1,5 @@
 
-import { User, Payment, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Group, VisitRequest, VisitMessage } from '../types';
+import { User, Payment, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Group, VisitRequest, VisitMessage, BankBalance } from '../types';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { auth, db } from './firebase';
 import { 
@@ -1044,6 +1044,32 @@ export const dataService = {
 
   deleteVisitRequest: async (requestId: string) => {
     const ref = doc(db, "visitRequests", requestId);
+    await deleteDoc(ref);
+  },
+
+  // Bank Balances
+  getBankBalances: async (groupId: string): Promise<BankBalance[]> => {
+    const q = query(
+      collection(db, "bankBalances"),
+      where("groupId", "==", groupId),
+      orderBy("lastUpdated", "desc")
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as BankBalance));
+  },
+
+  createBankBalance: async (balance: Omit<BankBalance, 'id'>): Promise<string> => {
+    const ref = await addDoc(collection(db, "bankBalances"), balance);
+    return ref.id;
+  },
+
+  updateBankBalance: async (id: string, balance: Partial<BankBalance>) => {
+    const ref = doc(db, "bankBalances", id);
+    await updateDoc(ref, balance);
+  },
+
+  deleteBankBalance: async (id: string) => {
+    const ref = doc(db, "bankBalances", id);
     await deleteDoc(ref);
   }
 };
