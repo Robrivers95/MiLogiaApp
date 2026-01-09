@@ -54,17 +54,23 @@ const AttendanceView: React.FC<Props> = ({ user }) => {
         ) : records.length === 0 ? (
            <p className="text-center text-gray-400">No hay registros de asistencia.</p>
         ) : (
-           records.map((rec) => (
-             <div key={rec.date} className="bg-logia-800 p-3 rounded-lg flex items-center justify-between border border-logia-700/50">
-                <div className="flex items-center gap-3">
-                    <div className={`w-3 h-3 rounded-full ${rec.attended ? 'bg-logia-success' : 'bg-logia-danger'}`}></div>
-                    <p className="text-gray-200 font-medium">{new Date(rec.date).toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' })}</p>
-                </div>
-                <span className={`text-sm font-semibold ${rec.attended ? 'text-logia-success' : 'text-logia-danger'}`}>
-                    {rec.attended ? 'Presente' : 'Ausente'}
-                </span>
-             </div>
-           ))
+           records.map((rec) => {
+             // Parsear fecha como local para evitar problemas de zona horaria
+             const [year, month, day] = rec.date.split('-').map(Number);
+             const localDate = new Date(year, month - 1, day);
+             
+             return (
+               <div key={rec.date} className="bg-logia-800 p-3 rounded-lg flex items-center justify-between border border-logia-700/50">
+                  <div className="flex items-center gap-3">
+                      <div className={`w-3 h-3 rounded-full ${rec.attended ? 'bg-logia-success' : 'bg-logia-danger'}`}></div>
+                      <p className="text-gray-200 font-medium">{localDate.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' })}</p>
+                  </div>
+                  <span className={`text-sm font-semibold ${rec.attended ? 'text-logia-success' : 'text-logia-danger'}`}>
+                      {rec.attended ? 'Presente' : 'Ausente'}
+                  </span>
+               </div>
+             );
+           })
         )}
       </div>
     </div>
