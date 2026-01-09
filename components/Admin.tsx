@@ -856,10 +856,8 @@ const Admin: React.FC<Props> = ({ user }) => {
   const executeDeleteAttendance = async () => {
       if (isReadOnly || !deletingAttDate) return;
       try {
-          const list = await dataService.getAttendanceListForDate(user.groupId, deletingAttDate);
-          for (const item of list) {
-              await dataService.deleteAttendance(item.uid, deletingAttDate);
-          }
+          // Eliminar de TODOS los usuarios, no solo los actuales
+          await dataService.deleteAttendanceForAllUsers(user.groupId, deletingAttDate);
           showMessage("Asistencia eliminada");
           setShowDeleteAttModal(false);
           setDeletingAttDate(null);

@@ -724,13 +724,15 @@ export const dataService = {
   },
 
   recordAttendance: async (date: string, uidsPresent: string[]) => {
+    // Esta función solo registra a los presentes
+    // Los ausentes simplemente no tendrán registro para esa fecha
     const batch = writeBatch(db);
     for (const uid of uidsPresent) {
       const ref = doc(db, "users", uid, "attendance", date);
       batch.set(ref, {
         date,
         attended: true
-      });
+      }, { merge: true });
     }
     await batch.commit();
   },
@@ -738,6 +740,19 @@ export const dataService = {
   deleteAttendance: async (uid: string, date: string) => {
     const ref = doc(db, "users", uid, "attendance", date);
     await deleteDoc(ref);
+  },
+
+  deleteAttendanceForAllUsers: async (groupId: string, date: string) => {
+    // Obtiene TODOS los usuarios del grupo (activos e inactivos)
+    const allUsers = await dataService.getUsers(groupId);
+    const batch = writeBatch(db);
+    
+    for (const user of allUsers) {
+      const ref = doc(db, "users", user.uid, "attendance", date);
+      batch.delete(ref);
+    }
+    
+    await batch.commit();
   },
 
   createTrivia: async (trivia: Omit<Trivia, 'id' | 'createdAt'>) => {

@@ -168,11 +168,11 @@ const Auth: React.FC<Props> = ({ onLogin }) => {
           </button>
         </form>
 
-        <div className="mt-4 flex justify-between text-sm">
-          <button onClick={() => setIsRegistering(r => !r)} className="text-indigo-300 hover:text-indigo-200">
+        <div className="mt-4 flex justify-between text-sm items-center">
+          <button onClick={() => setIsRegistering(r => !r)} className="text-indigo-300 hover:text-indigo-200 font-medium">
             {isRegistering ? 'Ya tengo cuenta' : 'Crear cuenta'}
           </button>
-          <button onClick={handleResetPassword} className="text-gray-300 hover:text-white">
+          <button onClick={handleResetPassword} className="text-gray-400 hover:text-white text-xs">
             Recuperar contraseña
           </button>
         </div>

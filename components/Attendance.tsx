@@ -10,13 +10,15 @@ const AttendanceView: React.FC<Props> = ({ user }) => {
   const [records, setRecords] = useState<Attendance[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const loadAttendance = async () => {
+    setLoading(true);
+    const data = await dataService.getAttendance(user.uid);
+    setRecords(data.sort((a, b) => b.date.localeCompare(a.date)));
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const load = async () => {
-      const data = await dataService.getAttendance(user.uid);
-      setRecords(data.sort((a, b) => b.date.localeCompare(a.date)));
-      setLoading(false);
-    };
-    load();
+    loadAttendance();
   }, [user.uid]);
 
   const presentCount = records.filter(r => r.attended).length;
@@ -25,7 +27,15 @@ const AttendanceView: React.FC<Props> = ({ user }) => {
 
   return (
     <div className="p-4 space-y-6 pb-24">
-      <h2 className="text-2xl font-bold text-white mb-4">Mi Asistencia</h2>
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold text-white">Mi Asistencia</h2>
+        <button 
+          onClick={loadAttendance}
+          className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-sm font-medium"
+        >
+          🔄 Actualizar
+        </button>
+      </div>
       
       <div className="bg-logia-800 rounded-xl p-6 border border-logia-700 flex items-center justify-between">
         <div>
