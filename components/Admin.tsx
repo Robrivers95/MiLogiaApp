@@ -1738,7 +1738,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                 />
                                 <input 
                                     type="number" 
-                                    step="0.01"
+                                    step="any"
                                     placeholder="Monto (+ cargo, - descuento)"
                                     value={extraFeeAmount} 
                                     onChange={e => setExtraFeeAmount(Number(e.target.value))}
@@ -1754,6 +1754,9 @@ const Admin: React.FC<Props> = ({ user }) => {
                                     className="bg-logia-900 border border-logia-700 rounded p-2 text-white"
                                 />
                             </div>
+                            <p className="text-xs text-yellow-400 mb-3">
+                                💡 Tip: Para ajustar errores de redondeo, puedes copiar el monto exacto de la deuda y aplicarlo como descuento negativo (Ej: -0.980000000000182)
+                            </p>
                             <button 
                                 onClick={handleSaveExtraFee}
                                 disabled={isReadOnly || applyingExtra}
