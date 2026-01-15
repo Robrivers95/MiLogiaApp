@@ -101,5 +101,13 @@ service cloud.firestore {
       // Only admin/master can create/update/delete bank balances
       allow write: if isAdminOrMaster();
     }
+
+    // Extra Fees collection
+    match /extraFees/{feeId} {
+      // Only admin/master can read extra fees
+      allow read: if isAdminOrMaster();
+      // Only admin/master can create/update/delete extra fees
+      allow write: if isAdminOrMaster();
+    }
   }
 }

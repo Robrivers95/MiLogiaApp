@@ -191,3 +191,18 @@ export interface BankBalance {
   comment?: string;
   updatedBy: string; // uid del admin que actualizó
 }
+
+export interface ExtraFee {
+  id: string;
+  groupId: string;
+  period: string; // YYYY-MM
+  amount: number;
+  description: string;
+  type: 'mass' | 'individual'; // Masiva o individual
+  targetUserId?: string; // Solo si es individual
+  targetUserName?: string; // Solo si es individual
+  createdBy: string;
+  createdByName: string;
+  createdAt: string; // ISO date
+  appliedToUsers: string[]; // Lista de UIDs a los que se aplicó
+}

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, Payment, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Trivia, VisitRequest, Group, BankBalance } from '../types';
+import { User, Payment, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Trivia, VisitRequest, Group, BankBalance, ExtraFee } from '../types';
 import { dataService, generateTriviaWithAI } from '../services/api';
 import { doc, deleteDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -121,6 +121,17 @@ const Admin: React.FC<Props> = ({ user }) => {
     comment: ''
   });
 
+  // Extra Fees Management State
+  const [extraFees, setExtraFees] = useState<ExtraFee[]>([]);
+  const [showExtraFeeHistory, setShowExtraFeeHistory] = useState(false);
+  const [extraFeeType, setExtraFeeType] = useState<'mass' | 'individual'>('mass');
+  const [selectedUserForFee, setSelectedUserForFee] = useState<string>('');
+  const [deletingExtraFeeId, setDeletingExtraFeeId] = useState<string | null>(null);
+  const [showDeleteExtraFeeModal, setShowDeleteExtraFeeModal] = useState(false);
+  const [editingExtraFeeId, setEditingExtraFeeId] = useState<string | null>(null);
+  const [editExtraFeeData, setEditExtraFeeData] = useState({ description: '', amount: 0 });
+  const [showEditExtraFeeModal, setShowEditExtraFeeModal] = useState(false);
+
   // Modals
   const [editingUserLedger, setEditingUserLedger] = useState<string | null>(null);
   const [editPayments, setEditPayments] = useState<Payment[]>([]);
@@ -174,6 +185,9 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
       if (activeTab === 'requests') {
           loadUsers();
+      }
+      if (activeTab === 'fees') {
+          loadExtraFees();
       }
   }, [activeTab, dashboardStart, dashboardEnd]);
 
@@ -411,6 +425,134 @@ const Admin: React.FC<Props> = ({ user }) => {
   const getTotalBankBalance = () => {
       return bankBalances.reduce((acc, b) => acc + b.amount, 0);
   };
+
+  // EXTRA FEES HANDLERS
+  const loadExtraFees = async () => {
+      try {
+          const data = await dataService.getExtraFees(user.groupId);
+          setExtraFees(data);
+      } catch (e) {
+          console.error("Error cargando cuotas extraordinarias", e);
+      }
+  };
+
+  const handleSaveExtraFee = async () => {
+      if (isReadOnly || !extraFeePeriod || !extraFeeAmount || extraFeeAmount <= 0) {
+          showMessage("Completa período y monto", 'error');
+          return;
+      }
+
+      if (extraFeeType === 'individual' && !selectedUserForFee) {
+          showMessage("Selecciona un usuario", 'error');
+          return;
+      }
+
+      try {
+          setApplyingExtra(true);
+          
+          if (extraFeeType === 'mass') {
+              await dataService.assignExtraFeeToAllNew(
+                  user.groupId!,
+                  extraFeePeriod,
+                  extraFeeAmount,
+                  extraFeeDesc,
+                  user.uid,
+                  user.name
+              );
+              showMessage("Cuota extraordinaria masiva aplicada");
+          } else {
+              const targetUser = users.find(u => u.uid === selectedUserForFee);
+              if (!targetUser) {
+                  showMessage("Usuario no encontrado", 'error');
+                  return;
+              }
+              await dataService.assignExtraFeeToUser(
+                  user.groupId!,
+                  targetUser.uid,
+                  targetUser.name,
+                  extraFeePeriod,
+                  extraFeeAmount,
+                  extraFeeDesc,
+                  user.uid,
+                  user.name
+              );
+              showMessage(`Cuota aplicada a ${targetUser.name}`);
+          }
+          
+          setExtraFeePeriod('');
+          setExtraFeeAmount(0);
+          setExtraFeeDesc('');
+          setSelectedUserForFee('');
+          await loadUsers();
+          await loadExtraFees();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error aplicando cuota extraordinaria", 'error');
+      } finally {
+          setApplyingExtra(false);
+      }
+  };
+
+  const handleDeleteExtraFee = (extraFee: ExtraFee) => {
+      setDeletingExtraFeeId(extraFee.id);
+      setShowDeleteExtraFeeModal(true);
+  };
+
+  const executeDeleteExtraFee = async () => {
+      if (!deletingExtraFeeId) return;
+      const extraFee = extraFees.find(f => f.id === deletingExtraFeeId);
+      if (!extraFee) return;
+
+      try {
+          await dataService.deleteExtraFee(
+              extraFee.id,
+              extraFee.appliedToUsers,
+              extraFee.period,
+              extraFee.amount
+          );
+          showMessage("Cuota extraordinaria eliminada y revertida", "success");
+          setShowDeleteExtraFeeModal(false);
+          setDeletingExtraFeeId(null);
+          await loadUsers();
+          await loadExtraFees();
+      } catch (e) {
+          console.error("Error eliminando cuota", e);
+          showMessage("Error eliminando cuota", "error");
+      }
+  };
+
+  const handleEditExtraFee = (extraFee: ExtraFee) => {
+      setEditingExtraFeeId(extraFee.id);
+      setEditExtraFeeData({
+          description: extraFee.description,
+          amount: extraFee.amount
+      });
+      setShowEditExtraFeeModal(true);
+  };
+
+  const executeEditExtraFee = async () => {
+      if (!editingExtraFeeId) return;
+      const extraFee = extraFees.find(f => f.id === editingExtraFeeId);
+      if (!extraFee) return;
+
+      try {
+          await dataService.updateExtraFee(
+              extraFee.id,
+              editExtraFeeData,
+              extraFee.amount,
+              extraFee.appliedToUsers,
+              extraFee.period
+          );
+          showMessage("Cuota extraordinaria actualizada", "success");
+          setShowEditExtraFeeModal(false);
+          setEditingExtraFeeId(null);
+          await loadUsers();
+          await loadExtraFees();
+      } catch (e) {
+          console.error("Error actualizando cuota", e);
+          showMessage("Error actualizando cuota", "error");
+      }
+  };
   
   // ... (Other functions remain the same) ...
   const handleViewAttDetail = async (date: string) => {
@@ -619,26 +761,6 @@ const Admin: React.FC<Props> = ({ user }) => {
       } catch (e) {
           console.error(e);
           showMessage("Error descargando CSV", 'error');
-      }
-  };
-  const handleSaveExtraFee = async () => {
-      if (isReadOnly || !extraFeePeriod || !extraFeeAmount || extraFeeAmount <= 0) {
-          showMessage("Completa período y monto", 'error');
-          return;
-      }
-      try {
-          setApplyingExtra(true);
-          await dataService.assignExtraFeeToAll(user.groupId!, extraFeePeriod, extraFeeAmount, extraFeeDesc);
-          showMessage("Cuota extraordinaria aplicada a todos los activos");
-          setExtraFeePeriod('');
-          setExtraFeeAmount(0);
-          setExtraFeeDesc('');
-          await loadUsers();
-      } catch (e) {
-          console.error(e);
-          showMessage("Error aplicando cuota extraordinaria", 'error');
-      } finally {
-          setApplyingExtra(false);
       }
   };
   const handleAddPriceChange = async () => {
@@ -1544,46 +1666,154 @@ const Admin: React.FC<Props> = ({ user }) => {
 
                 {/* 3. Extra Fees */}
                 <div className="bg-logia-800 rounded-xl p-6 border border-logia-700 shadow-lg border-l-4 border-l-purple-500">
-                    <h3 className="text-lg font-bold text-white mb-4 flex items-center">
-                        <span className="w-8 h-8 bg-purple-500 rounded-full flex items-center justify-center mr-3 text-sm">3</span>
-                        Cuota Extraordinaria Masiva
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-                        <input 
-                            type="month" 
-                            value={extraFeePeriod} 
-                            onChange={e => setExtraFeePeriod(e.target.value)}
-                            disabled={isReadOnly || applyingExtra}
-                            className="bg-logia-900 border border-logia-700 rounded p-2 text-white"
-                        />
-                        <input 
-                            type="number" 
-                            placeholder="Monto Extra"
-                            value={extraFeeAmount} 
-                            onChange={e => setExtraFeeAmount(Number(e.target.value))}
-                            disabled={isReadOnly || applyingExtra}
-                            className="bg-logia-900 border border-logia-700 rounded p-2 text-white"
-                        />
-                        <input 
-                            type="text" 
-                            placeholder="Concepto (Ej. Cena)"
-                            value={extraFeeDesc} 
-                            onChange={e => setExtraFeeDesc(e.target.value)}
-                            disabled={isReadOnly || applyingExtra}
-                            className="bg-logia-900 border border-logia-700 rounded p-2 text-white"
-                        />
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-bold text-white flex items-center">
+                            <span className="w-8 h-8 bg-purple-500 rounded-full flex items-center justify-center mr-3 text-sm">3</span>
+                            Cuotas Extraordinarias
+                        </h3>
+                        <button 
+                            onClick={() => setShowExtraFeeHistory(!showExtraFeeHistory)}
+                            className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded text-sm font-semibold"
+                        >
+                            {showExtraFeeHistory ? '➕ Nueva Cuota' : '📋 Ver Historial'}
+                        </button>
                     </div>
-                    <button 
-                        onClick={handleSaveExtraFee}
-                        disabled={isReadOnly || applyingExtra}
-                        className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded w-full disabled:opacity-50"
-                    >
-                        {applyingExtra ? 'Aplicando...' : 'Aplicar Cuota Extra'}
-                    </button>
+
+                    {!showExtraFeeHistory ? (
+                        <>
+                            {/* Tipo de cuota */}
+                            <div className="mb-4">
+                                <label className="block text-xs font-bold uppercase text-gray-400 mb-2">Tipo de Cuota</label>
+                                <div className="flex gap-4">
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input 
+                                            type="radio" 
+                                            value="mass" 
+                                            checked={extraFeeType === 'mass'}
+                                            onChange={() => setExtraFeeType('mass')}
+                                            disabled={isReadOnly || applyingExtra}
+                                            className="text-purple-600"
+                                        />
+                                        <span className="text-white">Masiva (Todos los activos)</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input 
+                                            type="radio" 
+                                            value="individual" 
+                                            checked={extraFeeType === 'individual'}
+                                            onChange={() => setExtraFeeType('individual')}
+                                            disabled={isReadOnly || applyingExtra}
+                                            className="text-purple-600"
+                                        />
+                                        <span className="text-white">Individual</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            {/* Selector de usuario si es individual */}
+                            {extraFeeType === 'individual' && (
+                                <div className="mb-3">
+                                    <label className="block text-xs font-bold uppercase text-gray-400 mb-2">Seleccionar Usuario</label>
+                                    <select 
+                                        value={selectedUserForFee}
+                                        onChange={(e) => setSelectedUserForFee(e.target.value)}
+                                        disabled={isReadOnly || applyingExtra}
+                                        className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white"
+                                    >
+                                        <option value="">-- Selecciona un usuario --</option>
+                                        {users.filter(u => u.active).map(u => (
+                                            <option key={u.uid} value={u.uid}>{u.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                                <input 
+                                    type="month" 
+                                    value={extraFeePeriod} 
+                                    onChange={e => setExtraFeePeriod(e.target.value)}
+                                    disabled={isReadOnly || applyingExtra}
+                                    className="bg-logia-900 border border-logia-700 rounded p-2 text-white"
+                                />
+                                <input 
+                                    type="number" 
+                                    placeholder="Monto Extra"
+                                    value={extraFeeAmount} 
+                                    onChange={e => setExtraFeeAmount(Number(e.target.value))}
+                                    disabled={isReadOnly || applyingExtra}
+                                    className="bg-logia-900 border border-logia-700 rounded p-2 text-white"
+                                />
+                                <input 
+                                    type="text" 
+                                    placeholder="Concepto (Ej. Cena)"
+                                    value={extraFeeDesc} 
+                                    onChange={e => setExtraFeeDesc(e.target.value)}
+                                    disabled={isReadOnly || applyingExtra}
+                                    className="bg-logia-900 border border-logia-700 rounded p-2 text-white"
+                                />
+                            </div>
+                            <button 
+                                onClick={handleSaveExtraFee}
+                                disabled={isReadOnly || applyingExtra}
+                                className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded w-full disabled:opacity-50"
+                            >
+                                {applyingExtra ? 'Aplicando...' : 'Aplicar Cuota Extra'}
+                            </button>
+                        </>
+                    ) : (
+                        <div className="space-y-3">
+                            <p className="text-xs text-gray-400 mb-3">Historial de cuotas extraordinarias aplicadas. Puedes editarlas o eliminarlas (se revertirán los cambios en los ledgers).</p>
+                            
+                            {extraFees.length === 0 ? (
+                                <p className="text-center text-gray-500 py-8">No hay cuotas extraordinarias registradas</p>
+                            ) : (
+                                extraFees.map(fee => (
+                                    <div key={fee.id} className="bg-logia-900 p-4 rounded border border-logia-700">
+                                        <div className="flex justify-between items-start mb-2">
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${fee.type === 'mass' ? 'bg-purple-600' : 'bg-blue-600'}`}>
+                                                        {fee.type === 'mass' ? 'MASIVA' : 'INDIVIDUAL'}
+                                                    </span>
+                                                    <span className="text-indigo-400 font-mono font-bold">{fee.period}</span>
+                                                    <span className="text-green-400 font-bold">${fee.amount}</span>
+                                                </div>
+                                                <p className="text-white font-semibold">{fee.description || 'Sin descripción'}</p>
+                                                {fee.type === 'individual' && fee.targetUserName && (
+                                                    <p className="text-sm text-blue-400">👤 {fee.targetUserName}</p>
+                                                )}
+                                                <p className="text-xs text-gray-500 mt-1">
+                                                    Aplicada a {fee.appliedToUsers.length} usuario(s) • Por {fee.createdByName} • {new Date(fee.createdAt).toLocaleDateString('es-ES')}
+                                                </p>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button 
+                                                    onClick={() => handleEditExtraFee(fee)}
+                                                    disabled={isReadOnly}
+                                                    className="text-gray-400 hover:text-white p-2 bg-logia-800 rounded border border-logia-700"
+                                                    title="Editar"
+                                                >
+                                                    ✏️
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleDeleteExtraFee(fee)}
+                                                    disabled={isReadOnly}
+                                                    className="text-white p-2 bg-red-600 rounded hover:bg-red-500"
+                                                    title="Eliminar y Revertir"
+                                                >
+                                                    🗑️
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    )}
                 </div>
             </div>
         )}
-        
         {/* Attendance, Trivia, Treasury Tabs logic follows same pattern as Users/Fees */}
         {activeTab === 'attendance' && (
              <div className="space-y-6">
@@ -3097,6 +3327,84 @@ service cloud.firestore {
                         className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded font-bold"
                     >
                         Sí, Eliminar
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* DELETE EXTRA FEE CONFIRM MODAL */}
+      {showDeleteExtraFeeModal && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-6">
+            <div className="bg-logia-800 border border-red-500 p-6 rounded-xl max-w-sm w-full text-center shadow-2xl">
+                <div className="text-4xl mb-4">⚠️</div>
+                <h3 className="text-xl font-bold text-white mb-2">¿Eliminar Cuota Extraordinaria?</h3>
+                <p className="text-gray-400 mb-6">
+                    Esta acción eliminará el registro y revertirá los montos en los ledgers de los usuarios afectados.
+                </p>
+                <div className="flex gap-3">
+                    <button 
+                        onClick={() => setShowDeleteExtraFeeModal(false)}
+                        className="flex-1 py-3 bg-gray-700 text-white rounded font-bold"
+                    >
+                        Cancelar
+                    </button>
+                    <button 
+                        onClick={executeDeleteExtraFee}
+                        className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded font-bold"
+                    >
+                        Sí, Eliminar y Revertir
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* EDIT EXTRA FEE MODAL */}
+      {showEditExtraFeeModal && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-6">
+            <div className="bg-logia-800 border border-purple-500 p-6 rounded-xl max-w-md w-full shadow-2xl">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xl font-bold text-white">Editar Cuota Extraordinaria</h3>
+                    <button 
+                        onClick={() => setShowEditExtraFeeModal(false)}
+                        className="text-gray-400 hover:text-white text-2xl"
+                    >
+                        ×
+                    </button>
+                </div>
+                <div className="space-y-3">
+                    <div>
+                        <label className="block text-xs font-bold uppercase text-gray-400 mb-2">Monto</label>
+                        <input 
+                            type="number"
+                            value={editExtraFeeData.amount}
+                            onChange={e => setEditExtraFeeData({...editExtraFeeData, amount: Number(e.target.value)})}
+                            className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold uppercase text-gray-400 mb-2">Descripción</label>
+                        <input 
+                            type="text"
+                            value={editExtraFeeData.description}
+                            onChange={e => setEditExtraFeeData({...editExtraFeeData, description: e.target.value})}
+                            className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white"
+                        />
+                    </div>
+                </div>
+                <div className="flex gap-3 mt-6">
+                    <button 
+                        onClick={() => setShowEditExtraFeeModal(false)}
+                        className="flex-1 py-3 bg-gray-700 text-white rounded font-bold"
+                    >
+                        Cancelar
+                    </button>
+                    <button 
+                        onClick={executeEditExtraFee}
+                        className="flex-1 py-3 bg-purple-600 hover:bg-purple-500 text-white rounded font-bold"
+                    >
+                        Guardar Cambios
                     </button>
                 </div>
             </div>

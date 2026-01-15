@@ -1,5 +1,5 @@
 
-import { User, Payment, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Group, VisitRequest, VisitMessage, BankBalance } from '../types';
+import { User, Payment, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee } from '../types';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { auth, db } from './firebase';
 import { 
@@ -13,6 +13,7 @@ import {
   setDoc, 
   updateDoc, 
   deleteDoc,
+  deleteField,
   collection, 
   query, 
   where, 
@@ -1087,6 +1088,183 @@ export const dataService = {
   deleteBankBalance: async (id: string) => {
     const ref = doc(db, "bankBalances", id);
     await deleteDoc(ref);
+  },
+
+  // EXTRA FEES MANAGEMENT
+  getExtraFees: async (groupId: string): Promise<ExtraFee[]> => {
+    const q = query(
+      collection(db, "extraFees"),
+      where("groupId", "==", groupId)
+    );
+    const snapshot = await getDocs(q);
+    const fees = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ExtraFee));
+    return fees.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  },
+
+  createExtraFee: async (fee: Omit<ExtraFee, 'id'>): Promise<string> => {
+    const ref = await addDoc(collection(db, "extraFees"), fee);
+    return ref.id;
+  },
+
+  deleteExtraFee: async (extraFeeId: string, appliedToUsers: string[], period: string, amount: number) => {
+    // 1. Eliminar el registro de extraFee
+    await deleteDoc(doc(db, "extraFees", extraFeeId));
+    
+    // 2. Revertir el monto de los ledgers de los usuarios
+    const chunkSize = 450;
+    for (let i = 0; i < appliedToUsers.length; i += chunkSize) {
+      const chunk = appliedToUsers.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+      let hasOps = false;
+
+      for (const uid of chunk) {
+        const ledgerRef = doc(db, "users", uid, "ledger", period);
+        const ledgerSnap = await getDoc(ledgerRef);
+        
+        if (ledgerSnap.exists()) {
+          const currentExtra = ledgerSnap.data().extraAmount || 0;
+          const newExtra = Math.max(0, currentExtra - amount);
+          
+          if (newExtra === 0) {
+            // Si no queda extraAmount, eliminar esos campos
+            batch.update(ledgerRef, {
+              extraAmount: deleteField(),
+              extraDescription: deleteField()
+            });
+          } else {
+            // Si aún queda monto, solo restar
+            batch.update(ledgerRef, {
+              extraAmount: newExtra
+            });
+          }
+          hasOps = true;
+        }
+      }
+      
+      if (hasOps) {
+        await batch.commit();
+      }
+    }
+  },
+
+  updateExtraFee: async (extraFeeId: string, updates: { description?: string; amount?: number }, oldAmount: number, appliedToUsers: string[], period: string) => {
+    // 1. Actualizar el registro de extraFee
+    await updateDoc(doc(db, "extraFees", extraFeeId), updates);
+    
+    // 2. Si cambió el monto, actualizar los ledgers
+    if (updates.amount !== undefined && updates.amount !== oldAmount) {
+      const amountDiff = updates.amount - oldAmount;
+      const chunkSize = 450;
+      
+      for (let i = 0; i < appliedToUsers.length; i += chunkSize) {
+        const chunk = appliedToUsers.slice(i, i + chunkSize);
+        const batch = writeBatch(db);
+        let hasOps = false;
+
+        for (const uid of chunk) {
+          const ledgerRef = doc(db, "users", uid, "ledger", period);
+          batch.set(ledgerRef, {
+            period,
+            extraAmount: increment(amountDiff)
+          }, { merge: true });
+          hasOps = true;
+        }
+        
+        if (hasOps) {
+          await batch.commit();
+        }
+      }
+    }
+  },
+
+  assignExtraFeeToUser: async (
+    groupId: string,
+    uid: string,
+    userName: string,
+    period: string,
+    amount: number,
+    description: string,
+    createdBy: string,
+    createdByName: string
+  ): Promise<string> => {
+    // 1. Crear registro en extraFees
+    const extraFee: Omit<ExtraFee, 'id'> = {
+      groupId,
+      period,
+      amount,
+      description,
+      type: 'individual',
+      targetUserId: uid,
+      targetUserName: userName,
+      createdBy,
+      createdByName,
+      createdAt: new Date().toISOString(),
+      appliedToUsers: [uid]
+    };
+    
+    const extraFeeId = await dataService.createExtraFee(extraFee);
+    
+    // 2. Aplicar al ledger del usuario
+    const ledgerRef = doc(db, "users", uid, "ledger", period);
+    await setDoc(ledgerRef, {
+      period,
+      extraAmount: increment(amount),
+      extraDescription: description
+    }, { merge: true });
+    
+    return extraFeeId;
+  },
+
+  assignExtraFeeToAllNew: async (
+    groupId: string,
+    period: string,
+    amount: number,
+    description: string,
+    createdBy: string,
+    createdByName: string
+  ): Promise<string> => {
+    const users = await dataService.getUsers(groupId);
+    const activeUsers = users.filter(u => u.active);
+    const appliedToUsers = activeUsers.map(u => u.uid);
+    
+    // 1. Crear registro en extraFees
+    const extraFee: Omit<ExtraFee, 'id'> = {
+      groupId,
+      period,
+      amount,
+      description,
+      type: 'mass',
+      createdBy,
+      createdByName,
+      createdAt: new Date().toISOString(),
+      appliedToUsers
+    };
+    
+    const extraFeeId = await dataService.createExtraFee(extraFee);
+    
+    // 2. Aplicar a ledgers de usuarios activos
+    const chunkSize = 450;
+    for (let i = 0; i < activeUsers.length; i += chunkSize) {
+      const chunk = activeUsers.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+      let hasOps = false;
+
+      for (const u of chunk) {
+        const ref = doc(db, "users", u.uid, "ledger", period);
+        batch.set(ref, {
+          period,
+          extraAmount: increment(Number(amount)),
+          extraDescription: description,
+        }, { merge: true });
+        hasOps = true;
+      }
+      
+      if (hasOps) {
+        await batch.commit();
+      }
+    }
+    
+    return extraFeeId;
   }
 };
 
