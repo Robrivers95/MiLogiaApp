@@ -64,7 +64,7 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
 
       {/* Version Indicator */}
       <div className="fixed bottom-20 left-2 text-[10px] text-gray-600 font-mono bg-logia-900/80 px-2 py-1 rounded border border-logia-700/50 z-10">
-        v2.6.0
+        v2.6.1
       </div>
 
       {/* Bottom Nav (Mobile First) */}

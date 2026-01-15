@@ -437,8 +437,8 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const handleSaveExtraFee = async () => {
-      if (isReadOnly || !extraFeePeriod || !extraFeeAmount || extraFeeAmount <= 0) {
-          showMessage("Completa período y monto", 'error');
+      if (isReadOnly || !extraFeePeriod || extraFeeAmount === 0 || extraFeeAmount === undefined || extraFeeAmount === null) {
+          showMessage("Completa período y monto válido (puede ser negativo para descuentos)", 'error');
           return;
       }
 
@@ -1738,7 +1738,8 @@ const Admin: React.FC<Props> = ({ user }) => {
                                 />
                                 <input 
                                     type="number" 
-                                    placeholder="Monto Extra"
+                                    step="0.01"
+                                    placeholder="Monto (+ cargo, - descuento)"
                                     value={extraFeeAmount} 
                                     onChange={e => setExtraFeeAmount(Number(e.target.value))}
                                     disabled={isReadOnly || applyingExtra}
@@ -1746,7 +1747,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                 />
                                 <input 
                                     type="text" 
-                                    placeholder="Concepto (Ej. Cena)"
+                                    placeholder="Concepto (Ej. Cena, Descuento)"
                                     value={extraFeeDesc} 
                                     onChange={e => setExtraFeeDesc(e.target.value)}
                                     disabled={isReadOnly || applyingExtra}
@@ -1777,7 +1778,10 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                         {fee.type === 'mass' ? 'MASIVA' : 'INDIVIDUAL'}
                                                     </span>
                                                     <span className="text-indigo-400 font-mono font-bold">{fee.period}</span>
-                                                    <span className="text-green-400 font-bold">${fee.amount}</span>
+                                                    <span className={`font-bold ${fee.amount >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                        {fee.amount >= 0 ? '+' : ''}${fee.amount}
+                                                    </span>
+                                                    {fee.amount < 0 && <span className="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded">DESCUENTO</span>}
                                                 </div>
                                                 <p className="text-white font-semibold">{fee.description || 'Sin descripción'}</p>
                                                 {fee.type === 'individual' && fee.targetUserName && (
