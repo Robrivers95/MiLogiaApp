@@ -10,7 +10,7 @@ interface Props {
   user: User;
 }
 
-type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'notices' | 'banks' | 'visits' | 'payment-matrix' | 'create-user';
+type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'notices' | 'banks' | 'visits' | 'payment-matrix' | 'create-user' | 'manual-merge';
 
 const Admin: React.FC<Props> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
@@ -155,6 +155,11 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [matrixMonths] = useState(['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']);
   const [allUserLedgers, setAllUserLedgers] = useState<Record<string, Payment[]>>({});
 
+  // Manual Merge State
+  const [tempUsers, setTempUsers] = useState<User[]>([]);
+  const [selectedTempUser, setSelectedTempUser] = useState<string | null>(null);
+  const [selectedRealUser, setSelectedRealUser] = useState<string | null>(null);
+  const [mergingUsers, setMergingUsers] = useState(false);
 
   // Modals
   const [editingUserLedger, setEditingUserLedger] = useState<string | null>(null);
@@ -216,6 +221,9 @@ const Admin: React.FC<Props> = ({ user }) => {
       if (activeTab === 'payment-matrix') {
           loadAllLedgers();
       }
+      if (activeTab === 'manual-merge') {
+          loadTempUsers();
+      }
   }, [activeTab, dashboardStart, dashboardEnd]);
 
   const refreshAllData = async () => {
@@ -248,6 +256,18 @@ const Admin: React.FC<Props> = ({ user }) => {
     } catch (e) {
         console.error("Error loading users", e);
         showMessage("Error cargando usuarios. Revisa Reglas.", 'error');
+    }
+  };
+
+  const loadTempUsers = async () => {
+    try {
+        const data = await dataService.getUsers(user.groupId);
+        // Filter only temp users (uid starts with 'temp_')
+        const tempUsersFiltered = data.filter(u => u.uid.startsWith('temp_'));
+        setTempUsers(tempUsersFiltered);
+    } catch (e) {
+        console.error("Error loading temp users", e);
+        showMessage("Error cargando usuarios temporales", 'error');
     }
   };
 
@@ -1295,6 +1315,49 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
   };
 
+  const handleManualMerge = async () => {
+      if (!selectedTempUser || !selectedRealUser) {
+          showMessage("Debes seleccionar ambos usuarios", 'error');
+          return;
+      }
+
+      if (selectedTempUser === selectedRealUser) {
+          showMessage("No puedes vincular un usuario consigo mismo", 'error');
+          return;
+      }
+
+      const tempUser = tempUsers.find(u => u.uid === selectedTempUser);
+      const realUser = users.find(u => u.uid === selectedRealUser);
+
+      if (!tempUser || !realUser) {
+          showMessage("Usuario no encontrado", 'error');
+          return;
+      }
+
+      const confirmed = window.confirm(
+          `¿Seguro que deseas vincular:\n\n` +
+          `Usuario Temporal: ${tempUser.name} (${tempUser.email})\n` +
+          `Usuario Real: ${realUser.name} (${realUser.email})\n\n` +
+          `Se copiarán todos los pagos y asistencias del usuario temporal al real, y se eliminará el usuario temporal.`
+      );
+
+      if (!confirmed) return;
+
+      setMergingUsers(true);
+      try {
+          await authService.manualMergeUsers(selectedTempUser, selectedRealUser);
+          showMessage("✅ Usuarios vinculados exitosamente");
+          setSelectedTempUser(null);
+          setSelectedRealUser(null);
+          await loadUsers();
+      } catch (e: any) {
+          console.error(e);
+          showMessage(e.message || "Error vinculando usuarios", 'error');
+      } finally {
+          setMergingUsers(false);
+      }
+  };
+
   const handleToggleMatrixPayment = async (uid: string, period: string) => {
       if (isReadOnly) return;
       
@@ -1403,7 +1466,8 @@ const Admin: React.FC<Props> = ({ user }) => {
             {id: 'banks', label: 'Bancos'},
             {id: 'visits', label: 'Visitas'},
             {id: 'payment-matrix', label: 'Matriz de Pagos'},
-            {id: 'create-user', label: 'Crear Usuario'}
+            {id: 'create-user', label: 'Crear Usuario'},
+            {id: 'manual-merge', label: 'Vincular Usuarios'}
         ].map((t) => (
           <button
             key={t.id}
@@ -2824,10 +2888,13 @@ const Admin: React.FC<Props> = ({ user }) => {
             <div className="space-y-6">
                 <div className="bg-logia-800 border border-logia-700 rounded-xl p-6">
                     <h3 className="text-xl font-bold text-white mb-4">👤 Crear Nuevo Usuario</h3>
-                    <p className="text-gray-400 mb-6 text-sm">
-                        Crea un usuario que aún no tiene cuenta. Cuando la persona se registre con su correo real, 
-                        <strong className="text-indigo-400"> todos los datos se vincularán automáticamente</strong>.
-                    </p>
+                    <div className="bg-yellow-900/30 border border-yellow-600/50 rounded-lg p-4 mb-4">
+                        <p className="text-yellow-200 text-sm font-medium mb-2">⚠️ Importante - Vinculación Automática:</p>
+                        <ul className="text-yellow-100 text-xs space-y-1 list-disc list-inside">
+                            <li><strong>Si conoces el email del miembro:</strong> Ingrésalo aquí. Cuando se registre con ese email, todos sus datos se vincularán automáticamente.</li>
+                            <li><strong>Si NO conoces el email:</strong> Déjalo vacío. Tendrás que activar manualmente al usuario cuando se registre.</li>
+                        </ul>
+                    </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                         <div>
@@ -2886,6 +2953,128 @@ const Admin: React.FC<Props> = ({ user }) => {
                         {creatingUser ? 'Creando...' : '✅ Crear Usuario'}
                     </button>
                 </div>
+            </div>
+        )}
+
+        {/* MANUAL MERGE TAB */}
+        {activeTab === 'manual-merge' && (
+            <div className="space-y-6">
+                <div className="bg-logia-800 rounded-xl p-6 border border-logia-700">
+                    <h3 className="text-xl font-bold text-white mb-4">🔗 Vincular Usuarios Manualmente</h3>
+                    
+                    <div className="bg-blue-900/30 border border-blue-600/50 rounded-lg p-4 mb-6">
+                        <p className="text-blue-200 text-sm font-medium mb-2">ℹ️ Acerca de esta herramienta:</p>
+                        <ul className="text-blue-100 text-xs space-y-1 list-disc list-inside">
+                            <li>Esta herramienta permite vincular usuarios temporales (creados sin email) con usuarios reales que ya se registraron.</li>
+                            <li>Se copiarán todos los pagos, asistencias y datos del usuario temporal al usuario real.</li>
+                            <li>El usuario temporal será eliminado después de la vinculación.</li>
+                            <li><strong>Importante:</strong> Esta acción no se puede deshacer. Verifica bien antes de vincular.</li>
+                        </ul>
+                    </div>
+
+                    {tempUsers.length === 0 ? (
+                        <div className="text-center py-8">
+                            <p className="text-gray-400">✅ No hay usuarios temporales pendientes de vinculación.</p>
+                        </div>
+                    ) : (
+                        <div className="space-y-6">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-300 mb-2">
+                                    1. Selecciona el Usuario Temporal (con correo temp_)
+                                </label>
+                                <select
+                                    value={selectedTempUser || ''}
+                                    onChange={(e) => setSelectedTempUser(e.target.value || null)}
+                                    className="w-full px-4 py-2 bg-logia-900 border border-logia-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500"
+                                >
+                                    <option value="">-- Selecciona un usuario temporal --</option>
+                                    {tempUsers.map(u => (
+                                        <option key={u.uid} value={u.uid}>
+                                            {u.name} ({u.email})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-300 mb-2">
+                                    2. Selecciona el Usuario Real (registrado con email válido)
+                                </label>
+                                <select
+                                    value={selectedRealUser || ''}
+                                    onChange={(e) => setSelectedRealUser(e.target.value || null)}
+                                    className="w-full px-4 py-2 bg-logia-900 border border-logia-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500"
+                                >
+                                    <option value="">-- Selecciona un usuario real --</option>
+                                    {users
+                                        .filter(u => !u.uid.startsWith('temp_'))
+                                        .map(u => (
+                                            <option key={u.uid} value={u.uid}>
+                                                {u.name} ({u.email}) - {u.active ? '✅ Activo' : '⚠️ Inactivo'}
+                                            </option>
+                                        ))}
+                                </select>
+                            </div>
+
+                            {selectedTempUser && selectedRealUser && (
+                                <div className="bg-yellow-900/30 border border-yellow-600/50 rounded-lg p-4">
+                                    <p className="text-yellow-200 text-sm font-medium mb-2">⚠️ Resumen de Vinculación:</p>
+                                    <div className="text-yellow-100 text-xs space-y-1">
+                                        <p><strong>Usuario Temporal:</strong> {tempUsers.find(u => u.uid === selectedTempUser)?.name}</p>
+                                        <p><strong>Usuario Real:</strong> {users.find(u => u.uid === selectedRealUser)?.name}</p>
+                                        <p className="mt-2 text-yellow-200">
+                                            Se copiarán todos los datos del usuario temporal al real y se eliminará el usuario temporal.
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+
+                            <button
+                                onClick={handleManualMerge}
+                                disabled={mergingUsers || !selectedTempUser || !selectedRealUser}
+                                className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg font-medium transition-colors"
+                            >
+                                {mergingUsers ? '⏳ Vinculando usuarios...' : '🔗 Vincular Usuarios'}
+                            </button>
+                        </div>
+                    )}
+                </div>
+
+                {tempUsers.length > 0 && (
+                    <div className="bg-logia-800 rounded-xl p-6 border border-logia-700">
+                        <h4 className="text-lg font-bold text-white mb-4">📋 Usuarios Temporales Pendientes</h4>
+                        <div className="overflow-x-auto">
+                            <table className="w-full">
+                                <thead>
+                                    <tr className="border-b border-logia-700">
+                                        <th className="text-left py-3 px-4 text-xs font-medium text-gray-400 uppercase">Nombre</th>
+                                        <th className="text-left py-3 px-4 text-xs font-medium text-gray-400 uppercase">Email Temporal</th>
+                                        <th className="text-left py-3 px-4 text-xs font-medium text-gray-400 uppercase">Grado</th>
+                                        <th className="text-left py-3 px-4 text-xs font-medium text-gray-400 uppercase">Rol</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {tempUsers.map(u => (
+                                        <tr key={u.uid} className="border-b border-logia-700 hover:bg-logia-900">
+                                            <td className="py-3 px-4 text-white">{u.name}</td>
+                                            <td className="py-3 px-4 text-gray-400 text-sm">{u.email}</td>
+                                            <td className="py-3 px-4 text-gray-400">{u.degree || 'N/A'}</td>
+                                            <td className="py-3 px-4">
+                                                <span className={`px-2 py-1 rounded text-xs ${
+                                                    u.role === 'admin' ? 'bg-purple-500/20 text-purple-200' :
+                                                    u.role === 'master' ? 'bg-yellow-500/20 text-yellow-200' :
+                                                    'bg-green-500/20 text-green-200'
+                                                }`}>
+                                                    {u.role}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
             </div>
         )}
 

@@ -177,6 +177,71 @@ export const authService = {
   },
 
   // Admin creates a user without Firebase Auth (user will register later themselves)
+  // Manual merge: admin manually links a temp user with a real registered user
+  manualMergeUsers: async (tempUserId: string, realUserId: string): Promise<void> => {
+    try {
+      // Get both users
+      const tempUserDoc = await getDoc(doc(db, "users", tempUserId));
+      const realUserDoc = await getDoc(doc(db, "users", realUserId));
+
+      if (!tempUserDoc.exists()) {
+        throw new Error("Usuario temporal no encontrado");
+      }
+      if (!realUserDoc.exists()) {
+        throw new Error("Usuario real no encontrado");
+      }
+
+      const tempUser = tempUserDoc.data() as User;
+      const realUser = realUserDoc.data() as User;
+
+      // Validate that tempUser is actually a temp user
+      if (!tempUserId.startsWith('temp_')) {
+        throw new Error("El primer usuario debe ser un usuario temporal");
+      }
+
+      // Copy ledger from temp to real user
+      const tempLedgerRef = collection(db, "users", tempUserId, "ledger");
+      const tempLedgerSnapshot = await getDocs(tempLedgerRef);
+      
+      for (const ledgerDoc of tempLedgerSnapshot.docs) {
+        const ledgerData = ledgerDoc.data();
+        const realLedgerRef = doc(db, "users", realUserId, "ledger", ledgerDoc.id);
+        await setDoc(realLedgerRef, ledgerData);
+      }
+
+      // Copy attendance from temp to real user
+      const tempAttendanceRef = collection(db, "users", tempUserId, "attendance");
+      const tempAttendanceSnapshot = await getDocs(tempAttendanceRef);
+      
+      for (const attendanceDoc of tempAttendanceSnapshot.docs) {
+        const attendanceData = attendanceDoc.data();
+        const realAttendanceRef = doc(db, "users", realUserId, "attendance", attendanceDoc.id);
+        await setDoc(realAttendanceRef, attendanceData);
+      }
+
+      // Update real user profile with any missing data from temp user
+      const updates: Partial<User> = {};
+      if (tempUser.degree && !realUser.degree) {
+        updates.degree = tempUser.degree;
+      }
+      if (tempUser.phoneNumber && !realUser.phoneNumber) {
+        updates.phoneNumber = tempUser.phoneNumber;
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await updateDoc(doc(db, "users", realUserId), updates as any);
+      }
+
+      // Delete the temp user
+      await deleteDoc(doc(db, "users", tempUserId));
+
+      console.log(`Successfully merged temp user ${tempUserId} into ${realUserId}`);
+    } catch (e: any) {
+      console.error("Error in manual merge:", e);
+      throw new Error(`Error al vincular usuarios: ${e.message}`);
+    }
+  },
+
   createUserByAdmin: async (email: string, name: string, role: string, degree: string, groupId: string): Promise<User> => {
     // Create a temporary UID based on email
     const tempUid = `temp_${email.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`;
