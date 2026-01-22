@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { User } from '../types';
+import InstallPrompt from './InstallPrompt';
 
 interface Props {
   user: User;
@@ -84,6 +85,9 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
           ))}
         </div>
       </nav>
+
+      {/* Install Prompt */}
+      <InstallPrompt />
     </div>
   );
 };

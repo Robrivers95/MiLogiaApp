@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Group } from '../types';
-import { dataService } from '../services/api';
+import { dataService, authService } from '../services/api';
 
 interface Props {
   onSelectGroup: (group: Group) => void;
@@ -28,6 +28,12 @@ const MasterDashboard: React.FC<Props> = ({ onSelectGroup, onLogout }) => {
   const [deletingGroup, setDeletingGroup] = useState<Group | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  // App Icon State
+  const [showIconConfig, setShowIconConfig] = useState(false);
+  const [uploadingIcon, setUploadingIcon] = useState(false);
+  const [currentIcon, setCurrentIcon] = useState<string | null>(null);
+  const [iconPreview, setIconPreview] = useState<string | null>(null);
 
   useEffect(() => {
     loadGroups();
@@ -102,6 +108,59 @@ const MasterDashboard: React.FC<Props> = ({ onSelectGroup, onLogout }) => {
     }
   };
 
+  const loadCurrentIcon = async () => {
+    try {
+      const iconUrl = await authService.getAppIcon('192');
+      setCurrentIcon(iconUrl);
+    } catch (e) {
+      console.error("Error loading icon:", e);
+    }
+  };
+
+  const handleIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      alert('Por favor selecciona una imagen');
+      return;
+    }
+
+    // Validate file size (max 2MB)
+    if (file.size > 2 * 1024 * 1024) {
+      alert('La imagen debe ser menor a 2MB');
+      return;
+    }
+
+    // Show preview
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setIconPreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+
+    setUploadingIcon(true);
+    try {
+      // Upload as PNG for 192 and 512
+      await authService.uploadAppIcon(file, '192');
+      await authService.uploadAppIcon(file, '512');
+      
+      alert('✅ Icono actualizado exitosamente. Los usuarios verán el nuevo icono al reinstalar la app.');
+      await loadCurrentIcon();
+      setIconPreview(null);
+    } catch (e: any) {
+      alert('Error subiendo icono: ' + e.message);
+    } finally {
+      setUploadingIcon(false);
+    }
+  };
+
+  useEffect(() => {
+    if (showIconConfig) {
+      loadCurrentIcon();
+    }
+  }, [showIconConfig]);
   return (
     <div className="min-h-screen bg-logia-900 p-6 font-sans">
       <div className="max-w-4xl mx-auto space-y-8">
@@ -116,7 +175,13 @@ const MasterDashboard: React.FC<Props> = ({ onSelectGroup, onLogout }) => {
           </button>
         </header>
 
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-3">
+          <button 
+            onClick={() => setShowIconConfig(!showIconConfig)}
+            className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded shadow-lg transition-transform active:scale-95"
+          >
+            {showIconConfig ? 'Cerrar Configuración' : '📱 Configurar App'}
+          </button>
           <button 
             onClick={() => setShowCreate(!showCreate)}
             className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-4 rounded shadow-lg transition-transform active:scale-95"
@@ -157,6 +222,71 @@ const MasterDashboard: React.FC<Props> = ({ onSelectGroup, onLogout }) => {
                 {creating ? 'Creando...' : 'Crear Logia'}
               </button>
             </form>
+          </div>
+        )}
+
+        {showIconConfig && (
+          <div className="bg-logia-800 p-6 rounded-xl border border-logia-700 shadow-2xl animate-fade-in-down">
+            <h3 className="text-xl font-bold text-white mb-4">📱 Configuración del Icono de la App</h3>
+            
+            <div className="bg-blue-900/30 border border-blue-600/50 rounded-lg p-4 mb-6">
+              <p className="text-blue-200 text-sm">
+                ℹ️ El icono se mostrará cuando los usuarios instalen la aplicación en sus dispositivos móviles.
+                Se recomienda usar una imagen cuadrada de al menos 512x512 píxeles.
+              </p>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-gray-400 text-xs uppercase mb-3">Icono Actual</label>
+                <div className="bg-logia-900 border-2 border-logia-700 rounded-xl p-6 flex items-center justify-center h-48">
+                  {currentIcon ? (
+                    <img src={currentIcon} alt="App Icon" className="max-w-full max-h-full object-contain rounded-xl" />
+                  ) : (
+                    <div className="text-center">
+                      <p className="text-gray-500 text-sm">Sin icono personalizado</p>
+                      <p className="text-gray-600 text-xs mt-1">Se usa el icono por defecto</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-gray-400 text-xs uppercase mb-3">Nueva Imagen</label>
+                <div className="bg-logia-900 border-2 border-dashed border-logia-700 rounded-xl p-6 flex items-center justify-center h-48">
+                  {iconPreview ? (
+                    <img src={iconPreview} alt="Preview" className="max-w-full max-h-full object-contain rounded-xl" />
+                  ) : (
+                    <div className="text-center">
+                      <p className="text-gray-500 text-sm">Vista previa</p>
+                      <p className="text-gray-600 text-xs mt-1">Selecciona una imagen abajo</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleIconUpload}
+                disabled={uploadingIcon}
+                className="hidden"
+                id="icon-upload"
+              />
+              <label
+                htmlFor="icon-upload"
+                className={`block w-full text-center bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded cursor-pointer transition-colors ${
+                  uploadingIcon ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                {uploadingIcon ? '⏳ Subiendo icono...' : '📤 Seleccionar y Subir Icono'}
+              </label>
+              <p className="text-gray-500 text-xs mt-2 text-center">
+                Formatos aceptados: JPG, PNG, SVG | Tamaño máximo: 2MB
+              </p>
+            </div>
           </div>
         )}
 
