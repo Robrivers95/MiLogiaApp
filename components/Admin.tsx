@@ -1276,7 +1276,12 @@ const Admin: React.FC<Props> = ({ user }) => {
               newUserDegree.trim(),
               user.groupId || ''
           );
-          showMessage("Usuario creado exitosamente");
+          const hasRealEmail = newUserEmail.trim() && !newUserEmail.includes('temp_');
+          if (hasRealEmail) {
+              showMessage("✅ Usuario creado. Cuando se registre con este correo, se vincularán automáticamente sus datos.");
+          } else {
+              showMessage("✅ Usuario creado con email temporal. Sus datos se vincularán cuando se registre con su correo real.");
+          }
           setNewUserName('');
           setNewUserEmail('');
           setNewUserRole('member');
@@ -2820,7 +2825,8 @@ const Admin: React.FC<Props> = ({ user }) => {
                 <div className="bg-logia-800 border border-logia-700 rounded-xl p-6">
                     <h3 className="text-xl font-bold text-white mb-4">👤 Crear Nuevo Usuario</h3>
                     <p className="text-gray-400 mb-6 text-sm">
-                        Crea un usuario que aún no tiene cuenta. El usuario podrá registrarse posteriormente con este correo.
+                        Crea un usuario que aún no tiene cuenta. Cuando la persona se registre con su correo real, 
+                        <strong className="text-indigo-400"> todos los datos se vincularán automáticamente</strong>.
                     </p>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">

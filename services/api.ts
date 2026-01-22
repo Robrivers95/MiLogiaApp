@@ -93,25 +93,75 @@ export const authService = {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const uid = userCredential.user.uid;
     
+    // --- MERGE WITH EXISTING USER DATA (v3.0.1) ---
+    // Check if an admin created a user profile with this email
+    const usersQuery = query(collection(db, "users"), where("email", "==", email));
+    const existingUsers = await getDocs(usersQuery);
+    
+    let existingUserData: any = null;
+    let tempUidToDelete: string | null = null;
+    
+    existingUsers.forEach(doc => {
+      // Found a user with this email but different UID (created by admin)
+      if (doc.id !== uid && doc.id.startsWith('temp_')) {
+        existingUserData = doc.data();
+        tempUidToDelete = doc.id;
+      }
+    });
+    // -----------------------------------------------
+    
     // --- SUPER ADMIN CHECK ---
-    const role = email === 'robrivers95@gmail.com' ? 'master' : 'member';
+    const role = email === 'robrivers95@gmail.com' ? 'master' : (existingUserData?.role || 'member');
     // -------------------------
 
     const newUser: User = {
       uid,
-      name,
+      name: existingUserData?.name || name,
       email,
       role: role,
-      active: false,
-      groupId: groupId,
-      joinDate: new Date().toISOString(),
+      active: existingUserData?.active ?? false,
+      groupId: existingUserData?.groupId || groupId,
+      joinDate: existingUserData?.joinDate || new Date().toISOString(),
       profileEditable: true,
-      rpg: { ...INITIAL_RPG, name: name.split(' ')[0] },
-      totalPoints: 0
+      degree: existingUserData?.degree,
+      lodgeRole: existingUserData?.lodgeRole,
+      numericDegree: existingUserData?.numericDegree,
+      profession: existingUserData?.profession,
+      job: existingUserData?.job,
+      workAddress: existingUserData?.workAddress,
+      city: existingUserData?.city,
+      state: existingUserData?.state,
+      country: existingUserData?.country,
+      masonicJoinDate: existingUserData?.masonicJoinDate,
+      masonicRejoinDate: existingUserData?.masonicRejoinDate,
+      rpg: existingUserData?.rpg || { ...INITIAL_RPG, name: name.split(' ')[0] },
+      totalPoints: existingUserData?.totalPoints || 0
     };
     
     await setDoc(doc(db, "users", uid), newUser);
-    await updateProfile(userCredential.user, { displayName: name });
+    await updateProfile(userCredential.user, { displayName: newUser.name });
+    
+    // If there was a temp user, copy subcollections and delete temp user
+    if (tempUidToDelete) {
+      try {
+        // Copy ledger
+        const ledgerSnap = await getDocs(collection(db, "users", tempUidToDelete, "ledger"));
+        for (const ldoc of ledgerSnap.docs) {
+          await setDoc(doc(db, "users", uid, "ledger", ldoc.id), ldoc.data());
+        }
+        
+        // Copy attendance
+        const attSnap = await getDocs(collection(db, "users", tempUidToDelete, "attendance"));
+        for (const adoc of attSnap.docs) {
+          await setDoc(doc(db, "users", uid, "attendance", adoc.id), adoc.data());
+        }
+        
+        // Delete temp user
+        await deleteDoc(doc(db, "users", tempUidToDelete));
+      } catch (e) {
+        console.error("Error merging temp user data:", e);
+      }
+    }
     
     return newUser;
   },
