@@ -26,7 +26,14 @@ const Payments: React.FC<Props> = ({ user }) => {
   const calculateTotalDue = (p: Payment) => p.amount + (p.extraAmount || 0);
 
   const summary = {
-    pendingCount: payments.filter(p => p.status === 'Pendiente').length,
+    // v3.0.0: Use regularCovered to determine if monthly fee is pending
+    pendingCount: payments.filter(p => {
+      // If regularCovered exists, use it; otherwise fallback to status
+      if (p.regularCovered !== undefined) {
+        return !p.regularCovered;
+      }
+      return p.status === 'Pendiente';
+    }).length,
     totalDebt: payments.reduce((acc, p) => acc + (calculateTotalDue(p) - p.paid), 0),
     paidCount: payments.filter(p => p.status === 'Pagado').length
   };

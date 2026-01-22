@@ -1440,57 +1440,7 @@ const Admin: React.FC<Props> = ({ user }) => {
 
                 <h3 className="text-lg font-bold text-white">Resumen General</h3>
                 
-                <div className="bg-logia-800 p-4 rounded-xl border border-logia-700 flex flex-wrap gap-4 items-end">
-                    <div className="flex-1 min-w-[150px]">
-                        <label className="text-xs text-gray-400 uppercase">Desde</label>
-                        <input type="date" value={dashboardStart} onChange={e => setDashboardStart(e.target.value)} className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-sm" />
-                    </div>
-                    <div className="flex-1 min-w-[150px]">
-                        <label className="text-xs text-gray-400 uppercase">Hasta</label>
-                        <input type="date" value={dashboardEnd} onChange={e => setDashboardEnd(e.target.value)} className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-sm" />
-                    </div>
-                    <button onClick={loadDashboardStats} disabled={loadingDashboard} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded text-sm font-bold h-[38px]">
-                        {loadingDashboard ? 'Calculando...' : 'Actualizar Gráfica'}
-                    </button>
-                </div>
-
-                {/* Simple Bar Chart */}
-                <div className="bg-logia-800 p-6 rounded-xl border border-logia-700 shadow-lg">
-                    <h4 className="text-md font-bold text-white mb-6">Ingresos Totales (Cuotas + Tesoro) vs Egresos</h4>
-                    
-                    <div className="flex justify-center items-end h-64 gap-8 md:gap-16 pb-2 border-b border-logia-700">
-                        {/* Income Bar */}
-                        <div className="flex flex-col items-center group w-24">
-                            <div className="text-xs text-green-300 font-bold mb-1 opacity-100">${dbInc.toLocaleString()}</div>
-                            <div 
-                                className="w-full bg-green-500 rounded-t-lg transition-all duration-1000 hover:bg-green-400 relative border-t border-x border-green-300 shadow-[0_0_10px_rgba(34,197,94,0.3)]"
-                                style={{ 
-                                    height: `${Math.max(heightInc, 1)}%` // Ensure at least 1% visible
-                                }}
-                            >
-                            </div>
-                            <p className="text-xs uppercase mt-2 text-gray-400 font-bold">Ingresos (+)</p>
-                        </div>
-                        
-                        {/* Expense Bar */}
-                        <div className="flex flex-col items-center group w-24">
-                            <div className="text-xs text-red-300 font-bold mb-1 opacity-100">${dbExp.toLocaleString()}</div>
-                            <div 
-                                className="w-full bg-red-500 rounded-t-lg transition-all duration-1000 hover:bg-red-400 relative border-t border-x border-red-300 shadow-[0_0_10px_rgba(239,68,68,0.3)]"
-                                style={{ 
-                                    height: `${Math.max(heightExp, 1)}%` // Ensure at least 1% visible 
-                                }}
-                            >
-                            </div>
-                            <p className="text-xs uppercase mt-2 text-gray-400 font-bold">Egresos (-)</p>
-                        </div>
-                    </div>
-                    
-                    <div className="mt-4 text-center">
-                        <p className="text-sm text-gray-400">Balance del Periodo: <span className={`font-bold ${balance >= 0 ? 'text-green-400' : 'text-red-400'}`}>${balance.toLocaleString()}</span></p>
-                    </div>
-                </div>
-
+                {/* Simplified Dashboard - v3.0.0: Removed chart, only numeric cards */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div className="bg-logia-800 p-4 rounded-xl border border-logia-700 text-center">
                         <p className="text-xs text-gray-400 uppercase">Miembros Activos</p>
