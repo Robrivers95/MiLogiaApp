@@ -1274,7 +1274,7 @@ const Admin: React.FC<Props> = ({ user }) => {
               newUserName.trim(),
               newUserRole,
               newUserDegree.trim(),
-              currentGroup?.id || ''
+              user.groupId || ''
           );
           showMessage("Usuario creado exitosamente");
           setNewUserName('');
