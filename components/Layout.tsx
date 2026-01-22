@@ -13,6 +13,7 @@ interface Props {
 }
 
 const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onExitGroup, children }) => {
+  const [showInstallModal, setShowInstallModal] = React.useState(false);
   
   const navItems = [
     { id: 'home', label: 'Inicio', icon: '🏠' },
@@ -44,6 +45,14 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
         </div>
         <div className="flex gap-2">
             <button 
+              onClick={() => setShowInstallModal(true)}
+              className="text-sm px-3 py-1 rounded border border-green-700 bg-green-900 text-green-200 hover:bg-green-800 flex items-center gap-1"
+              title="Instalar aplicación"
+            >
+              <span>📱</span>
+              <span className="hidden sm:inline">Instalar App</span>
+            </button>
+            <button 
             onClick={() => onNavigate('profile')}
             className={`text-sm px-3 py-1 rounded border border-logia-700 ${currentView === 'profile' ? 'bg-logia-accent text-white' : 'bg-logia-900 text-gray-400'}`}
             >
@@ -65,7 +74,7 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
 
       {/* Version Indicator */}
       <div className="fixed bottom-20 left-2 text-[10px] text-gray-600 font-mono bg-logia-900/80 px-2 py-1 rounded border border-logia-700/50 z-10">
-        v3.0.3
+        v3.1.0
       </div>
 
       {/* Bottom Nav (Mobile First) */}
@@ -88,6 +97,69 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
 
       {/* Install Prompt */}
       <InstallPrompt />
+
+      {/* Install Instructions Modal */}
+      {showInstallModal && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setShowInstallModal(false)}>
+          <div className="bg-logia-800 rounded-xl max-w-lg w-full border border-logia-700 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold text-white">📱 Instalar Mi Logia</h3>
+                <button onClick={() => setShowInstallModal(false)} className="text-gray-400 hover:text-white text-2xl">&times;</button>
+              </div>
+
+              <div className="space-y-4 text-gray-300 text-sm">
+                <p className="text-indigo-300 font-medium">
+                  Instala la app en tu dispositivo para acceso rápido y mejor experiencia.
+                </p>
+
+                {/* Android Chrome */}
+                <div className="bg-logia-900 p-4 rounded-lg border border-logia-700">
+                  <h4 className="font-bold text-white mb-2">📱 Android (Chrome):</h4>
+                  <ol className="list-decimal list-inside space-y-1 text-xs">
+                    <li>Toca el menú <strong>⋮</strong> (arriba derecha)</li>
+                    <li>Selecciona <strong>"Añadir a pantalla de inicio"</strong> o <strong>"Instalar app"</strong></li>
+                    <li>Confirma y listo ✅</li>
+                  </ol>
+                </div>
+
+                {/* iPhone Safari */}
+                <div className="bg-logia-900 p-4 rounded-lg border border-logia-700">
+                  <h4 className="font-bold text-white mb-2">📱 iPhone (Safari):</h4>
+                  <ol className="list-decimal list-inside space-y-1 text-xs">
+                    <li>Toca el botón <strong>Compartir</strong> <span className="inline-block">📤</span> (abajo)</li>
+                    <li>Desplázate y toca <strong>"Añadir a pantalla de inicio"</strong></li>
+                    <li>Toca <strong>"Añadir"</strong> arriba derecha ✅</li>
+                  </ol>
+                </div>
+
+                {/* Desktop */}
+                <div className="bg-logia-900 p-4 rounded-lg border border-logia-700">
+                  <h4 className="font-bold text-white mb-2">💻 Computadora:</h4>
+                  <ol className="list-decimal list-inside space-y-1 text-xs">
+                    <li>En Chrome: Busca el ícono <strong>⊕</strong> en la barra de direcciones</li>
+                    <li>Haz clic en <strong>"Instalar"</strong></li>
+                    <li>La app se abrirá en su propia ventana ✅</li>
+                  </ol>
+                </div>
+
+                <div className="bg-blue-900/30 border border-blue-600/50 rounded-lg p-3 mt-4">
+                  <p className="text-blue-200 text-xs">
+                    💡 <strong>Ventajas:</strong> Acceso más rápido, notificaciones, funciona sin internet (algunos datos), y ocupa menos espacio que una app tradicional.
+                  </p>
+                </div>
+              </div>
+
+              <button 
+                onClick={() => setShowInstallModal(false)}
+                className="w-full mt-6 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-lg"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
