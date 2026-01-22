@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { User, Payment, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Trivia, VisitRequest, Group, BankBalance, ExtraFee } from '../types';
-import { dataService, generateTriviaWithAI } from '../services/api';
+import { dataService, generateTriviaWithAI, authService } from '../services/api';
 import { doc, deleteDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
@@ -1259,15 +1259,18 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const handleCreateUser = async () => {
-      if (!newUserName.trim() || !newUserEmail.trim()) {
-          showMessage("Nombre y correo son requeridos", 'error');
+      if (!newUserName.trim()) {
+          showMessage("El nombre es requerido", 'error');
           return;
       }
+      
+      // Generate temporary email if not provided
+      const email = newUserEmail.trim() || `temp_${Date.now()}@pending.com`;
       
       setCreatingUser(true);
       try {
           await authService.createUserByAdmin(
-              newUserEmail.trim(),
+              email,
               newUserName.trim(),
               newUserRole,
               newUserDegree.trim(),
@@ -2833,14 +2836,15 @@ const Admin: React.FC<Props> = ({ user }) => {
                         </div>
                         
                         <div>
-                            <label className="block text-sm font-medium text-gray-300 mb-2">Correo Electrónico</label>
+                            <label className="block text-sm font-medium text-gray-300 mb-2">Correo Electrónico (Opcional)</label>
                             <input
                                 type="email"
                                 value={newUserEmail}
                                 onChange={(e) => setNewUserEmail(e.target.value)}
-                                placeholder="correo@ejemplo.com"
+                                placeholder="correo@ejemplo.com (opcional)"
                                 className="w-full px-4 py-2 bg-logia-900 border border-logia-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500"
                             />
+                            <p className="text-xs text-gray-500 mt-1">Si no lo conoces, déjalo vacío. Se asignará uno temporal.</p>
                         </div>
                         
                         <div>
@@ -2870,7 +2874,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                     
                     <button
                         onClick={handleCreateUser}
-                        disabled={creatingUser || !newUserName.trim() || !newUserEmail.trim()}
+                        disabled={creatingUser || !newUserName.trim()}
                         className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg font-medium transition-colors"
                     >
                         {creatingUser ? 'Creando...' : '✅ Crear Usuario'}
@@ -3153,15 +3157,43 @@ const Admin: React.FC<Props> = ({ user }) => {
                                  
                                  <div className="flex flex-wrap items-center gap-2">
                                      <div className="flex flex-col">
-                                         <label className="text-[9px] text-gray-500 uppercase">Pagado</label>
+                                         <label className="text-[9px] text-gray-500 uppercase">Pago Mensual</label>
                                          <input 
                                             type="number" 
                                             placeholder="$0" 
-                                            value={p.paid} 
+                                            value={p.paidRegular ?? 0} 
                                             onChange={(e) => {
                                                 const valStr = e.target.value;
                                                 const val = valStr === '' ? 0 : parseFloat(valStr);
-                                                setEditPayments(prev => prev.map(x => x.period === p.period ? {...x, paid: isNaN(val) ? 0 : val} : x));
+                                                const newPaidReg = isNaN(val) ? 0 : val;
+                                                setEditPayments(prev => prev.map(x => x.period === p.period ? {
+                                                    ...x, 
+                                                    paidRegular: newPaidReg,
+                                                    regularCovered: newPaidReg >= x.amount,
+                                                    paid: newPaidReg + (x.paidExtra || 0)
+                                                } : x));
+                                            }}
+                                            onFocus={(e) => e.target.select()}
+                                            disabled={isReadOnly}
+                                            className="w-20 bg-logia-800 border border-logia-600 rounded p-1 text-white text-right"
+                                         />
+                                     </div>
+                                     <div className="flex flex-col">
+                                         <label className="text-[9px] text-gray-500 uppercase">Pago Extra</label>
+                                         <input 
+                                            type="number" 
+                                            placeholder="$0" 
+                                            value={p.paidExtra ?? 0} 
+                                            onChange={(e) => {
+                                                const valStr = e.target.value;
+                                                const val = valStr === '' ? 0 : parseFloat(valStr);
+                                                const newPaidExtra = isNaN(val) ? 0 : val;
+                                                setEditPayments(prev => prev.map(x => x.period === p.period ? {
+                                                    ...x, 
+                                                    paidExtra: newPaidExtra,
+                                                    extraCovered: newPaidExtra >= (x.extraAmount || 0),
+                                                    paid: (x.paidRegular || 0) + newPaidExtra
+                                                } : x));
                                             }}
                                             onFocus={(e) => e.target.select()}
                                             disabled={isReadOnly}
