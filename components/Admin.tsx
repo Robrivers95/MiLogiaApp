@@ -2,14 +2,15 @@
 import React, { useState, useEffect } from 'react';
 import { User, Payment, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Trivia, VisitRequest, Group, BankBalance, ExtraFee } from '../types';
 import { dataService, generateTriviaWithAI } from '../services/api';
-import { doc, deleteDoc } from 'firebase/firestore';
+import { doc, deleteDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
+
 
 interface Props {
   user: User;
 }
 
-type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'notices' | 'banks' | 'visits';
+type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'notices' | 'banks' | 'visits' | 'payment-matrix' | 'create-user';
 
 const Admin: React.FC<Props> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
@@ -22,7 +23,17 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [applyingExtra, setApplyingExtra] = useState(false);
   
   // Financial Stats Cache
-  const [userStats, setUserStats] = useState<Record<string, { totalPaid: number, totalDebt: number, totalBilled: number }>>({});
+  const [userStats, setUserStats] = useState<Record<string, { 
+    totalPaid: number; 
+    totalDebt: number; 
+    totalBilled: number;
+    totalPaidRegular?: number;
+    totalPaidExtra?: number;
+    totalBilledRegular?: number;
+    totalBilledExtra?: number;
+    totalDebtRegular?: number;
+    totalDebtExtra?: number;
+  }>>({});
   
   // Dashboard Stats
   const [dashboardStart, setDashboardStart] = useState(new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10)); // Jan 1st
@@ -132,6 +143,19 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [editExtraFeeData, setEditExtraFeeData] = useState({ description: '', amount: 0 });
   const [showEditExtraFeeModal, setShowEditExtraFeeModal] = useState(false);
 
+  // Create User State
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserRole, setNewUserRole] = useState<Role>('member');
+  const [newUserDegree, setNewUserDegree] = useState<MasonicDegree>('aprendiz');
+  const [creatingUser, setCreatingUser] = useState(false);
+
+  // Payment Matrix State
+  const [matrixYear, setMatrixYear] = useState(new Date().getFullYear());
+  const [matrixMonths] = useState(['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']);
+  const [allUserLedgers, setAllUserLedgers] = useState<Record<string, Payment[]>>({});
+
+
   // Modals
   const [editingUserLedger, setEditingUserLedger] = useState<string | null>(null);
   const [editPayments, setEditPayments] = useState<Payment[]>([]);
@@ -189,6 +213,9 @@ const Admin: React.FC<Props> = ({ user }) => {
       if (activeTab === 'fees') {
           loadExtraFees();
       }
+      if (activeTab === 'payment-matrix') {
+          loadAllLedgers();
+      }
   }, [activeTab, dashboardStart, dashboardEnd]);
 
   const refreshAllData = async () => {
@@ -221,6 +248,19 @@ const Admin: React.FC<Props> = ({ user }) => {
     } catch (e) {
         console.error("Error loading users", e);
         showMessage("Error cargando usuarios. Revisa Reglas.", 'error');
+    }
+  };
+
+  const loadAllLedgers = async () => {
+    try {
+        const ledgers: Record<string, Payment[]> = {};
+        for (const u of users) {
+            const paymentsSnap = await getDocs(collection(db, "users", u.uid, "ledger"));
+            ledgers[u.uid] = paymentsSnap.docs.map(doc => ({ ...doc.data(), period: doc.id } as Payment));
+        }
+        setAllUserLedgers(ledgers);
+    } catch (e) {
+        console.error("Error loading ledgers", e);
     }
   };
 
@@ -1218,6 +1258,76 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
   };
 
+  const handleCreateUser = async () => {
+      if (!newUserName.trim() || !newUserEmail.trim()) {
+          showMessage("Nombre y correo son requeridos", 'error');
+          return;
+      }
+      
+      setCreatingUser(true);
+      try {
+          await authService.createUserByAdmin(
+              newUserEmail.trim(),
+              newUserName.trim(),
+              newUserRole,
+              newUserDegree.trim(),
+              currentGroup?.id || ''
+          );
+          showMessage("Usuario creado exitosamente");
+          setNewUserName('');
+          setNewUserEmail('');
+          setNewUserRole('member');
+          setNewUserDegree('aprendiz');
+          await loadUsers();
+      } catch (e: any) {
+          console.error(e);
+          showMessage(e.message || "Error creando usuario", 'error');
+      } finally {
+          setCreatingUser(false);
+      }
+  };
+
+  const handleToggleMatrixPayment = async (uid: string, period: string) => {
+      if (isReadOnly) return;
+      
+      try {
+          // Get current payment for this period from ledger
+          const paymentsSnap = await getDocs(collection(db, "users", uid, "ledger"));
+          let payment: Payment | null = null;
+          
+          paymentsSnap.forEach(doc => {
+              if (doc.id === period) {
+                  payment = doc.data() as Payment;
+              }
+          });
+          
+          if (!payment) {
+              showMessage("No hay cuota registrada para este período", 'error');
+              return;
+          }
+          
+          const newCoveredStatus = !payment.regularCovered;
+          const newPaidRegular = newCoveredStatus ? payment.amount : 0;
+          
+          const updatedPayment: Payment = {
+              ...payment,
+              paidRegular: newPaidRegular,
+              regularCovered: newCoveredStatus,
+              // Update legacy 'paid' field for backward compatibility
+              paid: newPaidRegular + (payment.paidExtra || 0)
+          };
+          
+          await dataService.updatePayment(uid, updatedPayment);
+          
+          showMessage(newCoveredStatus ? "✅ Marcado como pagado" : "⏳ Marcado como pendiente");
+          await loadAllLedgers(); // Reload ledgers to update matrix
+          await loadUsers(); // Reload stats
+      } catch (e) {
+          console.error(e);
+          showMessage("Error actualizando pago", 'error');
+      }
+  };
+
   // Dashboard Chart Calculation
   const dbInc = Number(dashboardData.income) || 0;
   const dbExp = Number(dashboardData.expense) || 0;
@@ -1283,7 +1393,9 @@ const Admin: React.FC<Props> = ({ user }) => {
             {id: 'notices', label: 'Avisos'},
             {id: 'treasury', label: 'Tesorería'},
             {id: 'banks', label: 'Bancos'},
-            {id: 'visits', label: 'Visitas'}
+            {id: 'visits', label: 'Visitas'},
+            {id: 'payment-matrix', label: 'Matriz de Pagos'},
+            {id: 'create-user', label: 'Crear Usuario'}
         ].map((t) => (
           <button
             key={t.id}
@@ -1495,21 +1607,31 @@ const Admin: React.FC<Props> = ({ user }) => {
              </div>
              
              <div className="overflow-x-auto bg-logia-800 rounded-xl border border-logia-700 shadow-lg">
-                 <table className="w-full text-left text-sm text-gray-300 min-w-[800px]">
+                 <table className="w-full text-left text-sm text-gray-300 min-w-[1000px]">
                      <thead className="bg-logia-900 text-xs uppercase text-gray-500 font-bold">
                          <tr>
                              <th className="p-3">Nombre / Email</th>
                              <th className="p-3">Grado / Cargo</th>
                              <th className="p-3">Trabajo</th>
                              <th className="p-3">Rol App</th>
-                             <th className="p-3 text-right">Total Pagado</th>
-                             <th className="p-3 text-right">Deuda</th>
+                             <th className="p-3 text-right">Cuota Mensual</th>
+                             <th className="p-3 text-right">Cuota Extra</th>
+                             <th className="p-3 text-right">Pagado Mensual</th>
+                             <th className="p-3 text-right">Pagado Extra</th>
+                             <th className="p-3 text-right">Deuda Total</th>
                              <th className="p-3 text-center">Acciones</th>
                          </tr>
                      </thead>
                      <tbody className="divide-y divide-logia-700">
                          {filteredUsers.map(u => {
-                             const stats = userStats[u.uid] || { totalPaid: 0, totalDebt: 0 };
+                             const stats = userStats[u.uid] || { 
+                                 totalPaid: 0, 
+                                 totalDebt: 0, 
+                                 totalBilledRegular: 0, 
+                                 totalBilledExtra: 0,
+                                 totalPaidRegular: 0,
+                                 totalPaidExtra: 0
+                             };
                              return (
                                  <tr key={u.uid} className={`hover:bg-logia-700/50 transition-colors ${!u.active ? 'bg-red-900/10 opacity-70' : ''}`}>
                                      <td className="p-3">
@@ -1539,8 +1661,17 @@ const Admin: React.FC<Props> = ({ user }) => {
                                              <option value="viewer">Observador</option>
                                          </select>
                                      </td>
+                                     <td className="p-3 text-right font-mono text-gray-300">
+                                         ${stats.totalBilledRegular || 0}
+                                     </td>
+                                     <td className="p-3 text-right font-mono text-gray-300">
+                                         ${stats.totalBilledExtra || 0}
+                                     </td>
                                      <td className="p-3 text-right font-mono text-green-400">
-                                         ${stats.totalPaid}
+                                         ${stats.totalPaidRegular || 0}
+                                     </td>
+                                     <td className="p-3 text-right font-mono text-green-400">
+                                         ${stats.totalPaidExtra || 0}
                                      </td>
                                      <td className="p-3 text-right font-mono font-bold text-red-400">
                                          ${stats.totalDebt}
@@ -2647,6 +2778,153 @@ const Admin: React.FC<Props> = ({ user }) => {
                             })
                         )}
                     </div>
+                </div>
+            </div>
+        )}
+
+        {/* PAYMENT MATRIX TAB */}
+        {activeTab === 'payment-matrix' && (
+            <div className="space-y-6">
+                <div className="bg-logia-800 border border-logia-700 rounded-xl p-6">
+                    <h3 className="text-xl font-bold text-white mb-4">📊 Matriz de Pagos</h3>
+                    <p className="text-gray-400 mb-6 text-sm">
+                        Vista rápida de los pagos mensuales. Haz clic en una celda para marcar como pagado.
+                    </p>
+                    
+                    <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-300 mb-2">Año</label>
+                        <input
+                            type="number"
+                            value={matrixYear}
+                            onChange={(e) => setMatrixYear(Number(e.target.value))}
+                            min="2020"
+                            max="2100"
+                            className="w-32 px-4 py-2 bg-logia-900 border border-logia-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500"
+                        />
+                    </div>
+                    
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-xs border-collapse">
+                            <thead>
+                                <tr className="bg-logia-900">
+                                    <th className="p-2 text-left text-gray-400 font-bold border border-logia-700">Miembro</th>
+                                    {matrixMonths.map((month, idx) => (
+                                        <th key={idx} className="p-2 text-center text-gray-400 font-bold border border-logia-700 min-w-[60px]">
+                                            {month}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {filteredUsers.filter(u => u.active).map(u => (
+                                    <tr key={u.uid} className="hover:bg-logia-700/30">
+                                        <td className="p-2 text-white font-medium border border-logia-700 whitespace-nowrap">
+                                            {u.name}
+                                        </td>
+                                        {matrixMonths.map((month, idx) => {
+                                            const monthNum = (idx + 1).toString().padStart(2, '0');
+                                            const period = `${matrixYear}-${monthNum}`;
+                                            const userLedger = allUserLedgers[u.uid] || [];
+                                            const paymentData = userLedger.find(p => p.period === period);
+                                            const isPaid = paymentData?.regularCovered || false;
+                                            
+                                            return (
+                                                <td 
+                                                    key={idx} 
+                                                    className={`p-2 text-center border border-logia-700 cursor-pointer transition-colors ${
+                                                        isPaid ? 'bg-green-600 text-white' : 'bg-red-900/30 text-gray-400'
+                                                    } hover:brightness-110`}
+                                                    onClick={() => handleToggleMatrixPayment(u.uid, period)}
+                                                    title={isPaid ? 'Pagado' : 'Pendiente'}
+                                                >
+                                                    {isPaid ? '✓' : '✗'}
+                                                </td>
+                                            );
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div className="mt-4 flex gap-4 text-xs">
+                        <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 bg-green-600 rounded"></div>
+                            <span className="text-gray-400">Pagado</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 bg-red-900/30 rounded border border-logia-700"></div>
+                            <span className="text-gray-400">Pendiente</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* CREATE USER TAB */}
+        {activeTab === 'create-user' && (
+            <div className="space-y-6">
+                <div className="bg-logia-800 border border-logia-700 rounded-xl p-6">
+                    <h3 className="text-xl font-bold text-white mb-4">👤 Crear Nuevo Usuario</h3>
+                    <p className="text-gray-400 mb-6 text-sm">
+                        Crea un usuario que aún no tiene cuenta. El usuario podrá registrarse posteriormente con este correo.
+                    </p>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-300 mb-2">Nombre Completo</label>
+                            <input
+                                type="text"
+                                value={newUserName}
+                                onChange={(e) => setNewUserName(e.target.value)}
+                                placeholder="Juan Pérez García"
+                                className="w-full px-4 py-2 bg-logia-900 border border-logia-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500"
+                            />
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium text-gray-300 mb-2">Correo Electrónico</label>
+                            <input
+                                type="email"
+                                value={newUserEmail}
+                                onChange={(e) => setNewUserEmail(e.target.value)}
+                                placeholder="correo@ejemplo.com"
+                                className="w-full px-4 py-2 bg-logia-900 border border-logia-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500"
+                            />
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium text-gray-300 mb-2">Rol</label>
+                            <select
+                                value={newUserRole}
+                                onChange={(e) => setNewUserRole(e.target.value)}
+                                className="w-full px-4 py-2 bg-logia-900 border border-logia-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500"
+                            >
+                                <option value="member">Miembro</option>
+                                <option value="admin">Administrador</option>
+                                <option value="master">Master</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium text-gray-300 mb-2">Grado</label>
+                            <input
+                                type="text"
+                                value={newUserDegree}
+                                onChange={(e) => setNewUserDegree(e.target.value)}
+                                placeholder="Aprendiz, Compañero, Maestro..."
+                                className="w-full px-4 py-2 bg-logia-900 border border-logia-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500"
+                            />
+                        </div>
+                    </div>
+                    
+                    <button
+                        onClick={handleCreateUser}
+                        disabled={creatingUser || !newUserName.trim() || !newUserEmail.trim()}
+                        className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg font-medium transition-colors"
+                    >
+                        {creatingUser ? 'Creando...' : '✅ Crear Usuario'}
+                    </button>
                 </div>
             </div>
         )}

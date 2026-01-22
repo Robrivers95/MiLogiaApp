@@ -77,14 +77,18 @@ export interface Notice {
 
 export interface Payment {
   period: string; // YYYY-MM
-  amount: number; // Base Amount
-  extraAmount?: number; // Extra Fee
+  amount: number; // Base Amount (cuota mensual)
+  extraAmount?: number; // Extra Fee (cuota extraordinaria)
   extraDescription?: string; // Reason for extra fee
-  paid: number;
+  paid: number; // DEPRECATED: Total paid (mantener por compatibilidad)
+  paidRegular?: number; // Paid for regular monthly fee
+  paidExtra?: number; // Paid for extra fee
   status: 'Pendiente' | 'Parcial' | 'Pagado';
   comments: string;
   paymentDate?: string | null; // ISO Date
   groupId?: string; // Logia/Group ID para filtrado
+  regularCovered?: boolean; // Si la cuota mensual está cubierta
+  extraCovered?: boolean; // Si la cuota extraordinaria está cubierta
 }
 
 export interface PriceHistoryEntry {

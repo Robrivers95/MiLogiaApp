@@ -124,6 +124,29 @@ export const authService = {
       console.error('Error sending password reset email', e);
       throw e;
     }
+  },
+
+  // Admin creates a user without Firebase Auth (user will register later themselves)
+  createUserByAdmin: async (email: string, name: string, role: string, degree: string, groupId: string): Promise<User> => {
+    // Create a temporary UID based on email
+    const tempUid = `temp_${email.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`;
+    
+    const newUser: User = {
+      uid: tempUid,
+      name,
+      email,
+      role: role as 'member' | 'admin' | 'master',
+      active: false,
+      groupId: groupId,
+      joinDate: new Date().toISOString(),
+      profileEditable: true,
+      degree: degree,
+      rpg: { ...INITIAL_RPG, name: name.split(' ')[0] },
+      totalPoints: 0
+    };
+    
+    await setDoc(doc(db, "users", tempUid), newUser);
+    return newUser;
   }
 };
 
@@ -256,6 +279,12 @@ export const dataService = {
         let totalDebt = 0;
         let totalBilled = 0;
         
+        // v3.0.0: Separate tracking for regular vs extra fees
+        let totalPaidRegular = 0;
+        let totalPaidExtra = 0;
+        let totalBilledRegular = 0;
+        let totalBilledExtra = 0;
+        
         snap.forEach(doc => {
             const p = doc.data() as Payment;
             
@@ -265,18 +294,61 @@ export const dataService = {
             // FIX: Force Number() casting to prevent string concatenation
             const amt = Number(p.amount) || 0;
             const extra = Number(p.extraAmount) || 0;
-            const pd = Number(p.paid) || 0;
-
+            
+            // v3.0.0: Use new separate payment fields if available, fallback to legacy 'paid'
+            let paidReg = 0;
+            let paidExt = 0;
+            if (p.paidRegular !== undefined || p.paidExtra !== undefined) {
+                paidReg = Number(p.paidRegular) || 0;
+                paidExt = Number(p.paidExtra) || 0;
+            } else {
+                // Legacy: use old 'paid' field - assume it covers regular first, then extra
+                const legacyPaid = Number(p.paid) || 0;
+                if (legacyPaid <= amt) {
+                    paidReg = legacyPaid;
+                    paidExt = 0;
+                } else {
+                    paidReg = amt;
+                    paidExt = legacyPaid - amt;
+                }
+            }
+            
             const totalAmount = amt + extra;
+            const totalPaidAmt = paidReg + paidExt;
             
             totalBilled += totalAmount;
-            totalPaid += pd;
-            totalDebt += (totalAmount - pd);
+            totalPaid += totalPaidAmt;
+            totalDebt += (totalAmount - totalPaidAmt);
+            
+            totalBilledRegular += amt;
+            totalBilledExtra += extra;
+            totalPaidRegular += paidReg;
+            totalPaidExtra += paidExt;
         });
         
-        return { totalPaid, totalDebt, totalBilled };
+        return { 
+            totalPaid, 
+            totalDebt, 
+            totalBilled,
+            totalPaidRegular,
+            totalPaidExtra,
+            totalBilledRegular,
+            totalBilledExtra,
+            totalDebtRegular: totalBilledRegular - totalPaidRegular,
+            totalDebtExtra: totalBilledExtra - totalPaidExtra
+        };
     } catch (error) {
-        return { totalPaid: 0, totalDebt: 0, totalBilled: 0 };
+        return { 
+            totalPaid: 0, 
+            totalDebt: 0, 
+            totalBilled: 0,
+            totalPaidRegular: 0,
+            totalPaidExtra: 0,
+            totalBilledRegular: 0,
+            totalBilledExtra: 0,
+            totalDebtRegular: 0,
+            totalDebtExtra: 0
+        };
     }
   },
   
