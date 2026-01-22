@@ -2,7 +2,6 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
 import { getAuth, Auth } from "firebase/auth";
 import { getFirestore, Firestore } from "firebase/firestore";
-import { getStorage, FirebaseStorage } from "firebase/storage";
 
 // --- CONFIGURACIÓN DE FIREBASE PARA REGISTROLOGIA ---
 const firebaseConfig = {
@@ -35,7 +34,6 @@ try {
 
 export const auth: Auth = getAuth(app);
 export const db: Firestore = getFirestore(app);
-export const storage: FirebaseStorage = getStorage(app);
 
 // Indicamos que ya está configurada para saltar la pantalla de Setup
 export const isConfigured = true;

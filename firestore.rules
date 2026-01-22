@@ -111,5 +111,15 @@ service cloud.firestore {
       // Only admin/master can create/update/delete extra fees
       allow write: if isAdminOrMaster();
     }
+
+    // App Configuration collection (for app icons, etc.)
+    match /appConfig/{configId} {
+      // Anyone can read app configuration (for icons)
+      allow read: if true;
+      // Only Master can write app configuration
+      allow write: if isSignedIn() && 
+                      exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+                      get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master';
+    }
   }
 }

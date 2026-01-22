@@ -1,17 +1,12 @@
 
 import { User, Payment, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee } from '../types';
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { auth, db, storage } from './firebase';
+import { auth, db } from './firebase';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   updateProfile 
 } from "firebase/auth";
-import {
-  ref as storageRef,
-  uploadBytes,
-  getDownloadURL
-} from "firebase/storage";
 import { 
   doc,
   getDoc,
@@ -269,31 +264,49 @@ export const authService = {
     return newUser;
   },
 
-  // Upload app icon (Master only)
-  uploadAppIcon: async (file: File, size: '192' | '512' | 'svg'): Promise<string> => {
+  // Upload app icon (Master only) - Using Firestore with base64
+  uploadAppIcon: async (file: File, size: '192' | '512'): Promise<void> => {
     try {
-      const fileExtension = size === 'svg' ? 'svg' : 'png';
-      const iconRef = storageRef(storage, `app-icons/icon-${size}.${fileExtension}`);
+      // Convert image to base64
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      // Save to Firestore in appConfig collection
+      const configRef = doc(db, "appConfig", "icons");
+      const configSnap = await getDoc(configRef);
       
-      await uploadBytes(iconRef, file);
-      const downloadURL = await getDownloadURL(iconRef);
+      const currentData = configSnap.exists() ? configSnap.data() : {};
       
-      return downloadURL;
+      await setDoc(configRef, {
+        ...currentData,
+        [`icon${size}`]: base64,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
     } catch (e: any) {
       console.error("Error uploading app icon:", e);
       throw new Error(`Error subiendo icono: ${e.message}`);
     }
   },
 
-  // Get app icon URL
-  getAppIcon: async (size: '192' | '512' | 'svg'): Promise<string | null> => {
+  // Get app icon base64 data
+  getAppIcon: async (size: '192' | '512'): Promise<string | null> => {
     try {
-      const fileExtension = size === 'svg' ? 'svg' : 'png';
-      const iconRef = storageRef(storage, `app-icons/icon-${size}.${fileExtension}`);
-      const downloadURL = await getDownloadURL(iconRef);
-      return downloadURL;
+      const configRef = doc(db, "appConfig", "icons");
+      const configSnap = await getDoc(configRef);
+      
+      if (!configSnap.exists()) {
+        return null;
+      }
+      
+      const data = configSnap.data();
+      return data[`icon${size}`] || null;
     } catch (e: any) {
-      // Icon doesn't exist yet, return null
+      console.error("Error getting app icon:", e);
       return null;
     }
   }
