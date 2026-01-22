@@ -29,6 +29,8 @@ service cloud.firestore {
       allow read: if isSignedIn() && request.auth.uid == userId;
       // Users can create their own profile (during registration)
       allow create: if isSignedIn() && request.auth.uid == userId;
+      // Admin/Master can create users (v3.0.0: for manual user creation)
+      allow create: if isAdminOrMaster();
       // Users can update their own profile
       allow update: if isSignedIn() && request.auth.uid == userId;
       // Admin/Master can update any user
