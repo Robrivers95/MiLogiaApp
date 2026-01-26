@@ -679,23 +679,103 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
   };
 
-  const handleDownloadCSV = () => {
+  const handleDownloadCSV = async () => {
       try {
-          // Headers
-          const headers = "Nombre,Email,Rol,Estado,Ciudad,Grado,Fecha Ingreso,Total Pagado,Total Deuda,Total Facturado\n";
+          // Headers con columnas detalladas por mes
+          const headers = "Nombre,Email,Rol,Estado,Ciudad,Grado,Fecha Ingreso,Periodo,Año,Mes,Cuota Regular,Cuota Extra,Pagado Regular,Pagado Extra,Total Facturado,Total Pagado,Deuda,Estado Pago,Fecha Pago\n";
           
-          // Data rows
-          const rows = filteredUsers.map(u => {
-              const stats = userStats[u.uid] || { totalPaid: 0, totalDebt: 0, totalBilled: 0 };
-              return `"${u.name}","${u.email}","${u.role}","${u.active ? 'Activo' : 'Inactivo'}","${u.city || 'N/A'}","${u.masonicDegree || 'N/A'}","${u.joinDate?.slice(0,10) || 'N/A'}",${stats.totalPaid},${stats.totalDebt},${stats.totalBilled}`;
-          }).join('\n');
+          const csvRows: string[] = [];
           
-          const csv = headers + rows;
+          // Para cada usuario, obtener sus pagos y crear una fila por cada mes
+          for (const u of filteredUsers) {
+              try {
+                  // Obtener los pagos del usuario
+                  const payments = await dataService.getPayments(u.uid);
+                  
+                  // Si tiene pagos, crear una fila por cada mes
+                  if (payments.length > 0) {
+                      // Ordenar por período
+                      payments.sort((a, b) => a.period.localeCompare(b.period));
+                      
+                      for (const p of payments) {
+                          // Parsear el período YYYY-MM
+                          const [year, month] = p.period.split('-');
+                          const monthName = new Date(parseInt(year), parseInt(month) - 1, 1)
+                              .toLocaleString('es', { month: 'long' });
+                          
+                          // Calcular valores
+                          const regularAmount = Number(p.amount) || 0;
+                          const extraAmount = Number(p.extraAmount) || 0;
+                          const paidRegular = Number(p.paidRegular) || 0;
+                          const paidExtra = Number(p.paidExtra) || 0;
+                          const totalBilled = regularAmount + extraAmount;
+                          const totalPaid = paidRegular + paidExtra;
+                          const debt = totalBilled - totalPaid;
+                          const status = p.status || 'Pendiente';
+                          const paymentDate = p.paymentDate ? p.paymentDate.slice(0, 10) : 'N/A';
+                          
+                          const row = [
+                              `"${u.name}"`,
+                              `"${u.email}"`,
+                              `"${u.role}"`,
+                              `"${u.active ? 'Activo' : 'Inactivo'}"`,
+                              `"${u.city || 'N/A'}"`,
+                              `"${u.degree || 'N/A'}"`,
+                              `"${u.joinDate?.slice(0,10) || 'N/A'}"`,
+                              `"${p.period}"`,
+                              `"${year}"`,
+                              `"${monthName.charAt(0).toUpperCase() + monthName.slice(1)}"`,
+                              regularAmount.toFixed(2),
+                              extraAmount.toFixed(2),
+                              paidRegular.toFixed(2),
+                              paidExtra.toFixed(2),
+                              totalBilled.toFixed(2),
+                              totalPaid.toFixed(2),
+                              debt.toFixed(2),
+                              `"${status}"`,
+                              `"${paymentDate}"`
+                          ].join(',');
+                          
+                          csvRows.push(row);
+                      }
+                  } else {
+                      // Si no tiene pagos, crear una fila con datos básicos del usuario
+                      const row = [
+                          `"${u.name}"`,
+                          `"${u.email}"`,
+                          `"${u.role}"`,
+                          `"${u.active ? 'Activo' : 'Inactivo'}"`,
+                          `"${u.city || 'N/A'}"`,
+                          `"${u.degree || 'N/A'}"`,
+                          `"${u.joinDate?.slice(0,10) || 'N/A'}"`,
+                          '"N/A"',
+                          '"N/A"',
+                          '"N/A"',
+                          '0.00',
+                          '0.00',
+                          '0.00',
+                          '0.00',
+                          '0.00',
+                          '0.00',
+                          '0.00',
+                          '"Sin Datos"',
+                          '"N/A"'
+                      ].join(',');
+                      
+                      csvRows.push(row);
+                  }
+              } catch (e) {
+                  console.error(`Error obteniendo pagos para ${u.name}:`, e);
+                  // Continuar con el siguiente usuario en caso de error
+              }
+          }
+          
+          const csv = headers + csvRows.join('\n');
           const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = `miembros_${user.groupId}_${new Date().toISOString().slice(0,10)}.csv`;
+          a.download = `miembros_detallado_${user.groupId}_${new Date().toISOString().slice(0,10)}.csv`;
           a.click();
           URL.revokeObjectURL(url);
           showMessage("CSV descargado exitosamente", 'success');

@@ -14,6 +14,51 @@ interface Props {
 
 const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onExitGroup, children }) => {
   const [showInstallModal, setShowInstallModal] = React.useState(false);
+  const [deferredPrompt, setDeferredPrompt] = React.useState<any>(null);
+  const [canInstall, setCanInstall] = React.useState(false);
+
+  // Listen for beforeinstallprompt event
+  React.useEffect(() => {
+    const handleBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setCanInstall(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    // If we can trigger native install prompt, do it
+    if (deferredPrompt && canInstall) {
+      try {
+        // Show the native install prompt
+        await deferredPrompt.prompt();
+        
+        // Wait for user's response
+        const { outcome } = await deferredPrompt.userChoice;
+        
+        if (outcome === 'accepted') {
+          console.log('User accepted the install prompt');
+        }
+        
+        // Clear the prompt
+        setDeferredPrompt(null);
+        setCanInstall(false);
+      } catch (error) {
+        console.error('Error showing install prompt:', error);
+        // If error, show manual instructions
+        setShowInstallModal(true);
+      }
+    } else {
+      // Can't trigger native prompt, show manual instructions
+      setShowInstallModal(true);
+    }
+  };
   
   const navItems = [
     { id: 'home', label: 'Inicio', icon: '🏠' },
@@ -45,12 +90,12 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
         </div>
         <div className="flex gap-2">
             <button 
-              onClick={() => setShowInstallModal(true)}
+              onClick={handleInstallClick}
               className="text-sm px-3 py-1 rounded border border-green-700 bg-green-900 text-green-200 hover:bg-green-800 flex items-center gap-1"
               title="Instalar aplicación"
             >
               <span>📱</span>
-              <span className="hidden sm:inline">Instalar App</span>
+              <span className="hidden sm:inline">{canInstall ? 'Instalar Ahora' : 'Instalar App'}</span>
             </button>
             <button 
             onClick={() => onNavigate('profile')}
