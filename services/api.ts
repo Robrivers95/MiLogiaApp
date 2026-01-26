@@ -759,17 +759,31 @@ export const dataService = {
             const ref = doc(db, "users", user.uid, "ledger", period);
 
             if (!existingMap.has(period)) {
+                // Period doesn't exist, create it
                 newBatch.set(ref, {
                     period,
                     amount,
                     paid: 0,
+                    paidRegular: 0,
+                    paidExtra: 0,
                     status: 'Pendiente',
                     comments: 'Generado auto',
-                    groupId: user.groupId
+                    groupId: user.groupId,
+                    regularCovered: false,
+                    extraCovered: true
                 });
                 opCount++;
             } else {
                 const existing = existingMap.get(period)!;
+                
+                // IMPORTANT: Don't modify periods that are already fully paid
+                // This protects advanced payments from being overwritten
+                if (existing.regularCovered || existing.status === 'Pagado') {
+                    // Period is already paid, skip it
+                    continue;
+                }
+                
+                // Only update amount if status is not 'Pagado' and amount changed
                 if (existing.status !== 'Pagado' && Number(existing.amount) !== amount) {
                     newBatch.update(ref, { amount: amount });
                     opCount++;

@@ -164,6 +164,15 @@ const Admin: React.FC<Props> = ({ user }) => {
   // Modals
   const [editingUserLedger, setEditingUserLedger] = useState<string | null>(null);
   const [editPayments, setEditPayments] = useState<Payment[]>([]);
+  
+  // Advanced Payment Modal (Multi-month)
+  const [showAdvancedPaymentModal, setShowAdvancedPaymentModal] = useState(false);
+  const [advancedPaymentUser, setAdvancedPaymentUser] = useState<User | null>(null);
+  const [advancedPaymentStartPeriod, setAdvancedPaymentStartPeriod] = useState('');
+  const [advancedPaymentMonths, setAdvancedPaymentMonths] = useState(1);
+  const [advancedPaymentAmount, setAdvancedPaymentAmount] = useState(0);
+  const [advancedPaymentDate, setAdvancedPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [advancedPaymentComments, setAdvancedPaymentComments] = useState('');
   const [editingUserProfile, setEditingUserProfile] = useState<User | null>(null);
   const [showRules, setShowRules] = useState(false);
   const [screenshotUser, setScreenshotUser] = useState<User | null>(null);
@@ -1479,6 +1488,86 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
   };
 
+  const handleOpenAdvancedPayment = (u: User) => {
+      setAdvancedPaymentUser(u);
+      setAdvancedPaymentStartPeriod(new Date().toISOString().slice(0, 7)); // YYYY-MM
+      setAdvancedPaymentMonths(1);
+      setAdvancedPaymentAmount(0);
+      setAdvancedPaymentDate(new Date().toISOString().slice(0, 10));
+      setAdvancedPaymentComments('');
+      setShowAdvancedPaymentModal(true);
+  };
+
+  const handleSaveAdvancedPayment = async () => {
+      if (!advancedPaymentUser || !advancedPaymentStartPeriod || advancedPaymentMonths < 1) {
+          showMessage("Completa todos los campos", 'error');
+          return;
+      }
+
+      if (isReadOnly) return;
+
+      try {
+          setIsSubmitting(true);
+          
+          // Parse start period
+          const [startYear, startMonth] = advancedPaymentStartPeriod.split('-').map(Number);
+          
+          const history = await dataService.getPriceHistory(user.groupId);
+          
+          // Generate periods for the next N months
+          const periods: string[] = [];
+          for (let i = 0; i < advancedPaymentMonths; i++) {
+              let year = startYear;
+              let month = startMonth + i;
+              
+              while (month > 12) {
+                  month -= 12;
+                  year += 1;
+              }
+              
+              const period = `${year}-${String(month).padStart(2, '0')}`;
+              periods.push(period);
+          }
+          
+          // For each period, create or update the payment record
+          for (const period of periods) {
+              // Find the applicable price for this period
+              const sortedHistory = [...history].sort((a, b) => b.startDate.localeCompare(a.startDate));
+              const applicable = sortedHistory.find(h => h.startDate <= period);
+              const basePrice = applicable ? applicable.amount : (sortedHistory.length > 0 ? sortedHistory[sortedHistory.length - 1].amount : advancedPaymentAmount / advancedPaymentMonths);
+              
+              const amountForPeriod = Number(basePrice);
+              
+              // Create or update the payment
+              const payment: Payment = {
+                  period,
+                  amount: amountForPeriod,
+                  paid: amountForPeriod,
+                  paidRegular: amountForPeriod,
+                  paidExtra: 0,
+                  status: 'Pagado',
+                  comments: advancedPaymentComments || `Pago anticipado de ${advancedPaymentMonths} meses`,
+                  paymentDate: advancedPaymentDate ? new Date(advancedPaymentDate).toISOString() : new Date().toISOString(),
+                  groupId: user.groupId,
+                  regularCovered: true,
+                  extraCovered: true
+              };
+              
+              await dataService.updatePayment(advancedPaymentUser.uid, payment);
+          }
+          
+          showMessage(`✅ ${advancedPaymentMonths} ${advancedPaymentMonths === 1 ? 'mes' : 'meses'} registrado(s) como pagado(s)`);
+          setShowAdvancedPaymentModal(false);
+          await loadUsers();
+          await loadAllLedgers();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error registrando pagos", 'error');
+      } finally {
+          setIsSubmitting(false);
+      }
+  };
+
   // Dashboard Chart Calculation
   const dbInc = Number(dashboardData.income) || 0;
   const dbExp = Number(dashboardData.expense) || 0;
@@ -1790,6 +1879,9 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                 </button>
                                                 <button onClick={() => handleOpenPayments(u.uid)} title="Gestionar Pagos" className="p-1.5 bg-yellow-600 rounded hover:bg-yellow-500 text-white">
                                                     💰
+                                                </button>
+                                                <button onClick={() => handleOpenAdvancedPayment(u)} title="Pagos Anticipados (Multi-mes)" className="p-1.5 bg-purple-600 rounded hover:bg-purple-500 text-white">
+                                                    📅
                                                 </button>
                                                 <button onClick={() => setEditingUserProfile(u)} title="Editar Perfil" className="p-1.5 bg-blue-600 rounded hover:bg-blue-500 text-white">
                                                     ✏️
@@ -3704,6 +3796,96 @@ service cloud.firestore {
                    <p>Favor de realizar su pago a la brevedad.</p>
                </div>
            </div>
+        </div>
+      )}
+
+      {/* ADVANCED PAYMENT MODAL (Multi-month) */}
+      {showAdvancedPaymentModal && advancedPaymentUser && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-logia-800 w-full max-w-xl rounded-xl border border-logia-700 shadow-2xl p-6 relative max-h-[90vh] overflow-y-auto">
+             <button onClick={() => setShowAdvancedPaymentModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-white text-xl">×</button>
+             <h3 className="text-xl font-bold text-white mb-4">📅 Registrar Pagos Anticipados</h3>
+             <p className="text-gray-400 text-sm mb-6">
+                Registra múltiples meses pagados por adelantado para <span className="font-bold text-white">{advancedPaymentUser.name}</span>. 
+                Estos meses quedarán marcados como pagados y no se duplicarán cuando hagas la sincronización masiva de cuotas.
+             </p>
+             
+             <div className="space-y-4">
+                 <div>
+                     <label className="block text-sm font-medium text-gray-300 mb-2">Mes de Inicio (YYYY-MM)</label>
+                     <input
+                         type="month"
+                         value={advancedPaymentStartPeriod}
+                         onChange={(e) => setAdvancedPaymentStartPeriod(e.target.value)}
+                         className="w-full px-4 py-2 bg-logia-900 border border-logia-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500"
+                     />
+                     <p className="text-xs text-gray-500 mt-1">Ejemplo: Si pagas Enero a Junio, selecciona Enero</p>
+                 </div>
+                 
+                 <div>
+                     <label className="block text-sm font-medium text-gray-300 mb-2">Cantidad de Meses</label>
+                     <input
+                         type="number"
+                         min="1"
+                         max="24"
+                         value={advancedPaymentMonths}
+                         onChange={(e) => setAdvancedPaymentMonths(Number(e.target.value))}
+                         className="w-full px-4 py-2 bg-logia-900 border border-logia-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500"
+                     />
+                     <p className="text-xs text-gray-500 mt-1">Número de meses consecutivos pagados</p>
+                 </div>
+                 
+                 <div>
+                     <label className="block text-sm font-medium text-gray-300 mb-2">Fecha de Pago Recibido</label>
+                     <input
+                         type="date"
+                         value={advancedPaymentDate}
+                         onChange={(e) => setAdvancedPaymentDate(e.target.value)}
+                         className="w-full px-4 py-2 bg-logia-900 border border-logia-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500"
+                     />
+                 </div>
+                 
+                 <div>
+                     <label className="block text-sm font-medium text-gray-300 mb-2">Comentarios (Opcional)</label>
+                     <textarea
+                         value={advancedPaymentComments}
+                         onChange={(e) => setAdvancedPaymentComments(e.target.value)}
+                         placeholder="Ej: Pago anticipado 6 meses por transferencia..."
+                         rows={3}
+                         className="w-full px-4 py-2 bg-logia-900 border border-logia-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500"
+                     />
+                 </div>
+
+                 {advancedPaymentMonths > 0 && advancedPaymentStartPeriod && (
+                     <div className="bg-indigo-900/30 border border-indigo-600/50 rounded-lg p-4">
+                         <p className="text-indigo-200 text-sm font-medium mb-2">📋 Resumen:</p>
+                         <p className="text-white text-sm">
+                             Se registrarán <span className="font-bold">{advancedPaymentMonths} meses</span> como pagados, 
+                             comenzando desde <span className="font-bold">{advancedPaymentStartPeriod}</span>
+                         </p>
+                         <p className="text-gray-400 text-xs mt-2">
+                             Estos meses aparecerán como "Pagado" en la matriz de pagos y no se sobrescribirán durante la sincronización masiva.
+                         </p>
+                     </div>
+                 )}
+                 
+                 <div className="pt-4 flex gap-4">
+                     <button 
+                         onClick={() => setShowAdvancedPaymentModal(false)}
+                         className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 rounded"
+                     >
+                         Cancelar
+                     </button>
+                     <button 
+                         onClick={handleSaveAdvancedPayment} 
+                         disabled={isReadOnly || isSubmitting || !advancedPaymentStartPeriod || advancedPaymentMonths < 1}
+                         className="flex-1 bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 rounded disabled:opacity-50"
+                     >
+                         {isSubmitting ? 'Guardando...' : '💾 Guardar Pagos'}
+                     </button>
+                 </div>
+             </div>
+          </div>
         </div>
       )}
       
