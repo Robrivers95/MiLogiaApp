@@ -1257,9 +1257,16 @@ const Admin: React.FC<Props> = ({ user }) => {
               delete (updatedPayment as any).extraFees;
           }
           
+          // Update local state immediately for instant UI feedback
+          setEditPayments(prev => prev.map(p => 
+              p.period === period ? updatedPayment : p
+          ));
+          
+          // Save to Firebase
           await dataService.updatePayment(editingUserLedger, updatedPayment);
           showMessage("Cuota extra eliminada");
           
+          // Reload to ensure consistency
           const payments = await dataService.getPayments(editingUserLedger);
           setEditPayments(payments);
           await loadUsers();
@@ -1292,6 +1299,11 @@ const Admin: React.FC<Props> = ({ user }) => {
               paid: (currentPayment.paidRegular || 0) + totalExtraPaid,
               extraCovered: totalExtraPaid >= totalExtraAmount
           };
+          
+          // Update local state immediately for instant UI feedback
+          setEditPayments(prev => prev.map(p => 
+              p.period === period ? updatedPayment : p
+          ));
           
           await dataService.updatePayment(editingUserLedger, updatedPayment);
           
@@ -1342,13 +1354,18 @@ const Admin: React.FC<Props> = ({ user }) => {
               extraCovered: totalExtraPaid >= totalExtraAmount
           };
           
-          await dataService.updatePayment(editingUserLedger, updatedPayment);
-          showMessage("Cuota extra actualizada ✅");
+          // Update local state immediately for instant UI feedback
+          setEditPayments(prev => prev.map(p => 
+              p.period === editingExtraFee.period ? updatedPayment : p
+          ));
           
           // Reset edit state
           setEditingExtraFee(null);
           setEditExtraFeeDesc('');
           setEditExtraFeeAmount(0);
+          
+          await dataService.updatePayment(editingUserLedger, updatedPayment);
+          showMessage("Cuota extra actualizada ✅");
           
           const payments = await dataService.getPayments(editingUserLedger);
           setEditPayments(payments);
