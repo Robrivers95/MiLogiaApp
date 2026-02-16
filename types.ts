@@ -75,14 +75,44 @@ export interface Notice {
   createdBy: string;
 }
 
+export interface Task {
+  id: string;
+  groupId: string;
+  title: string;
+  description?: string;
+  assignedTo?: string; // User UID
+  assignedToName?: string; // User name for display
+  completed: boolean;
+  completedAt?: string; // ISO
+  completedBy?: string; // User UID
+  createdAt: string; // ISO
+  createdBy: string;
+  createdByName?: string;
+}
+
+export interface IndividualExtraFee {
+  id: string; // Unique identifier for this extra fee item
+  description: string; // Description (e.g., "Cena anual", "Evento especial")
+  amount: number; // Amount for this specific extra fee
+  paid: number; // Amount paid for this specific extra fee
+  createdAt: string; // ISO Date when this was added
+  createdBy?: string; // UID of who created it
+}
+
 export interface Payment {
   period: string; // YYYY-MM
   amount: number; // Base Amount (cuota mensual)
+  
+  // LEGACY: Single extra fee (mantener para compatibilidad)
   extraAmount?: number; // Extra Fee (cuota extraordinaria)
   extraDescription?: string; // Reason for extra fee
+  
+  // v3.1.0: Multiple individual extra fees
+  extraFees?: IndividualExtraFee[]; // Array of individual extra fees
+  
   paid: number; // DEPRECATED: Total paid (mantener por compatibilidad)
   paidRegular?: number; // Paid for regular monthly fee
-  paidExtra?: number; // Paid for extra fee
+  paidExtra?: number; // Paid for extra fee (suma de todos los extra fees individuales)
   status: 'Pendiente' | 'Parcial' | 'Pagado';
   comments: string;
   paymentDate?: string | null; // ISO Date

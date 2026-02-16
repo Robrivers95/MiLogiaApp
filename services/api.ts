@@ -1,5 +1,5 @@
 
-import { User, Payment, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee } from '../types';
+import { User, Payment, IndividualExtraFee, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee } from '../types';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { auth, db } from './firebase';
 import { 
@@ -1239,6 +1239,56 @@ export const dataService = {
   deleteNotice: async (groupId: string, noticeId: string) => {
     const ref = doc(db, "groups", groupId, "notices", noticeId);
     await deleteDoc(ref);
+  },
+
+  // --- TASKS ---
+  getTasks: async (groupId: string): Promise<Task[]> => {
+    if (!groupId) return [];
+    try {
+      const q = query(collection(db, "groups", groupId, "tasks"));
+      const snapshot = await getDocs(q);
+      const list = snapshot.docs.map(d => ({id: d.id, ...d.data()} as Task));
+      // Sort by: incomplete first, then by creation date
+      return list.sort((a,b) => {
+        if (a.completed !== b.completed) {
+          return a.completed ? 1 : -1;
+        }
+        return b.createdAt.localeCompare(a.createdAt);
+      });
+    } catch (e) {
+      return [];
+    }
+  },
+
+  createTask: async (task: Omit<Task, 'id'>) => {
+    const ref = doc(collection(db, "groups", task.groupId, "tasks"));
+    await setDoc(ref, {
+      ...task,
+      id: ref.id
+    });
+  },
+
+  updateTask: async (groupId: string, taskId: string, data: Partial<Task>) => {
+    const ref = doc(db, "groups", groupId, "tasks", taskId);
+    await updateDoc(ref, data);
+  },
+
+  deleteTask: async (groupId: string, taskId: string) => {
+    const ref = doc(db, "groups", groupId, "tasks", taskId);
+    await deleteDoc(ref);
+  },
+
+  toggleTaskComplete: async (groupId: string, taskId: string, completed: boolean, userUid: string) => {
+    const ref = doc(db, "groups", groupId, "tasks", taskId);
+    const updateData: any = { completed };
+    if (completed) {
+      updateData.completedAt = new Date().toISOString();
+      updateData.completedBy = userUid;
+    } else {
+      updateData.completedAt = deleteField();
+      updateData.completedBy = deleteField();
+    }
+    await updateDoc(ref, updateData);
   },
 
   // VISIT REQUESTS

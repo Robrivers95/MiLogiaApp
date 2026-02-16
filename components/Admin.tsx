@@ -1,16 +1,17 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, Payment, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Trivia, VisitRequest, Group, BankBalance, ExtraFee } from '../types';
+import { User, Payment, IndividualExtraFee, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Trivia, VisitRequest, Group, BankBalance, ExtraFee } from '../types';
 import { dataService, generateTriviaWithAI, authService } from '../services/api';
 import { doc, deleteDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
+import { sendNotificationToGroup } from '../services/notifications';
 
 
 interface Props {
   user: User;
 }
 
-type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'notices' | 'banks' | 'visits' | 'payment-matrix' | 'create-user' | 'manual-merge';
+type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'notices' | 'tasks' | 'banks' | 'visits' | 'payment-matrix' | 'create-user' | 'manual-merge';
 
 const Admin: React.FC<Props> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
@@ -109,6 +110,15 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [deletingNoticeId, setDeletingNoticeId] = useState<string | null>(null);
   const [showDeleteNoticeModal, setShowDeleteNoticeModal] = useState(false);
 
+  // Tasks State
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskDesc, setNewTaskDesc] = useState('');
+  const [newTaskAssignee, setNewTaskAssignee] = useState('');
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
+  const [showDeleteTaskModal, setShowDeleteTaskModal] = useState(false);
+
   // Visit Requests State
   const [visitRequests, setVisitRequests] = useState<VisitRequest[]>([]);
   const [allGroups, setAllGroups] = useState<Group[]>([]);
@@ -143,6 +153,10 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [editExtraFeeData, setEditExtraFeeData] = useState({ description: '', amount: 0 });
   const [showEditExtraFeeModal, setShowEditExtraFeeModal] = useState(false);
 
+  // Apply Monthly Fee State
+  const [applyingMonthlyFee, setApplyingMonthlyFee] = useState(false);
+  const [monthlyFeePeriod, setMonthlyFeePeriod] = useState('');
+
   // Create User State
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
@@ -165,6 +179,11 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [editingUserLedger, setEditingUserLedger] = useState<string | null>(null);
   const [editPayments, setEditPayments] = useState<Payment[]>([]);
   
+  // Individual Extra Fees management (v3.1.0)
+  const [addingExtraFeeForPeriod, setAddingExtraFeeForPeriod] = useState<string | null>(null);
+  const [newExtraFeeDesc, setNewExtraFeeDesc] = useState('');
+  const [newExtraFeeAmount, setNewExtraFeeAmount] = useState(0);
+  
   // Advanced Payment Modal (Multi-month)
   const [showAdvancedPaymentModal, setShowAdvancedPaymentModal] = useState(false);
   const [advancedPaymentUser, setAdvancedPaymentUser] = useState<User | null>(null);
@@ -181,6 +200,9 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [showEditPriceModal, setShowEditPriceModal] = useState(false);
   const [editPriceData, setEditPriceData] = useState<PriceHistoryEntry>({ startDate: '', amount: 0 });
   const [originalEditDate, setOriginalEditDate] = useState('');
+
+  // Hamburger Menu State
+  const [showMenu, setShowMenu] = useState(false);
 
   // PERMISSIONS
   const isReadOnly = user.role === 'viewer';
@@ -210,6 +232,9 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
       if (activeTab === 'notices') {
           loadNotices();
+      }
+      if (activeTab === 'tasks') {
+          loadTasks();
       }
       if (activeTab === 'trivia') {
           loadTrivias();
@@ -383,6 +408,16 @@ const Admin: React.FC<Props> = ({ user }) => {
       } catch (e) {
           console.error("Error cargando avisos", e);
           showMessage("Error cargando avisos", 'error');
+      }
+  };
+
+  const loadTasks = async () => {
+      try {
+          const data = await dataService.getTasks(user.groupId);
+          setTasks(data);
+      } catch (e) {
+          console.error("Error cargando tareas", e);
+          showMessage("Error cargando tareas", 'error');
       }
   };
 
@@ -998,6 +1033,72 @@ const Admin: React.FC<Props> = ({ user }) => {
           setSyncing(false);
       }
   };
+
+  const handleApplyMonthlyFee = async () => {
+      if (isReadOnly || !monthlyFeePeriod || priceHistory.length === 0) {
+          showMessage("Selecciona un periodo válido", 'error');
+          return;
+      }
+      try {
+          setApplyingMonthlyFee(true);
+          
+          // Find the applicable price for this period
+          const sortedHistory = [...priceHistory].sort((a, b) => b.startDate.localeCompare(a.startDate));
+          const applicable = sortedHistory.find(h => h.startDate <= monthlyFeePeriod);
+          
+          if (!applicable) {
+              showMessage("No hay precio configurado para ese periodo", 'error');
+              return;
+          }
+          
+          let appliedCount = 0;
+          
+          // Apply to all active users who don't have the monthly fee for that period
+          for (const u of filteredUsers.filter(usr => usr.active)) {
+              const payments = await dataService.getPayments(u.uid);
+              const existingPayment = payments.find(p => p.period === monthlyFeePeriod);
+              
+              // Check if monthly fee is missing (no payment record OR amount is 0)
+              const needsMonthlyFee = !existingPayment || existingPayment.amount === 0;
+              
+              if (needsMonthlyFee) {
+                  // If payment exists but amount is 0, update it
+                  // If payment doesn't exist, create new one
+                  const payment: Payment = existingPayment ? {
+                      ...existingPayment,
+                      amount: applicable.amount,
+                      status: existingPayment.paid >= applicable.amount ? 'Pagado' : 'Pendiente',
+                      regularCovered: existingPayment.paid >= applicable.amount,
+                      comments: existingPayment.comments || `Cuota mensual aplicada retroactivamente`
+                  } : {
+                      period: monthlyFeePeriod,
+                      amount: applicable.amount,
+                      paid: 0,
+                      paidRegular: 0,
+                      paidExtra: 0,
+                      status: 'Pendiente',
+                      comments: `Cuota mensual aplicada retroactivamente`,
+                      paymentDate: new Date().toISOString(),
+                      groupId: user.groupId,
+                      regularCovered: false,
+                      extraCovered: true
+                  };
+                  
+                  await dataService.updatePayment(u.uid, payment);
+                  appliedCount++;
+              }
+          }
+          
+          showMessage(`✅ Cuota mensual aplicada a ${appliedCount} usuario(s)`);
+          setMonthlyFeePeriod('');
+          await loadUsers();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error aplicando cuota mensual", 'error');
+      } finally {
+          setApplyingMonthlyFee(false);
+      }
+  };
   const handleUpdateUserProfile = async () => {
       if (!editingUserProfile) return;
       try {
@@ -1048,6 +1149,135 @@ const Admin: React.FC<Props> = ({ user }) => {
       } catch (e) {
           console.error(e);
           showMessage("Error eliminando pago", 'error');
+      }
+  };
+  
+  // v3.1.0: Manejo de cuotas extras individuales
+  const handleAddIndividualExtraFee = async (period: string) => {
+      if (isReadOnly || !editingUserLedger || !newExtraFeeDesc.trim() || newExtraFeeAmount === 0) {
+          showMessage("Completa descripción y monto", 'error');
+          return;
+      }
+      
+      try {
+          // Find the payment for this period
+          const currentPayment = editPayments.find(p => p.period === period);
+          if (!currentPayment) {
+              showMessage("Pago no encontrado", 'error');
+              return;
+          }
+          
+          // Create new extra fee object
+          const newExtraFee: IndividualExtraFee = {
+              id: `extra_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              description: newExtraFeeDesc.trim(),
+              amount: newExtraFeeAmount,
+              paid: 0,
+              createdAt: new Date().toISOString(),
+              createdBy: user.uid
+          };
+          
+          // Add to payment's extraFees array
+          const updatedExtraFees = currentPayment.extraFees ? [...currentPayment.extraFees, newExtraFee] : [newExtraFee];
+          
+          // Calculate new totals
+          const totalExtraAmount = updatedExtraFees.reduce((sum, fee) => sum + fee.amount, 0);
+          const totalExtraPaid = updatedExtraFees.reduce((sum, fee) => sum + fee.paid, 0);
+          
+          const updatedPayment: Payment = {
+              ...currentPayment,
+              extraFees: updatedExtraFees,
+              extraAmount: totalExtraAmount, // Keep legacy field updated
+              paidExtra: totalExtraPaid,
+              paid: (currentPayment.paidRegular || 0) + totalExtraPaid,
+              extraCovered: totalExtraPaid >= totalExtraAmount
+          };
+          
+          await dataService.updatePayment(editingUserLedger, updatedPayment);
+          showMessage("Cuota extra agregada ✅");
+          
+          // Reset form
+          setNewExtraFeeDesc('');
+          setNewExtraFeeAmount(0);
+          setAddingExtraFeeForPeriod(null);
+          
+          // Reload payments
+          const payments = await dataService.getPayments(editingUserLedger);
+          setEditPayments(payments);
+          await loadUsers();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error agregandocuota extra", 'error');
+      }
+  };
+  
+  const handleDeleteIndividualExtraFee = async (period: string, feeId: string) => {
+      if (isReadOnly || !editingUserLedger) return;
+      
+      try {
+          const currentPayment = editPayments.find(p => p.period === period);
+          if (!currentPayment || !currentPayment.extraFees) return;
+          
+          // Remove the fee from the array
+          const updatedExtraFees = currentPayment.extraFees.filter(f => f.id !== feeId);
+          
+          // Recalculate totals
+          const totalExtraAmount = updatedExtraFees.reduce((sum, fee) => sum + fee.amount, 0);
+          const totalExtraPaid = updatedExtraFees.reduce((sum, fee) => sum + fee.paid, 0);
+          
+          const updatedPayment: Payment = {
+              ...currentPayment,
+              extraFees: updatedExtraFees.length > 0 ? updatedExtraFees : undefined,
+              extraAmount: totalExtraAmount,
+              paidExtra: totalExtraPaid,
+              paid: (currentPayment.paidRegular || 0) + totalExtraPaid,
+              extraCovered: totalExtraPaid >= totalExtraAmount
+          };
+          
+          await dataService.updatePayment(editingUserLedger, updatedPayment);
+          showMessage("Cuota extra eliminada");
+          
+          const payments = await dataService.getPayments(editingUserLedger);
+          setEditPayments(payments);
+          await loadUsers();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error eliminando cuota extra", 'error');
+      }
+  };
+  
+  const handleUpdateIndividualExtraFeePaid = async (period: string, feeId: string, newPaid: number) => {
+      if (isReadOnly || !editingUserLedger) return;
+      
+      try {
+          const currentPayment = editPayments.find(p => p.period === period);
+          if (!currentPayment || !currentPayment.extraFees) return;
+          
+          // Update the paid amount for the specific fee
+          const updatedExtraFees = currentPayment.extraFees.map(f => 
+              f.id === feeId ? { ...f, paid: newPaid } : f
+          );
+          
+          // Recalculate totals
+          const totalExtraAmount = updatedExtraFees.reduce((sum, fee) => sum + fee.amount, 0);
+          const totalExtraPaid = updatedExtraFees.reduce((sum, fee) => sum + fee.paid, 0);
+          
+          const updatedPayment: Payment = {
+              ...currentPayment,
+              extraFees: updatedExtraFees,
+              paidExtra: totalExtraPaid,
+              paid: (currentPayment.paidRegular || 0) + totalExtraPaid,
+              extraCovered: totalExtraPaid >= totalExtraAmount
+          };
+          
+          await dataService.updatePayment(editingUserLedger, updatedPayment);
+          
+          const payments = await dataService.getPayments(editingUserLedger);
+          setEditPayments(payments);
+          await loadUsers();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error actualizando pago", 'error');
       }
   };
   const handleDownloadAttendanceCSV = async () => {
@@ -1164,6 +1394,17 @@ const Admin: React.FC<Props> = ({ user }) => {
                   date: new Date().toISOString().split('T')[0]
               });
               showMessage("Aviso creado");
+              
+              // Enviar notificación a todo el grupo
+              try {
+                  await sendNotificationToGroup(user.groupId, {
+                      title: '📰 Nuevo Aviso',
+                      body: newNoticeTitle,
+                      icon: '/icon-192.png'
+                  });
+              } catch (e) {
+                  console.log('No se pudo enviar notificación:', e);
+              }
           }
           setNewNoticeTitle('');
           setNewNoticeContent('');
@@ -1206,6 +1447,119 @@ const Admin: React.FC<Props> = ({ user }) => {
       setEditingNotice(null);
       setNewNoticeTitle('');
       setNewNoticeContent('');
+  };
+
+  // TASKS HANDLERS
+  const handleSaveTask = async () => {
+      if (isReadOnly || !newTaskTitle) {
+          showMessage("El título es obligatorio", 'error');
+          return;
+      }
+      try {
+          setIsSubmitting(true);
+          if (editingTask) {
+              const assignedUser = newTaskAssignee ? users.find(u => u.uid === newTaskAssignee) : undefined;
+              await dataService.updateTask(user.groupId, editingTask.id, {
+                  title: newTaskTitle,
+                  description: newTaskDesc,
+                  assignedTo: newTaskAssignee || undefined,
+                  assignedToName: assignedUser?.name || undefined
+              });
+              showMessage("Tarea actualizada");
+          } else {
+              const assignedUser = newTaskAssignee ? users.find(u => u.uid === newTaskAssignee) : undefined;
+              await dataService.createTask({
+                  groupId: user.groupId,
+                  title: newTaskTitle,
+                  description: newTaskDesc,
+                  assignedTo: newTaskAssignee || undefined,
+                  assignedToName: assignedUser?.name || undefined,
+                  completed: false,
+                  createdAt: new Date().toISOString(),
+                  createdBy: user.uid,
+                  createdByName: user.name
+              });
+              showMessage("Tarea creada");
+              
+              // Enviar notificación al usuario asignado
+              if (newTaskAssignee && assignedUser) {
+                  try {
+                      const userTokenRef = await getDocs(collection(db, 'users'));
+                      const userData = userTokenRef.docs.find(d => d.id === newTaskAssignee)?.data();
+                      
+                      if (userData?.fcmToken) {
+                          await fetch('https://us-central1-registrologia.cloudfunctions.net/sendNotification', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                  tokens: [userData.fcmToken],
+                                  notification: {
+                                      title: '✅ Nueva Tarea Asignada',
+                                      body: newTaskTitle,
+                                      icon: '/icon-192.png'
+                                  }
+                              })
+                          });
+                      }
+                  } catch (e) {
+                      console.log('No se pudo enviar notificación:', e);
+                  }
+              }
+          }
+          setNewTaskTitle('');
+          setNewTaskDesc('');
+          setNewTaskAssignee('');
+          setEditingTask(null);
+          await loadTasks();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error guardando tarea", 'error');
+      } finally {
+          setIsSubmitting(false);
+      }
+  };
+
+  const handleToggleTask = async (taskId: string, currentCompleted: boolean) => {
+      try {
+          await dataService.toggleTaskComplete(user.groupId, taskId, !currentCompleted, user.uid);
+          await loadTasks();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error actualizando tarea", 'error');
+      }
+  };
+
+  const handleEditTask = (task: Task) => {
+      setEditingTask(task);
+      setNewTaskTitle(task.title);
+      setNewTaskDesc(task.description || '');
+      setNewTaskAssignee(task.assignedTo || '');
+  };
+
+  const handleDeleteTask = (id: string) => {
+      setDeletingTaskId(id);
+      setShowDeleteTaskModal(true);
+  };
+
+  const handleExecuteDeleteTask = async () => {
+      if (!deletingTaskId) return;
+      try {
+          await dataService.deleteTask(user.groupId, deletingTaskId);
+          showMessage("Tarea eliminada");
+          setShowDeleteTaskModal(false);
+          setDeletingTaskId(null);
+          await loadTasks();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error eliminando tarea", 'error');
+      }
+  };
+
+  const handleCancelEditTask = () => {
+      setEditingTask(null);
+      setNewTaskTitle('');
+      setNewTaskDesc('');
+      setNewTaskAssignee('');
   };
 
   // TRIVIA HANDLERS
@@ -1581,8 +1935,15 @@ const Admin: React.FC<Props> = ({ user }) => {
   return (
     <div className="pb-24">
       {/* HEADER */}
-      <div className="bg-logia-800 p-4 border-b border-logia-700 flex justify-between items-center sticky top-0 z-10 shadow-md">
+      <div className="bg-logia-800 p-4 border-b border-logia-700 flex justify-between items-center sticky top-0 z-20 shadow-md">
         <div className="flex items-center gap-2">
+            <button 
+                onClick={() => setShowMenu(!showMenu)}
+                className="bg-logia-700 hover:bg-logia-600 p-2 rounded text-white text-2xl"
+                title="Menú"
+            >
+                ☰
+            </button>
             <h2 className="text-xl md:text-2xl font-bold text-white">Admin</h2>
             <button onClick={() => setShowRules(true)} className="ml-2 bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-xs font-bold text-gray-200 border border-gray-600 flex items-center gap-1">
                 🛡️ Reglas
@@ -1600,55 +1961,173 @@ const Admin: React.FC<Props> = ({ user }) => {
         </div>
       </div>
 
-      {/* TABS */}
-      <div className="flex overflow-x-auto p-2 gap-2 bg-logia-900 border-b border-logia-700 no-scrollbar">
-        <button
-            onClick={() => setActiveTab('dashboard')}
-            className={`px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap transition-colors ${
-              activeTab === 'dashboard' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-400 hover:bg-logia-700'
-            }`}
-        >
-            Resumen
-        </button>
+      {/* HAMBURGER MENU */}
+      {showMenu && (
+        <>
+          {/* Overlay */}
+          <div 
+            className="fixed inset-0 bg-black/50 z-30"
+            onClick={() => setShowMenu(false)}
+          />
+          
+          {/* Menu Panel */}
+          <div className="fixed left-0 top-0 h-full w-80 bg-logia-900 border-r border-logia-700 shadow-2xl z-40 overflow-y-auto">
+            <div className="p-4 border-b border-logia-700 flex justify-between items-center">
+              <h3 className="text-lg font-bold text-white">Menú de Administración</h3>
+              <button 
+                onClick={() => setShowMenu(false)}
+                className="text-gray-400 hover:text-white text-2xl"
+              >
+                ✕
+              </button>
+            </div>
 
-        <button
-            onClick={() => setActiveTab('requests')}
-            className={`px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap transition-colors relative ${
-              activeTab === 'requests' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-400 hover:bg-logia-700'
-            }`}
-        >
-            Solicitudes
-            {pendingUsers.length > 0 && (
-                <span className="ml-2 bg-red-600 text-white text-[10px] px-1.5 py-0.5 rounded-full animate-pulse border border-red-400">
-                    {pendingUsers.length}
-                </span>
-            )}
-        </button>
+            <div className="p-4 space-y-4">
+              {/* Dashboard & Requests */}
+              <div>
+                <h4 className="text-xs uppercase text-gray-500 font-bold mb-2">General</h4>
+                <button
+                  onClick={() => { setActiveTab('dashboard'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors flex items-center gap-2 ${
+                    activeTab === 'dashboard' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  📊 Resumen
+                </button>
+                <button
+                  onClick={() => { setActiveTab('requests'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors flex items-center gap-2 mt-2 relative ${
+                    activeTab === 'requests' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  📩 Solicitudes
+                  {pendingUsers.length > 0 && (
+                    <span className="ml-auto bg-red-600 text-white text-[10px] px-2 py-0.5 rounded-full">
+                      {pendingUsers.length}
+                    </span>
+                  )}
+                </button>
+              </div>
 
-        {[
-            {id: 'users', label: 'Miembros'},
-            {id: 'fees', label: 'Cuotas'},
-            {id: 'attendance', label: 'Asistencia'},
-            {id: 'trivia', label: 'Trivia'},
-            {id: 'notices', label: 'Avisos'},
-            {id: 'treasury', label: 'Tesorería'},
-            {id: 'banks', label: 'Bancos'},
-            {id: 'visits', label: 'Visitas'},
-            {id: 'payment-matrix', label: 'Matriz de Pagos'},
-            {id: 'create-user', label: 'Crear Usuario'},
-            {id: 'manual-merge', label: 'Vincular Usuarios'}
-        ].map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setActiveTab(t.id as Tab)}
-            className={`px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap transition-colors ${
-              activeTab === t.id ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-400 hover:bg-logia-700'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+              {/* Financial */}
+              <div>
+                <h4 className="text-xs uppercase text-gray-500 font-bold mb-2">💰 Finanzas</h4>
+                <button
+                  onClick={() => { setActiveTab('fees'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors ${
+                    activeTab === 'fees' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  💳 Cuotas
+                </button>
+                <button
+                  onClick={() => { setActiveTab('payment-matrix'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
+                    activeTab === 'payment-matrix' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  📊 Matriz de Pagos
+                </button>
+                <button
+                  onClick={() => { setActiveTab('treasury'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
+                    activeTab === 'treasury' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  🏦 Tesorería
+                </button>
+                <button
+                  onClick={() => { setActiveTab('banks'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
+                    activeTab === 'banks' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  🏛️ Bancos
+                </button>
+              </div>
+
+              {/* Members & Activities */}
+              <div>
+                <h4 className="text-xs uppercase text-gray-500 font-bold mb-2">👥 Miembros</h4>
+                <button
+                  onClick={() => { setActiveTab('users'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors ${
+                    activeTab === 'users' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  👤 Gestión de Miembros
+                </button>
+                <button
+                  onClick={() => { setActiveTab('attendance'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
+                    activeTab === 'attendance' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  📅 Asistencia
+                </button>
+                <button
+                  onClick={() => { setActiveTab('create-user'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
+                    activeTab === 'create-user' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  ➕ Crear Usuario
+                </button>
+                <button
+                  onClick={() => { setActiveTab('manual-merge'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
+                    activeTab === 'manual-merge' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  🔗 Vincular Usuarios
+                </button>
+              </div>
+
+              {/* Communication & Activities */}
+              <div>
+                <h4 className="text-xs uppercase text-gray-500 font-bold mb-2">📢 Comunicación</h4>
+                <button
+                  onClick={() => { setActiveTab('notices'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors ${
+                    activeTab === 'notices' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  📰 Avisos
+                </button>
+                <button
+                  onClick={() => { setActiveTab('tasks'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
+                    activeTab === 'tasks' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  ✅ Tareas
+                </button>
+                <button
+                  onClick={() => { setActiveTab('visits'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
+                    activeTab === 'visits' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  🤝 Visitas
+                </button>
+              </div>
+
+              {/* Games */}
+              <div>
+                <h4 className="text-xs uppercase text-gray-500 font-bold mb-2">🎮 Actividades</h4>
+                <button
+                  onClick={() => { setActiveTab('trivia'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors ${
+                    activeTab === 'trivia' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  🧠 Trivia
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* NOTIFICATIONS */}
       {msg && (
@@ -1802,8 +2281,8 @@ const Admin: React.FC<Props> = ({ user }) => {
                      <thead className="bg-logia-900 text-xs uppercase text-gray-500 font-bold">
                          <tr>
                              <th className="p-3">Nombre / Email</th>
-                             <th className="p-3">Grado / Cargo</th>
-                             <th className="p-3">Trabajo</th>
+                             <th className="p-3 hidden">Grado / Cargo</th>
+                             <th className="p-3 hidden">Trabajo</th>
                              <th className="p-3">Rol App</th>
                              <th className="p-3 text-right">Cuota Mensual</th>
                              <th className="p-3 text-right">Cuota Extra</th>
@@ -1832,11 +2311,11 @@ const Admin: React.FC<Props> = ({ user }) => {
                                          </div>
                                          <div className="text-xs text-gray-500">{u.email}</div>
                                      </td>
-                                     <td className="p-3">
+                                     <td className="p-3 hidden">
                                          <div className="text-indigo-300">{u.degree ? `${u.degree} (${u.numericDegree || '-'})` : '-'}</div>
                                          <div className="text-xs text-gray-400">{u.lodgeRole || 'Sin cargo'}</div>
                                      </td>
-                                     <td className="p-3 text-xs">
+                                     <td className="p-3 text-xs hidden">
                                          <div className="text-white">{u.job || '-'}</div>
                                          <div className="text-gray-500 truncate max-w-[100px]" title={u.workAddress}>{u.workAddress || ''}</div>
                                      </td>
@@ -1987,6 +2466,41 @@ const Admin: React.FC<Props> = ({ user }) => {
                            </>
                         ) : '🔄 Sincronizar Ahora'}
                     </button>
+                </div>
+
+                {/* 2.5 Apply Monthly Fee for Specific Period */}
+                <div className="bg-logia-800 rounded-xl p-6 border border-logia-700 shadow-lg border-l-4 border-l-amber-500">
+                    <h3 className="text-lg font-bold text-white mb-4 flex items-center">
+                        <span className="w-8 h-8 bg-amber-500 rounded-full flex items-center justify-center mr-3 text-sm">📅</span>
+                        Aplicar Cuota de Mes Específico
+                    </h3>
+                    <p className="text-xs text-gray-400 mb-4">
+                        Aplica la cuota mensual de un periodo específico a todos los usuarios activos que <strong>no tengan</strong> ese periodo registrado. 
+                        Útil para aplicar cuotas retroactivas (ej: aplicar Febrero cuando estamos en Marzo).
+                    </p>
+                    <div className="flex gap-3 items-end">
+                        <div className="flex-1">
+                            <label className="block text-xs font-bold uppercase text-gray-400 mb-2">Seleccionar Mes</label>
+                            <input 
+                                type="month" 
+                                value={monthlyFeePeriod}
+                                onChange={e => setMonthlyFeePeriod(e.target.value)}
+                                disabled={isReadOnly || applyingMonthlyFee || priceHistory.length === 0}
+                                className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white outline-none"
+                            />
+                        </div>
+                        <button 
+                            onClick={handleApplyMonthlyFee}
+                            disabled={applyingMonthlyFee || isReadOnly || priceHistory.length === 0 || !monthlyFeePeriod}
+                            className="bg-amber-600 hover:bg-amber-500 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2 transform active:scale-95 transition-all"
+                        >
+                            {applyingMonthlyFee ? (
+                               <>
+                                 <span className="animate-spin">⌛</span> Aplicando...
+                               </>
+                            ) : '✅ Aplicar Cuota del Mes'}
+                        </button>
+                    </div>
                 </div>
 
                 {/* 3. Extra Fees */}
@@ -2443,6 +2957,128 @@ const Admin: React.FC<Props> = ({ user }) => {
                                         </div>
                                     </div>
                                     <p className="text-gray-300 text-sm whitespace-pre-wrap">{notice.content}</p>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {activeTab === 'tasks' && (
+             <div className="space-y-6">
+                <h3 className="text-lg font-bold text-white">Gestión de Tareas</h3>
+                
+                <div className="bg-logia-800 rounded-xl p-6 border border-logia-700 shadow-lg">
+                    <h4 className="text-md font-bold text-white mb-4">{editingTask ? 'Editar Tarea' : 'Crear Nueva Tarea'}</h4>
+                    
+                    <div className="space-y-3">
+                        <input 
+                            type="text" 
+                            placeholder="Título de la Tarea *" 
+                            value={newTaskTitle}
+                            onChange={e => setNewTaskTitle(e.target.value)}
+                            disabled={isReadOnly}
+                            className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white font-bold"
+                        />
+                        <textarea 
+                            placeholder="Descripción (opcional)..." 
+                            value={newTaskDesc}
+                            onChange={e => setNewTaskDesc(e.target.value)}
+                            disabled={isReadOnly}
+                            rows={3}
+                            className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
+                        />
+
+                        <div>
+                            <label className="text-xs uppercase text-gray-400 mb-1 block font-bold">Asignar a</label>
+                            <select 
+                                value={newTaskAssignee}
+                                onChange={e => setNewTaskAssignee(e.target.value)}
+                                disabled={isReadOnly}
+                                className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
+                            >
+                                <option value="">Sin asignar</option>
+                                {users.filter(u => u.active && u.role !== 'viewer').map(u => (
+                                    <option key={u.uid} value={u.uid}>{u.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                        
+                        <div className="flex gap-3">
+                            <button 
+                                onClick={handleSaveTask}
+                                disabled={isReadOnly || isSubmitting}
+                                className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded disabled:opacity-50"
+                            >
+                                {isSubmitting ? 'Guardando...' : (editingTask ? 'Actualizar Tarea' : 'Crear Tarea')}
+                            </button>
+                            {editingTask && (
+                                <button 
+                                    onClick={handleCancelEditTask}
+                                    className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 rounded"
+                                >
+                                    Cancelar
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="bg-logia-800 rounded-xl border border-logia-700 shadow-lg overflow-hidden">
+                    <div className="p-4 border-b border-logia-700">
+                        <h4 className="font-bold text-white">Lista de Tareas ({tasks.filter(t => !t.completed).length} pendientes / {tasks.filter(t => t.completed).length} completadas)</h4>
+                    </div>
+                    <div className="p-4 space-y-2">
+                        {tasks.length === 0 ? (
+                            <p className="text-gray-400 text-center py-4">No hay tareas creadas</p>
+                        ) : (
+                            tasks.map(task => (
+                                <div key={task.id} className={`${task.completed ? 'bg-logia-900/50 border-logia-700/50' : 'bg-logia-900 border-logia-700'} p-4 rounded border flex items-start gap-3`}>
+                                    <input 
+                                        type="checkbox" 
+                                        checked={task.completed}
+                                        onChange={() => handleToggleTask(task.id, task.completed)}
+                                        disabled={isReadOnly}
+                                        className="mt-1 w-5 h-5 cursor-pointer"
+                                    />
+                                    <div className="flex-1">
+                                        <h5 className={`font-bold ${task.completed ? 'text-gray-500 line-through' : 'text-white'} text-base`}>{task.title}</h5>
+                                        {task.description && <p className={`text-sm mt-1 ${task.completed ? 'text-gray-600' : 'text-gray-400'}`}>{task.description}</p>}
+                                        <div className="flex flex-wrap gap-2 mt-2 text-xs">
+                                            {task.assignedToName && (
+                                                <span className="bg-blue-900/40 text-blue-300 px-2 py-1 rounded border border-blue-500/30">
+                                                    👤 {task.assignedToName}
+                                                </span>
+                                            )}
+                                            {task.completed && task.completedAt && (
+                                                <span className="bg-green-900/40 text-green-300 px-2 py-1 rounded border border-green-500/30">
+                                                    ✅ {new Date(task.completedAt).toLocaleDateString('es-MX')}
+                                                </span>
+                                            )}
+                                            <span className="text-gray-500">
+                                                Creada: {new Date(task.createdAt).toLocaleDateString('es-MX')} por {task.createdByName || 'Admin'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button 
+                                            onClick={() => handleEditTask(task)}
+                                            disabled={isReadOnly}
+                                            className="text-gray-400 hover:text-white p-2 bg-logia-800 rounded border border-logia-700"
+                                            title="Editar"
+                                        >
+                                            ✏️
+                                        </button>
+                                        <button 
+                                            onClick={() => handleDeleteTask(task.id)}
+                                            disabled={isReadOnly}
+                                            className="text-white p-2 bg-red-600 rounded border border-red-700 hover:bg-red-500"
+                                            title="Eliminar"
+                                        >
+                                            🗑️
+                                        </button>
+                                    </div>
                                 </div>
                             ))
                         )}
@@ -3616,6 +4252,96 @@ const Admin: React.FC<Props> = ({ user }) => {
                                          </button>
                                      </div>
                                  </div>
+                                 
+                                  {/* v3.1.0: Individual Extra Fees Section */}
+                                 {p.extraFees && p.extraFees.length > 0 && (
+                                     <div className="mt-3 border-t border-purple-600/30 pt-3">
+                                         <p className="text-xs font-bold text-purple-300 uppercase mb-2">Cuotas Extras Individuales:</p>
+                                         <div className="space-y-2">
+                                             {p.extraFees.map(fee => (
+                                                 <div key={fee.id} className="bg-logia-800/50 p-2 rounded border border-purple-600/30 flex items-center gap-2">
+                                                     <div className="flex-1">
+                                                         <p className="text-sm text-white font-medium">{fee.description}</p>
+                                                         <p className="text-xs text-gray-400">${fee.amount.toFixed(2)}</p>
+                                                     </div>
+                                                     <div className="flex flex-col">
+                                                         <label className="text-[9px] text-gray-500 uppercase">Pagado</label>
+                                                         <input 
+                                                             type="number"
+                                                             value={fee.paid}
+                                                             onChange={(e) => {
+                                                                 const val = parseFloat(e.target.value) || 0;
+                                                                 handleUpdateIndividualExtraFeePaid(p.period, fee.id, val);
+                                                             }}
+                                                             disabled={isReadOnly}
+                                                             className="w-20 bg-logia-900 border border-purple-600 rounded p-1 text-white text-right text-xs"
+                                                         />
+                                                     </div>
+                                                     <button
+                                                         onClick={() => handleDeleteIndividualExtraFee(p.period, fee.id)}
+                                                         disabled={isReadOnly}
+                                                         className="bg-red-600 hover:bg-red-500 text-white p-1 rounded text-xs"
+                                                         title="Eliminar cuota extra"
+                                                     >
+                                                         🗑️
+                                                     </button>
+                                                 </div>
+                                             ))}
+                                         </div>
+                                     </div>
+                                 )}
+                                 
+                                 {/* Add New Extra Fee Button/Form */}
+                                 <div className="mt-3 border-t border-logia-600 pt-3">
+                                     {addingExtraFeeForPeriod === p.period ? (
+                                         <div className="bg-purple-900/20 p-3 rounded border border-purple-600/50">
+                                             <p className="text-xs font-bold text-purple-300 mb-2">➕ Agregar Nueva Cuota Extra:</p>
+                                             <div className="flex flex-col gap-2">
+                                                 <input
+                                                     type="text"
+                                                     placeholder="Descripción (ej: Cena anual, Evento especial)"
+                                                     value={newExtraFeeDesc}
+                                                     onChange={(e) => setNewExtraFeeDesc(e.target.value)}
+                                                     className="w-full bg-logia-900 border border-purple-600 rounded p-2 text-white text-sm"
+                                                 />
+                                                 <div className="flex gap-2 items-center">
+                                                     <input
+                                                         type="number"
+                                                         placeholder="Monto"
+                                                         value={newExtraFeeAmount}
+                                                         onChange={(e) => setNewExtraFeeAmount(parseFloat(e.target.value) || 0)}
+                                                         className="w-32 bg-logia-900 border border-purple-600 rounded p-2 text-white text-sm"
+                                                     />
+                                                     <button
+                                                         onClick={() => handleAddIndividualExtraFee(p.period)}
+                                                         disabled={isReadOnly || !newExtraFeeDesc.trim() || newExtraFeeAmount === 0}
+                                                         className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded text-sm font-bold disabled:opacity-50"
+                                                     >
+                                                         ✅ Agregar
+                                                     </button>
+                                                     <button
+                                                         onClick={() => {
+                                                             setAddingExtraFeeForPeriod(null);
+                                                             setNewExtraFeeDesc('');
+                                                             setNewExtraFeeAmount(0);
+                                                         }}
+                                                         className="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded text-sm"
+                                                     >
+                                                         Cancelar
+                                                     </button>
+                                                 </div>
+                                             </div>
+                                         </div>
+                                     ) : (
+                                         <button
+                                             onClick={() => setAddingExtraFeeForPeriod(p.period)}
+                                             disabled={isReadOnly}
+                                             className="w-full bg-purple-600/20 hover:bg-purple-600/40 border border-purple-600/50 text-purple-300 px-3 py-2 rounded text-sm font-medium disabled:opacity-50"
+                                         >
+                                             ➕ Agregar Cuota Extra Individual
+                                         </button>
+                                     )}
+                                 </div>
                              </div>
                          );
                      })}
@@ -3994,6 +4720,33 @@ service cloud.firestore {
                     </button>
                     <button 
                         onClick={handleExecuteDeleteNotice}
+                        className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded font-bold"
+                    >
+                        Sí, Eliminar
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* DELETE TASK CONFIRM MODAL */}
+      {showDeleteTaskModal && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-6">
+            <div className="bg-logia-800 border border-red-500 p-6 rounded-xl max-w-sm w-full text-center shadow-2xl">
+                <div className="text-4xl mb-4">⚠️</div>
+                <h3 className="text-xl font-bold text-white mb-2">¿Eliminar Tarea?</h3>
+                <p className="text-gray-400 mb-6">
+                    Esta acción es irreversible.
+                </p>
+                <div className="flex gap-3">
+                    <button 
+                        onClick={() => setShowDeleteTaskModal(false)}
+                        className="flex-1 py-3 bg-gray-700 text-white rounded font-bold"
+                    >
+                        Cancelar
+                    </button>
+                    <button 
+                        onClick={handleExecuteDeleteTask}
                         className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded font-bold"
                     >
                         Sí, Eliminar
