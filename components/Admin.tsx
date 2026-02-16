@@ -144,7 +144,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   // Extra Fees Management State
   const [extraFees, setExtraFees] = useState<ExtraFee[]>([]);
   const [showExtraFeeHistory, setShowExtraFeeHistory] = useState(false);
-  const [extraFeeType, setExtraFeeType] = useState<'mass' | 'individual'>('mass');
+  const [extraFeeType, setExtraFeeType] = useState<'mass' | 'individual' | 'mass-individual'>('mass');
   const [selectedUserForFee, setSelectedUserForFee] = useState<string>('');
   const [deletingExtraFeeId, setDeletingExtraFeeId] = useState<string | null>(null);
   const [showDeleteExtraFeeModal, setShowDeleteExtraFeeModal] = useState(false);
@@ -182,6 +182,11 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [addingExtraFeeForPeriod, setAddingExtraFeeForPeriod] = useState<string | null>(null);
   const [newExtraFeeDesc, setNewExtraFeeDesc] = useState('');
   const [newExtraFeeAmount, setNewExtraFeeAmount] = useState(0);
+  
+  // v3.2.0: Edit individual extra fees
+  const [editingExtraFee, setEditingExtraFee] = useState<{ period: string; feeId: string } | null>(null);
+  const [editExtraFeeDesc, setEditExtraFeeDesc] = useState('');
+  const [editExtraFeeAmount, setEditExtraFeeAmount] = useState(0);
   
   // Advanced Payment Modal (Multi-month)
   const [showAdvancedPaymentModal, setShowAdvancedPaymentModal] = useState(false);
@@ -563,6 +568,17 @@ const Admin: React.FC<Props> = ({ user }) => {
                   user.name
               );
               showMessage("Cuota extraordinaria masiva aplicada");
+          } else if (extraFeeType === 'mass-individual') {
+              // v3.2.0: Apply individual extra fees to all users
+              await dataService.assignIndividualExtraFeeToAll(
+                  user.groupId!,
+                  extraFeePeriod,
+                  extraFeeAmount,
+                  extraFeeDesc,
+                  user.uid,
+                  user.name
+              );
+              showMessage("Cuotas individuales aplicadas a todos los usuarios");
           } else {
               const targetUser = users.find(u => u.uid === selectedUserForFee);
               if (!targetUser) {
@@ -1279,6 +1295,62 @@ const Admin: React.FC<Props> = ({ user }) => {
           showMessage("Error actualizando pago", 'error');
       }
   };
+  
+  // v3.2.0: Edit individual extra fee (description and amount)
+  const handleEditIndividualExtraFee = (period: string, feeId: string, currentDesc: string, currentAmount: number) => {
+      setEditingExtraFee({ period, feeId });
+      setEditExtraFeeDesc(currentDesc);
+      setEditExtraFeeAmount(currentAmount);
+  };
+  
+  const handleSaveEditedExtraFee = async () => {
+      if (isReadOnly || !editingUserLedger || !editingExtraFee) return;
+      if (!editExtraFeeDesc.trim() || editExtraFeeAmount === 0) {
+          showMessage("Completa descripción y monto", 'error');
+          return;
+      }
+      
+      try {
+          const currentPayment = editPayments.find(p => p.period === editingExtraFee.period);
+          if (!currentPayment || !currentPayment.extraFees) return;
+          
+          // Update the description and amount for the specific fee
+          const updatedExtraFees = currentPayment.extraFees.map(f => 
+              f.id === editingExtraFee.feeId 
+                  ? { ...f, description: editExtraFeeDesc.trim(), amount: editExtraFeeAmount } 
+                  : f
+          );
+          
+          // Recalculate totals
+          const totalExtraAmount = updatedExtraFees.reduce((sum, fee) => sum + fee.amount, 0);
+          const totalExtraPaid = updatedExtraFees.reduce((sum, fee) => sum + fee.paid, 0);
+          
+          const updatedPayment: Payment = {
+              ...currentPayment,
+              extraFees: updatedExtraFees,
+              extraAmount: totalExtraAmount,
+              paidExtra: totalExtraPaid,
+              paid: (currentPayment.paidRegular || 0) + totalExtraPaid,
+              extraCovered: totalExtraPaid >= totalExtraAmount
+          };
+          
+          await dataService.updatePayment(editingUserLedger, updatedPayment);
+          showMessage("Cuota extra actualizada ✅");
+          
+          // Reset edit state
+          setEditingExtraFee(null);
+          setEditExtraFeeDesc('');
+          setEditExtraFeeAmount(0);
+          
+          const payments = await dataService.getPayments(editingUserLedger);
+          setEditPayments(payments);
+          await loadUsers();
+      } catch (e) {
+          console.error(e);
+          showMessage("Error actualizando cuota extra", 'error');
+      }
+  };
+  
   const handleDownloadAttendanceCSV = async () => {
       try {
           showMessage("Generando CSV histórico de asistencia...", 'success');
@@ -2511,7 +2583,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                             {/* Tipo de cuota */}
                             <div className="mb-4">
                                 <label className="block text-xs font-bold uppercase text-gray-400 mb-2">Tipo de Cuota</label>
-                                <div className="flex gap-4">
+                                <div className="flex flex-col gap-2">
                                     <label className="flex items-center gap-2 cursor-pointer">
                                         <input 
                                             type="radio" 
@@ -2521,7 +2593,18 @@ const Admin: React.FC<Props> = ({ user }) => {
                                             disabled={isReadOnly || applyingExtra}
                                             className="text-purple-600"
                                         />
-                                        <span className="text-white">Masiva (Todos los activos)</span>
+                                        <span className="text-white">Masiva Legacy (extraAmount/extraDescription)</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input 
+                                            type="radio" 
+                                            value="mass-individual" 
+                                            checked={extraFeeType === 'mass-individual'}
+                                            onChange={() => setExtraFeeType('mass-individual')}
+                                            disabled={isReadOnly || applyingExtra}
+                                            className="text-purple-600"
+                                        />
+                                        <span className="text-white">✨ Masiva Individual (Separadas, Editables)</span>
                                     </label>
                                     <label className="flex items-center gap-2 cursor-pointer">
                                         <input 
@@ -2532,7 +2615,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                             disabled={isReadOnly || applyingExtra}
                                             className="text-purple-600"
                                         />
-                                        <span className="text-white">Individual</span>
+                                        <span className="text-white">Individual (Un solo usuario)</span>
                                     </label>
                                 </div>
                             </div>
@@ -4246,35 +4329,94 @@ const Admin: React.FC<Props> = ({ user }) => {
                                      <div className="mt-3 border-t border-purple-600/30 pt-3">
                                          <p className="text-xs font-bold text-purple-300 uppercase mb-2">Cuotas Extras Individuales:</p>
                                          <div className="space-y-2">
-                                             {p.extraFees.map(fee => (
-                                                 <div key={fee.id} className="bg-logia-800/50 p-2 rounded border border-purple-600/30 flex items-center gap-2">
-                                                     <div className="flex-1">
-                                                         <p className="text-sm text-white font-medium">{fee.description}</p>
-                                                         <p className="text-xs text-gray-400">${fee.amount.toFixed(2)}</p>
-                                                     </div>
-                                                     <div className="flex flex-col">
-                                                         <label className="text-[9px] text-gray-500 uppercase">Pagado</label>
-                                                         <input 
-                                                             type="number"
-                                                             value={fee.paid}
-                                                             onChange={(e) => {
-                                                                 const val = parseFloat(e.target.value) || 0;
-                                                                 handleUpdateIndividualExtraFeePaid(p.period, fee.id, val);
-                                                             }}
-                                                             disabled={isReadOnly}
-                                                             className="w-20 bg-logia-900 border border-purple-600 rounded p-1 text-white text-right text-xs"
-                                                         />
-                                                     </div>
-                                                     <button
-                                                         onClick={() => handleDeleteIndividualExtraFee(p.period, fee.id)}
-                                                         disabled={isReadOnly}
-                                                         className="bg-red-600 hover:bg-red-500 text-white p-1 rounded text-xs"
-                                                         title="Eliminar cuota extra"
-                                                     >
-                                                         🗑️
-                                                     </button>
+                                             {p.extraFees.map(fee => {
+                                                 const isEditing = editingExtraFee?.period === p.period && editingExtraFee?.feeId === fee.id;
+                                                 return (
+                                                 <div key={fee.id} className="bg-logia-800/50 p-2 rounded border border-purple-600/30">
+                                                     {isEditing ? (
+                                                         // Edit mode
+                                                         <div className="space-y-2">
+                                                             <div className="flex flex-col gap-1">
+                                                                 <label className="text-[9px] text-gray-400 uppercase">Descripción</label>
+                                                                 <input
+                                                                     type="text"
+                                                                     value={editExtraFeeDesc}
+                                                                     onChange={(e) => setEditExtraFeeDesc(e.target.value)}
+                                                                     className="w-full bg-logia-900 border border-purple-600 rounded p-1 text-white text-sm"
+                                                                 />
+                                                             </div>
+                                                             <div className="flex gap-2">
+                                                                 <div className="flex flex-col flex-1">
+                                                                     <label className="text-[9px] text-gray-400 uppercase">Monto</label>
+                                                                     <input
+                                                                         type="number"
+                                                                         value={editExtraFeeAmount}
+                                                                         onChange={(e) => setEditExtraFeeAmount(parseFloat(e.target.value) || 0)}
+                                                                         className="w-full bg-logia-900 border border-purple-600 rounded p-1 text-white text-sm"
+                                                                     />
+                                                                 </div>
+                                                                 <div className="flex gap-1 items-end">
+                                                                     <button
+                                                                         onClick={handleSaveEditedExtraFee}
+                                                                         className="bg-green-600 hover:bg-green-500 text-white px-2 py-1 rounded text-xs"
+                                                                     >
+                                                                         💾 Guardar
+                                                                     </button>
+                                                                     <button
+                                                                         onClick={() => {
+                                                                             setEditingExtraFee(null);
+                                                                             setEditExtraFeeDesc('');
+                                                                             setEditExtraFeeAmount(0);
+                                                                         }}
+                                                                         className="bg-gray-600 hover:bg-gray-500 text-white px-2 py-1 rounded text-xs"
+                                                                     >
+                                                                         ✖️
+                                                                     </button>
+                                                                 </div>
+                                                             </div>
+                                                         </div>
+                                                     ) : (
+                                                         // View mode
+                                                         <div className="flex items-center gap-2">
+                                                             <div className="flex-1">
+                                                                 <p className="text-sm text-white font-medium">{fee.description}</p>
+                                                                 <p className="text-xs text-gray-400">${fee.amount.toFixed(2)}</p>
+                                                             </div>
+                                                             <div className="flex flex-col">
+                                                                 <label className="text-[9px] text-gray-500 uppercase">Pagado</label>
+                                                                 <input 
+                                                                     type="number"
+                                                                     value={fee.paid}
+                                                                     onChange={(e) => {
+                                                                         const val = parseFloat(e.target.value) || 0;
+                                                                         handleUpdateIndividualExtraFeePaid(p.period, fee.id, val);
+                                                                     }}
+                                                                     disabled={isReadOnly}
+                                                                     className="w-20 bg-logia-900 border border-purple-600 rounded p-1 text-white text-right text-xs"
+                                                                 />
+                                                             </div>
+                                                             <div className="flex gap-1">
+                                                                 <button
+                                                                     onClick={() => handleEditIndividualExtraFee(p.period, fee.id, fee.description, fee.amount)}
+                                                                     disabled={isReadOnly}
+                                                                     className="bg-blue-600 hover:bg-blue-500 text-white p-1 rounded text-xs"
+                                                                     title="Editar cuota extra"
+                                                                 >
+                                                                     ✏️
+                                                                 </button>
+                                                                 <button
+                                                                     onClick={() => handleDeleteIndividualExtraFee(p.period, fee.id)}
+                                                                     disabled={isReadOnly}
+                                                                     className="bg-red-600 hover:bg-red-500 text-white p-1 rounded text-xs"
+                                                                     title="Eliminar cuota extra"
+                                                                 >
+                                                                     🗑️
+                                                                 </button>
+                                                             </div>
+                                                         </div>
+                                                     )}
                                                  </div>
-                                             ))}
+                                             )})}
                                          </div>
                                      </div>
                                  )}

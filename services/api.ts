@@ -1563,6 +1563,78 @@ export const dataService = {
     }
     
     return extraFeeId;
+  },
+
+  // v3.2.0: Apply individual extra fees to all active users
+  assignIndividualExtraFeeToAll: async (
+    groupId: string,
+    period: string,
+    amount: number,
+    description: string,
+    createdBy: string,
+    createdByName: string
+  ): Promise<string> => {
+    const users = await dataService.getUsers(groupId);
+    const activeUsers = users.filter(u => u.active);
+    const appliedToUsers = activeUsers.map(u => u.uid);
+    
+    // 1. Create record in extraFees collection
+    const extraFee: Omit<ExtraFee, 'id'> = {
+      groupId,
+      period,
+      amount,
+      description,
+      type: 'mass',
+      createdBy,
+      createdByName,
+      createdAt: new Date().toISOString(),
+      appliedToUsers
+    };
+    
+    const extraFeeId = await dataService.createExtraFee(extraFee);
+    
+    // 2. Apply to ledgers of active users as individual extra fees
+    const chunkSize = 450;
+    for (let i = 0; i < activeUsers.length; i += chunkSize) {
+      const chunk = activeUsers.slice(i, i + chunkSize);
+
+      for (const u of chunk) {
+        const ref = doc(db, "users", u.uid, "ledger", period);
+        
+        // Get current payment
+        const currentDoc = await getDoc(ref);
+        const currentPayment = currentDoc.exists() ? currentDoc.data() as Payment : null;
+        
+        // Create new individual extra fee
+        const newExtraFee: IndividualExtraFee = {
+          id: `extra_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          description: description,
+          amount: amount,
+          paid: 0,
+          createdAt: new Date().toISOString(),
+          createdBy: createdBy
+        };
+        
+        // Add to existing extraFees array or create new one
+        const currentExtraFees = currentPayment?.extraFees || [];
+        const updatedExtraFees = [...currentExtraFees, newExtraFee];
+        
+        // Calculate totals
+        const totalExtraAmount = updatedExtraFees.reduce((sum, fee) => sum + fee.amount, 0);
+        const totalExtraPaid = updatedExtraFees.reduce((sum, fee) => sum + fee.paid, 0);
+        
+        // Update payment
+        await setDoc(ref, {
+          period,
+          extraFees: updatedExtraFees,
+          extraAmount: totalExtraAmount, // Keep legacy field updated
+          paidExtra: totalExtraPaid,
+          extraCovered: totalExtraPaid >= totalExtraAmount
+        }, { merge: true });
+      }
+    }
+    
+    return extraFeeId;
   }
 };
 
