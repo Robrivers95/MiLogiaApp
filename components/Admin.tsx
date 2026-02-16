@@ -2472,20 +2472,11 @@ const Admin: React.FC<Props> = ({ user }) => {
                                  // Sort by period descending
                                  const sortedPayments = [...userPayments].sort((a, b) => b.period.localeCompare(a.period));
                                  
-                                 console.log('🔍 DEBUG - User Payments for:', u.name);
-                                 console.log('Payments:', sortedPayments);
-                                 
                                  sortedPayments.forEach(p => {
                                      const [year, month] = p.period.split('-');
                                      const monthName = new Date(parseInt(year), parseInt(month) - 1, 1)
                                          .toLocaleString('es', { month: 'long' });
                                      const periodDisplay = `${monthName.charAt(0).toUpperCase() + monthName.slice(1)} ${year}`;
-                                     
-                                     console.log(`  Period ${p.period}:`, {
-                                         regular: p.amount,
-                                         extraFees: p.extraFees,
-                                         extraFeesLength: p.extraFees?.length || 0
-                                     });
                                      
                                      // Add regular fee
                                      const regularAmount = Number(p.amount) || 0;
@@ -2501,9 +2492,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                      
                                      // Add individual extra fees
                                      if (p.extraFees && Array.isArray(p.extraFees) && p.extraFees.length > 0) {
-                                         console.log(`    📌 Adding ${p.extraFees.length} extra fees for ${p.period}`);
                                          p.extraFees.forEach(fee => {
-                                             console.log(`      - ${fee.description}: $${fee.amount}`);
                                              paymentDetails.push({
                                                  period: p.period,
                                                  periodDisplay,
@@ -2513,8 +2502,6 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                  balance: fee.amount - fee.paid
                                              });
                                          });
-                                     } else {
-                                         console.log(`    ⚠️ No extra fees for ${p.period}`);
                                      }
                                  });
                              }

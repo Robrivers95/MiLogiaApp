@@ -1549,12 +1549,38 @@ export const dataService = {
     
     const extraFeeId = await dataService.createExtraFee(extraFee);
     
-    // 2. Aplicar al ledger del usuario
+    // 2. Aplicar al ledger del usuario como IndividualExtraFee
     const ledgerRef = doc(db, "users", uid, "ledger", period);
+    
+    // Get current payment to retrieve existing extraFees
+    const currentDoc = await getDoc(ledgerRef);
+    const currentPayment = currentDoc.exists() ? currentDoc.data() as Payment : null;
+    
+    // Create new individual extra fee
+    const newExtraFee: IndividualExtraFee = {
+      id: `extra_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      description: description,
+      amount: amount,
+      paid: 0,
+      createdAt: new Date().toISOString(),
+      createdBy: createdBy
+    };
+    
+    // Add to existing extraFees array or create new one
+    const currentExtraFees = currentPayment?.extraFees || [];
+    const updatedExtraFees = [...currentExtraFees, newExtraFee];
+    
+    // Calculate totals
+    const totalExtraAmount = updatedExtraFees.reduce((sum, fee) => sum + fee.amount, 0);
+    const totalExtraPaid = updatedExtraFees.reduce((sum, fee) => sum + fee.paid, 0);
+    
+    // Update payment with extraFees array
     await setDoc(ledgerRef, {
       period,
-      extraAmount: increment(amount),
-      extraDescription: description
+      extraFees: updatedExtraFees,
+      extraAmount: totalExtraAmount, // Keep legacy field updated
+      paidExtra: totalExtraPaid,
+      extraCovered: totalExtraPaid >= totalExtraAmount
     }, { merge: true });
     
     return extraFeeId;
