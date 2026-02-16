@@ -81,6 +81,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [editAttSelected, setEditAttSelected] = useState<Set<string>>(new Set());
   const [showDeleteAttModal, setShowDeleteAttModal] = useState(false);
   const [deletingAttDate, setDeletingAttDate] = useState<string | null>(null);
+  const [attStats, setAttStats] = useState<Record<string, { total: number; present: number; absent: number; percentage: number }>>({});
 
   // Treasury State
   const [treasuryEntries, setTreasuryEntries] = useState<TreasuryEntry[]>([]);
@@ -402,7 +403,27 @@ const Admin: React.FC<Props> = ({ user }) => {
           const att = await dataService.getAttendance(u.uid);
           att.forEach(a => dates.add(a.date));
       }
-      setAttHistory(Array.from(dates).sort().reverse());
+      const allDates = Array.from(dates).sort().reverse();
+      setAttHistory(allDates);
+      
+      // Calculate attendance stats for each user
+      const stats: Record<string, { total: number; present: number; absent: number; percentage: number }> = {};
+      
+      for (const u of users) {
+          const fullAtt = await dataService.getFullAttendance(
+              u.uid, 
+              u.groupId || '', 
+              u.masonicJoinDate || u.masonicRejoinDate
+          );
+          const present = fullAtt.filter(a => a.attended).length;
+          const total = fullAtt.length;
+          const absent = total - present;
+          const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
+          
+          stats[u.uid] = { total, present, absent, percentage };
+      }
+      
+      setAttStats(stats);
   };
 
   const loadNotices = async () => {
@@ -2764,6 +2785,59 @@ const Admin: React.FC<Props> = ({ user }) => {
                     <button onClick={handleDownloadAttendanceCSV} className="bg-green-700 hover:bg-green-600 text-white px-3 py-1 rounded text-xs flex items-center gap-2">
                         📥 Exportar Historial CSV
                     </button>
+                </div>
+                
+                {/* Attendance Statistics by Member */}
+                <div className="bg-logia-800 rounded-xl p-6 border border-logia-700 shadow-lg">
+                    <h4 className="text-sm font-bold text-gray-300 mb-4 border-b border-logia-700 pb-2">📊 Estadísticas de Asistencia por Miembro</h4>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead className="bg-logia-900 border-b-2 border-indigo-600">
+                                <tr>
+                                    <th className="text-left p-3 text-gray-300">Miembro</th>
+                                    <th className="text-center p-3 text-gray-300">Total Reuniones</th>
+                                    <th className="text-center p-3 text-gray-300">Asistencias</th>
+                                    <th className="text-center p-3 text-gray-300">Ausencias</th>
+                                    <th className="text-center p-3 text-gray-300">%</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-logia-700">
+                                {users
+                                    .sort((a, b) => {
+                                        const statsA = attStats[a.uid] || { percentage: 0 };
+                                        const statsB = attStats[b.uid] || { percentage: 0 };
+                                        return statsB.percentage - statsA.percentage;
+                                    })
+                                    .map(u => {
+                                        const stats = attStats[u.uid] || { total: 0, present: 0, absent: 0, percentage: 0 };
+                                        return (
+                                            <tr key={u.uid} className={`hover:bg-logia-700/30 ${u.active ? '' : 'opacity-50'}`}>
+                                                <td className="p-3 text-white">
+                                                    {u.name}
+                                                    {!u.active && <span className="ml-2 text-xs text-gray-500">(Inactivo)</span>}
+                                                </td>
+                                                <td className="text-center p-3 text-gray-300">{stats.total}</td>
+                                                <td className="text-center p-3">
+                                                    <span className="text-green-400 font-bold">{stats.present}</span>
+                                                </td>
+                                                <td className="text-center p-3">
+                                                    <span className="text-red-400 font-bold">{stats.absent}</span>
+                                                </td>
+                                                <td className="text-center p-3">
+                                                    <span className={`font-bold ${
+                                                        stats.percentage >= 80 ? 'text-green-400' :
+                                                        stats.percentage >= 60 ? 'text-yellow-400' :
+                                                        'text-red-400'
+                                                    }`}>
+                                                        {stats.percentage}%
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
                 
                 <div className="bg-logia-800 rounded-xl p-6 border border-logia-700 shadow-lg">

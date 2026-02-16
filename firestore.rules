@@ -74,6 +74,11 @@ service cloud.firestore {
         allow read: if belongsToGroup(groupId) || isAdminOrMaster();
         allow write: if isAdminOrMaster();
       }
+      
+      match /tasks/{taskId} {
+        allow read: if belongsToGroup(groupId) || isAdminOrMaster();
+        allow write: if isAdminOrMaster();
+      }
     }
     
     // Trivias collection

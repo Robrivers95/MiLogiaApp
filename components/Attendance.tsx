@@ -12,16 +12,22 @@ const AttendanceView: React.FC<Props> = ({ user }) => {
 
   const loadAttendance = async () => {
     setLoading(true);
-    const data = await dataService.getAttendance(user.uid);
+    // Get full attendance including absences
+    const data = await dataService.getFullAttendance(
+      user.uid, 
+      user.groupId || '', 
+      user.masonicJoinDate || user.masonicRejoinDate
+    );
     setRecords(data.sort((a, b) => b.date.localeCompare(a.date)));
     setLoading(false);
   };
 
   useEffect(() => {
     loadAttendance();
-  }, [user.uid]);
+  }, [user.uid, user.groupId]);
 
   const presentCount = records.filter(r => r.attended).length;
+  const absentCount = records.filter(r => !r.attended).length;
   const totalCount = records.length;
   const percentage = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
 
@@ -42,9 +48,10 @@ const AttendanceView: React.FC<Props> = ({ user }) => {
             <p className="text-gray-400 text-sm">Tasa de Asistencia</p>
             <p className="text-3xl font-bold text-indigo-400">{percentage}%</p>
         </div>
-        <div className="text-right">
-             <p className="text-sm text-gray-300">Asistencias: {presentCount}</p>
-             <p className="text-sm text-gray-500">Total Reuniones: {totalCount}</p>
+        <div className="text-right space-y-1">
+             <p className="text-sm text-green-400">✅ Presente: {presentCount}</p>
+             <p className="text-sm text-red-400">❌ Ausente: {absentCount}</p>
+             <p className="text-sm text-gray-400 border-t border-logia-700 pt-1">📊 Total: {totalCount}</p>
         </div>
       </div>
 

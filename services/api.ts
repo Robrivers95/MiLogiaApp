@@ -868,6 +868,52 @@ export const dataService = {
     }
   },
   
+  // Get all attendance dates from a group (all meetings registered)
+  getAllAttendanceDates: async (groupId: string): Promise<string[]> => {
+    if (!groupId) return [];
+    try {
+        const users = await dataService.getUsers(groupId);
+        const datesSet = new Set<string>();
+        
+        for (const user of users) {
+            const attendance = await dataService.getAttendance(user.uid);
+            attendance.forEach(a => datesSet.add(a.date));
+        }
+        
+        return Array.from(datesSet).sort().reverse();
+    } catch (e) {
+        console.error('Error getting all attendance dates:', e);
+        return [];
+    }
+  },
+  
+  // Get full attendance for a user including absences
+  getFullAttendance: async (uid: string, groupId: string, joinDate?: string): Promise<Attendance[]> => {
+    if (!uid || !groupId) return [];
+    try {
+        // Get all meeting dates
+        const allDates = await dataService.getAllAttendanceDates(groupId);
+        
+        // Get user's attendance records
+        const userAttendance = await dataService.getAttendance(uid);
+        const attendedDates = new Set(userAttendance.map(a => a.date));
+        
+        // Filter dates after user's join date if provided
+        const relevantDates = joinDate 
+            ? allDates.filter(date => date >= joinDate)
+            : allDates;
+        
+        // Build full attendance list
+        return relevantDates.map(date => ({
+            date,
+            attended: attendedDates.has(date)
+        }));
+    } catch (e) {
+        console.error('Error getting full attendance:', e);
+        return [];
+    }
+  },
+  
   getAttendanceListForDate: async (groupId: string, date: string): Promise<{name: string, attended: boolean, uid: string}[]> => {
       const users = await dataService.getUsers(groupId);
       // Incluir usuarios que estaban activos en esa fecha según su masonicRejoinDate

@@ -2,6 +2,7 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
 import { getAuth, Auth } from "firebase/auth";
 import { getFirestore, Firestore } from "firebase/firestore";
+import { getMessaging, Messaging, isSupported } from "firebase/messaging";
 
 // --- CONFIGURACIÓN DE FIREBASE PARA REGISTROLOGIA ---
 const firebaseConfig = {
@@ -34,6 +35,17 @@ try {
 
 export const auth: Auth = getAuth(app);
 export const db: Firestore = getFirestore(app);
+
+// Inicializar Messaging (solo en navegador que lo soporte)
+let messaging: Messaging | null = null;
+if (typeof window !== 'undefined') {
+    isSupported().then(supported => {
+        if (supported) {
+            messaging = getMessaging(app);
+        }
+    }).catch(e => console.log("Messaging no soportado:", e));
+}
+export { messaging };
 
 // Indicamos que ya está configurada para saltar la pantalla de Setup
 export const isConfigured = true;
