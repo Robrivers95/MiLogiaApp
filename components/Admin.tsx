@@ -2458,17 +2458,48 @@ const Admin: React.FC<Props> = ({ user }) => {
                              const isExpanded = expandedUsers.has(u.uid);
                              const userPayments = userPaymentsCache[u.uid] || [];
                              
-                             // Build extra fees detail rows
-                             const extraFeeDetails: Array<{period: string; desc: string; amount: number; paid: number}> = [];
+                             // Build detailed payment breakdown for expanded view
+                             const paymentDetails: Array<{
+                                 period: string; 
+                                 periodDisplay: string;
+                                 concept: string; 
+                                 amount: number; 
+                                 paid: number;
+                                 balance: number;
+                             }> = [];
+                             
                              if (isExpanded && userPayments.length > 0) {
-                                 userPayments.forEach(p => {
+                                 // Sort by period descending
+                                 const sortedPayments = [...userPayments].sort((a, b) => b.period.localeCompare(a.period));
+                                 
+                                 sortedPayments.forEach(p => {
+                                     const [year, month] = p.period.split('-');
+                                     const monthName = new Date(parseInt(year), parseInt(month) - 1, 1)
+                                         .toLocaleString('es', { month: 'long' });
+                                     const periodDisplay = `${monthName.charAt(0).toUpperCase() + monthName.slice(1)} ${year}`;
+                                     
+                                     // Add regular fee
+                                     const regularAmount = Number(p.amount) || 0;
+                                     const paidRegular = Number(p.paidRegular) || 0;
+                                     paymentDetails.push({
+                                         period: p.period,
+                                         periodDisplay,
+                                         concept: 'Cuota Regular',
+                                         amount: regularAmount,
+                                         paid: paidRegular,
+                                         balance: regularAmount - paidRegular
+                                     });
+                                     
+                                     // Add individual extra fees
                                      if (p.extraFees && p.extraFees.length > 0) {
                                          p.extraFees.forEach(fee => {
-                                             extraFeeDetails.push({
+                                             paymentDetails.push({
                                                  period: p.period,
-                                                 desc: fee.description,
+                                                 periodDisplay,
+                                                 concept: fee.description,
                                                  amount: fee.amount,
-                                                 paid: fee.paid
+                                                 paid: fee.paid,
+                                                 balance: fee.amount - fee.paid
                                              });
                                          });
                                      }
@@ -2554,40 +2585,62 @@ const Admin: React.FC<Props> = ({ user }) => {
                                          </td>
                                      </tr>
                                      
-                                     {/* Extra Fee Detail Rows (when expanded) */}
-                                     {isExpanded && extraFeeDetails.length > 0 && extraFeeDetails.map((detail, idx) => (
-                                         <tr key={`${u.uid}-extra-${idx}`} className="bg-logia-900/30">
-                                             <td className="p-2 pl-8"></td>
-                                             <td className="p-2 text-xs text-gray-400" colSpan={3}>
-                                                 📌 {detail.desc}
-                                             </td>
-                                             <td className="p-2 text-xs text-indigo-300">
-                                                 {detail.period}
-                                             </td>
-                                             <td className="p-2 text-right font-mono text-xs text-gray-400">
-                                                 -
-                                             </td>
-                                             <td className="p-2 text-right font-mono text-xs text-yellow-400">
-                                                 ${detail.amount}
-                                             </td>
-                                             <td className="p-2 text-right font-mono text-xs text-gray-400">
-                                                 -
-                                             </td>
-                                             <td className="p-2 text-right font-mono text-xs text-green-400">
-                                                 ${detail.paid}
-                                             </td>
-                                             <td className="p-2 text-right font-mono text-xs text-red-400">
-                                                 ${detail.amount - detail.paid}
-                                             </td>
-                                             <td className="p-2"></td>
-                                         </tr>
-                                     ))}
-                                     
-                                     {isExpanded && extraFeeDetails.length === 0 && (
-                                         <tr className="bg-logia-900/30">
-                                             <td className="p-2 pl-8"></td>
-                                             <td className="p-2 text-xs text-gray-500 italic" colSpan={9}>
-                                                 Sin cuotas extras registradas
+                                     {/* Expanded Detail Section - Excel-style table */}
+                                     {isExpanded && (
+                                         <tr className="bg-logia-900">
+                                             <td colSpan={11} className="p-0">
+                                                 <div className="p-4 border-t-2 border-indigo-600">
+                                                     <h4 className="text-sm font-bold text-indigo-400 mb-3 flex items-center gap-2">
+                                                         <span>📊</span> Detalle de Cuotas - {u.name}
+                                                     </h4>
+                                                     
+                                                     {paymentDetails.length > 0 ? (
+                                                         <div className="overflow-x-auto">
+                                                             <table className="w-full text-xs border border-logia-700 rounded">
+                                                                 <thead className="bg-logia-800">
+                                                                     <tr className="border-b border-logia-700">
+                                                                         <th className="p-2 text-left text-gray-400 font-bold uppercase w-32">Período</th>
+                                                                         <th className="p-2 text-left text-gray-400 font-bold uppercase">Concepto</th>
+                                                                         <th className="p-2 text-right text-gray-400 font-bold uppercase w-28">Facturado</th>
+                                                                         <th className="p-2 text-right text-gray-400 font-bold uppercase w-28">Pagado</th>
+                                                                         <th className="p-2 text-right text-gray-400 font-bold uppercase w-28">Deuda</th>
+                                                                     </tr>
+                                                                 </thead>
+                                                                 <tbody className="divide-y divide-logia-700">
+                                                                     {paymentDetails.map((detail, idx) => (
+                                                                         <tr key={`${u.uid}-detail-${idx}`} className="hover:bg-logia-800/50">
+                                                                             <td className="p-2 text-indigo-300 font-mono">
+                                                                                 {detail.periodDisplay}
+                                                                             </td>
+                                                                             <td className="p-2 text-gray-300">
+                                                                                 {detail.concept === 'Cuota Regular' ? (
+                                                                                     <span className="text-blue-400 font-medium">📅 {detail.concept}</span>
+                                                                                 ) : (
+                                                                                     <span className="text-yellow-400">⭐ {detail.concept}</span>
+                                                                                 )}
+                                                                             </td>
+                                                                             <td className="p-2 text-right font-mono text-gray-300">
+                                                                                 ${detail.amount.toFixed(2)}
+                                                                             </td>
+                                                                             <td className="p-2 text-right font-mono text-green-400">
+                                                                                 ${detail.paid.toFixed(2)}
+                                                                             </td>
+                                                                             <td className="p-2 text-right font-mono font-bold">
+                                                                                 <span className={detail.balance > 0 ? 'text-red-400' : 'text-green-400'}>
+                                                                                     ${detail.balance.toFixed(2)}
+                                                                                 </span>
+                                                                             </td>
+                                                                         </tr>
+                                                                     ))}
+                                                                 </tbody>
+                                                             </table>
+                                                         </div>
+                                                     ) : (
+                                                         <p className="text-gray-500 text-xs italic py-4">
+                                                             No hay registros de pagos para este miembro
+                                                         </p>
+                                                     )}
+                                                 </div>
                                              </td>
                                          </tr>
                                      )}
@@ -4636,58 +4689,6 @@ const Admin: React.FC<Props> = ({ user }) => {
                                          </div>
                                      </div>
                                  )}
-                                 
-                                 {/* Add New Extra Fee Button/Form */}
-                                 <div className="mt-3 border-t border-logia-600 pt-3">
-                                     {addingExtraFeeForPeriod === p.period ? (
-                                         <div className="bg-purple-900/20 p-3 rounded border border-purple-600/50">
-                                             <p className="text-xs font-bold text-purple-300 mb-2">➕ Agregar Nueva Cuota Extra:</p>
-                                             <div className="flex flex-col gap-2">
-                                                 <input
-                                                     type="text"
-                                                     placeholder="Descripción (ej: Cena anual, Evento especial)"
-                                                     value={newExtraFeeDesc}
-                                                     onChange={(e) => setNewExtraFeeDesc(e.target.value)}
-                                                     className="w-full bg-logia-900 border border-purple-600 rounded p-2 text-white text-sm"
-                                                 />
-                                                 <div className="flex gap-2 items-center">
-                                                     <input
-                                                         type="number"
-                                                         placeholder="Monto"
-                                                         value={newExtraFeeAmount}
-                                                         onChange={(e) => setNewExtraFeeAmount(parseFloat(e.target.value) || 0)}
-                                                         className="w-32 bg-logia-900 border border-purple-600 rounded p-2 text-white text-sm"
-                                                     />
-                                                     <button
-                                                         onClick={() => handleAddIndividualExtraFee(p.period)}
-                                                         disabled={isReadOnly || !newExtraFeeDesc.trim() || newExtraFeeAmount === 0}
-                                                         className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded text-sm font-bold disabled:opacity-50"
-                                                     >
-                                                         ✅ Agregar
-                                                     </button>
-                                                     <button
-                                                         onClick={() => {
-                                                             setAddingExtraFeeForPeriod(null);
-                                                             setNewExtraFeeDesc('');
-                                                             setNewExtraFeeAmount(0);
-                                                         }}
-                                                         className="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded text-sm"
-                                                     >
-                                                         Cancelar
-                                                     </button>
-                                                 </div>
-                                             </div>
-                                         </div>
-                                     ) : (
-                                         <button
-                                             onClick={() => setAddingExtraFeeForPeriod(p.period)}
-                                             disabled={isReadOnly}
-                                             className="w-full bg-purple-600/20 hover:bg-purple-600/40 border border-purple-600/50 text-purple-300 px-3 py-2 rounded text-sm font-medium disabled:opacity-50"
-                                         >
-                                             ➕ Agregar Cuota Extra Individual
-                                         </button>
-                                     )}
-                                 </div>
                              </div>
                          );
                      })}
