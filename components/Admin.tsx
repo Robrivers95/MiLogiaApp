@@ -4,7 +4,6 @@ import { User, Payment, IndividualExtraFee, PriceHistoryEntry, Role, MasonicDegr
 import { dataService, generateTriviaWithAI, authService } from '../services/api';
 import { doc, deleteDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
-import { sendNotificationToGroup } from '../services/notifications';
 
 
 interface Props {
@@ -1394,17 +1393,6 @@ const Admin: React.FC<Props> = ({ user }) => {
                   date: new Date().toISOString().split('T')[0]
               });
               showMessage("Aviso creado");
-              
-              // Enviar notificación a todo el grupo
-              try {
-                  await sendNotificationToGroup(user.groupId, {
-                      title: '📰 Nuevo Aviso',
-                      body: newNoticeTitle,
-                      icon: '/icon-192.png'
-                  });
-              } catch (e) {
-                  console.log('No se pudo enviar notificación:', e);
-              }
           }
           setNewNoticeTitle('');
           setNewNoticeContent('');
