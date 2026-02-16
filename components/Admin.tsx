@@ -198,6 +198,10 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [advancedPaymentDate, setAdvancedPaymentDate] = useState(new Date().toISOString().slice(0, 10));
   const [advancedPaymentComments, setAdvancedPaymentComments] = useState('');
   const [editingUserProfile, setEditingUserProfile] = useState<User | null>(null);
+  
+  // Expandible Users Table State (v3.3.0)
+  const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set());
+  const [userPaymentsCache, setUserPaymentsCache] = useState<Record<string, Payment[]>>({});
   const [showRules, setShowRules] = useState(false);
   const [screenshotUser, setScreenshotUser] = useState<User | null>(null);
   
@@ -761,18 +765,18 @@ const Admin: React.FC<Props> = ({ user }) => {
 
   const handleDownloadCSV = async () => {
       try {
-          // Headers con columnas detalladas por mes
-          const headers = "Nombre,Email,Rol,Estado,Ciudad,Grado,Fecha Ingreso,Periodo,Año,Mes,Cuota Regular,Cuota Extra,Pagado Regular,Pagado Extra,Total Facturado,Total Pagado,Deuda,Estado Pago,Fecha Pago\n";
+          // Headers con columnas detalladas por mes y concepto
+          const headers = "Nombre,Email,Rol,Estado,Ciudad,Grado,Fecha Ingreso,Periodo,Año,Mes,Concepto,Cuota,Pagado,Deuda,Fecha Pago,Comentarios\n";
           
           const csvRows: string[] = [];
           
-          // Para cada usuario, obtener sus pagos y crear una fila por cada mes
+          // Para cada usuario, obtener sus pagos y crear filas por cada concepto
           for (const u of filteredUsers) {
               try {
                   // Obtener los pagos del usuario
                   const payments = await dataService.getPayments(u.uid);
                   
-                  // Si tiene pagos, crear una fila por cada mes
+                  // Si tiene pagos, crear una fila por cada concepto (regular + extras)
                   if (payments.length > 0) {
                       // Ordenar por período
                       payments.sort((a, b) => a.period.localeCompare(b.period));
@@ -782,19 +786,16 @@ const Admin: React.FC<Props> = ({ user }) => {
                           const [year, month] = p.period.split('-');
                           const monthName = new Date(parseInt(year), parseInt(month) - 1, 1)
                               .toLocaleString('es', { month: 'long' });
-                          
-                          // Calcular valores
-                          const regularAmount = Number(p.amount) || 0;
-                          const extraAmount = Number(p.extraAmount) || 0;
-                          const paidRegular = Number(p.paidRegular) || 0;
-                          const paidExtra = Number(p.paidExtra) || 0;
-                          const totalBilled = regularAmount + extraAmount;
-                          const totalPaid = paidRegular + paidExtra;
-                          const debt = totalBilled - totalPaid;
-                          const status = p.status || 'Pendiente';
+                          const monthCapitalized = monthName.charAt(0).toUpperCase() + monthName.slice(1);
                           const paymentDate = p.paymentDate ? p.paymentDate.slice(0, 10) : 'N/A';
+                          const comments = p.comments || '';
                           
-                          const row = [
+                          // Fila para cuota regular
+                          const regularAmount = Number(p.amount) || 0;
+                          const paidRegular = Number(p.paidRegular) || 0;
+                          const regularDebt = regularAmount - paidRegular;
+                          
+                          const regularRow = [
                               `"${u.name}"`,
                               `"${u.email}"`,
                               `"${u.role}"`,
@@ -804,19 +805,46 @@ const Admin: React.FC<Props> = ({ user }) => {
                               `"${u.joinDate?.slice(0,10) || 'N/A'}"`,
                               `"${p.period}"`,
                               `"${year}"`,
-                              `"${monthName.charAt(0).toUpperCase() + monthName.slice(1)}"`,
+                              `"${monthCapitalized}"`,
+                              `"Cuota Regular"`,
                               regularAmount.toFixed(2),
-                              extraAmount.toFixed(2),
                               paidRegular.toFixed(2),
-                              paidExtra.toFixed(2),
-                              totalBilled.toFixed(2),
-                              totalPaid.toFixed(2),
-                              debt.toFixed(2),
-                              `"${status}"`,
-                              `"${paymentDate}"`
+                              regularDebt.toFixed(2),
+                              `"${paymentDate}"`,
+                              `"${comments}"`
                           ].join(',');
                           
-                          csvRows.push(row);
+                          csvRows.push(regularRow);
+                          
+                          // Filas para cuotas extras individuales (v3.1.0+)
+                          if (p.extraFees && p.extraFees.length > 0) {
+                              p.extraFees.forEach(fee => {
+                                  const extraAmount = Number(fee.amount) || 0;
+                                  const paidExtra = Number(fee.paid) || 0;
+                                  const extraDebt = extraAmount - paidExtra;
+                                  
+                                  const extraRow = [
+                                      `"${u.name}"`,
+                                      `"${u.email}"`,
+                                      `"${u.role}"`,
+                                      `"${u.active ? 'Activo' : 'Inactivo'}"`,
+                                      `"${u.city || 'N/A'}"`,
+                                      `"${u.degree || 'N/A'}"`,
+                                      `"${u.joinDate?.slice(0,10) || 'N/A'}"`,
+                                      `"${p.period}"`,
+                                      `"${year}"`,
+                                      `"${monthCapitalized}"`,
+                                      `"${fee.description}"`,
+                                      extraAmount.toFixed(2),
+                                      paidExtra.toFixed(2),
+                                      extraDebt.toFixed(2),
+                                      `"${paymentDate}"`,
+                                      `"${comments}"`
+                                  ].join(',');
+                                  
+                                  csvRows.push(extraRow);
+                              });
+                          }
                       }
                   } else {
                       // Si no tiene pagos, crear una fila con datos básicos del usuario
@@ -831,15 +859,12 @@ const Admin: React.FC<Props> = ({ user }) => {
                           '"N/A"',
                           '"N/A"',
                           '"N/A"',
-                          '0.00',
-                          '0.00',
-                          '0.00',
-                          '0.00',
-                          '0.00',
-                          '0.00',
-                          '0.00',
                           '"Sin Datos"',
-                          '"N/A"'
+                          '0.00',
+                          '0.00',
+                          '0.00',
+                          '"N/A"',
+                          '""'
                       ].join(',');
                       
                       csvRows.push(row);
@@ -1957,6 +1982,27 @@ const Admin: React.FC<Props> = ({ user }) => {
       setAdvancedPaymentComments('');
       setShowAdvancedPaymentModal(true);
   };
+  
+  const toggleUserExpand = async (uid: string) => {
+      const newSet = new Set(expandedUsers);
+      if (newSet.has(uid)) {
+          newSet.delete(uid);
+      } else {
+          newSet.add(uid);
+          // Load payments if not already cached
+          if (!userPaymentsCache[uid]) {
+              try {
+                  const payments = await dataService.getPayments(uid);
+                  setUserPaymentsCache(prev => ({ ...prev, [uid]: payments }));
+              } catch (e) {
+                  console.error('Error loading payments for user:', e);
+                  showMessage('Error cargando pagos del usuario', 'error');
+                  return;
+              }
+          }
+      }
+      setExpandedUsers(newSet);
+  };
 
   const handleSaveAdvancedPayment = async () => {
       if (!advancedPaymentUser || !advancedPaymentStartPeriod || advancedPaymentMonths < 1) {
@@ -2386,6 +2432,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                  <table className="w-full text-left text-sm text-gray-300 min-w-[1000px]">
                      <thead className="bg-logia-900 text-xs uppercase text-gray-500 font-bold">
                          <tr>
+                             <th className="p-3 w-10"></th>
                              <th className="p-3">Nombre / Email</th>
                              <th className="p-3 hidden">Grado / Cargo</th>
                              <th className="p-3 hidden">Trabajo</th>
@@ -2408,73 +2455,143 @@ const Admin: React.FC<Props> = ({ user }) => {
                                  totalPaidRegular: 0,
                                  totalPaidExtra: 0
                              };
+                             const isExpanded = expandedUsers.has(u.uid);
+                             const userPayments = userPaymentsCache[u.uid] || [];
+                             
+                             // Build extra fees detail rows
+                             const extraFeeDetails: Array<{period: string; desc: string; amount: number; paid: number}> = [];
+                             if (isExpanded && userPayments.length > 0) {
+                                 userPayments.forEach(p => {
+                                     if (p.extraFees && p.extraFees.length > 0) {
+                                         p.extraFees.forEach(fee => {
+                                             extraFeeDetails.push({
+                                                 period: p.period,
+                                                 desc: fee.description,
+                                                 amount: fee.amount,
+                                                 paid: fee.paid
+                                             });
+                                         });
+                                     }
+                                 });
+                             }
+                             
                              return (
-                                 <tr key={u.uid} className={`hover:bg-logia-700/50 transition-colors ${!u.active ? 'bg-red-900/10 opacity-70' : ''}`}>
-                                     <td className="p-3">
-                                         <div className="font-bold text-white flex items-center gap-2">
-                                             {u.name}
-                                             {!u.active && <span className="text-[10px] bg-red-600 text-white px-1.5 rounded">PENDIENTE</span>}
-                                         </div>
-                                         <div className="text-xs text-gray-500">{u.email}</div>
-                                     </td>
-                                     <td className="p-3 hidden">
-                                         <div className="text-indigo-300">{u.degree ? `${u.degree} (${u.numericDegree || '-'})` : '-'}</div>
-                                         <div className="text-xs text-gray-400">{u.lodgeRole || 'Sin cargo'}</div>
-                                     </td>
-                                     <td className="p-3 text-xs hidden">
-                                         <div className="text-white">{u.job || '-'}</div>
-                                         <div className="text-gray-500 truncate max-w-[100px]" title={u.workAddress}>{u.workAddress || ''}</div>
-                                     </td>
-                                     <td className="p-3">
-                                         <select 
-                                            value={u.role} 
-                                            onChange={(e) => handleChangeRole(u.uid, e.target.value as Role)}
-                                            disabled={isReadOnly || u.uid === user.uid}
-                                            className="bg-logia-900 border border-logia-700 rounded p-1 text-xs outline-none"
-                                         >
-                                             <option value="member">Miembro</option>
-                                             <option value="admin">Admin</option>
-                                             <option value="viewer">Observador</option>
-                                         </select>
-                                     </td>
-                                     <td className="p-3 text-right font-mono text-gray-300">
-                                         ${stats.totalBilledRegular || 0}
-                                     </td>
-                                     <td className="p-3 text-right font-mono text-gray-300">
-                                         ${stats.totalBilledExtra || 0}
-                                     </td>
-                                     <td className="p-3 text-right font-mono text-green-400">
-                                         ${stats.totalPaidRegular || 0}
-                                     </td>
-                                     <td className="p-3 text-right font-mono text-green-400">
-                                         ${stats.totalPaidExtra || 0}
-                                     </td>
-                                     <td className="p-3 text-right font-mono font-bold text-red-400">
-                                         ${stats.totalDebt}
-                                     </td>
-                                     <td className="p-3 flex justify-center gap-2">
-                                         {!u.active ? (
-                                             <button onClick={() => handleToggleActive(u.uid, u.active)} title="Reactivar / Aceptar" className="px-3 py-1.5 bg-green-600 rounded hover:bg-green-500 text-white font-bold text-xs">
-                                                 ✅ ACTIVAR
+                                 <React.Fragment key={u.uid}>
+                                     {/* Main Row */}
+                                     <tr className={`hover:bg-logia-700/50 transition-colors ${!u.active ? 'bg-red-900/10 opacity-70' : ''}`}>
+                                         <td className="p-3">
+                                             <button 
+                                                 onClick={() => toggleUserExpand(u.uid)}
+                                                 className="text-indigo-400 hover:text-indigo-300 font-bold"
+                                                 title="Ver detalle de cuotas extras"
+                                             >
+                                                 {isExpanded ? '▼' : '▶'}
                                              </button>
-                                         ) : (
-                                             <>
-                                                <button onClick={() => handleToggleActive(u.uid, u.active)} title="Desactivar / Dar de Baja" className="p-1.5 bg-logia-900 border border-logia-700 rounded hover:bg-red-900/30 text-gray-400">
-                                                    🚫
-                                                </button>
-                                                <button onClick={() => handleOpenPayments(u.uid)} title="Gestionar Pagos" className="p-1.5 bg-yellow-600 rounded hover:bg-yellow-500 text-white">
-                                                    💰
-                                                </button>
-                                                <button onClick={() => handleOpenAdvancedPayment(u)} title="Pagos Anticipados (Multi-mes)" className="p-1.5 bg-purple-600 rounded hover:bg-purple-500 text-white">
-                                                    📅
-                                                </button>
-                                                <button onClick={() => setEditingUserProfile(u)} title="Editar Perfil" className="p-1.5 bg-blue-600 rounded hover:bg-blue-500 text-white">
-                                                    ✏️
-                                                </button>
-                                             </>
-                                         )}
-                                     </td>
-                                 </tr>
+                                         </td>
+                                         <td className="p-3">
+                                             <div className="font-bold text-white flex items-center gap-2">
+                                                 {u.name}
+                                                 {!u.active && <span className="text-[10px] bg-red-600 text-white px-1.5 rounded">PENDIENTE</span>}
+                                             </div>
+                                             <div className="text-xs text-gray-500">{u.email}</div>
+                                         </td>
+                                         <td className="p-3 hidden">
+                                             <div className="text-indigo-300">{u.degree ? `${u.degree} (${u.numericDegree || '-'})` : '-'}</div>
+                                             <div className="text-xs text-gray-400">{u.lodgeRole || 'Sin cargo'}</div>
+                                         </td>
+                                         <td className="p-3 text-xs hidden">
+                                             <div className="text-white">{u.job || '-'}</div>
+                                             <div className="text-gray-500 truncate max-w-[100px]" title={u.workAddress}>{u.workAddress || ''}</div>
+                                         </td>
+                                         <td className="p-3">
+                                             <select 
+                                                value={u.role} 
+                                                onChange={(e) => handleChangeRole(u.uid, e.target.value as Role)}
+                                                disabled={isReadOnly || u.uid === user.uid}
+                                                className="bg-logia-900 border border-logia-700 rounded p-1 text-xs outline-none"
+                                             >
+                                                 <option value="member">Miembro</option>
+                                                 <option value="admin">Admin</option>
+                                                 <option value="viewer">Observador</option>
+                                             </select>
+                                         </td>
+                                         <td className="p-3 text-right font-mono text-gray-300">
+                                             ${stats.totalBilledRegular || 0}
+                                         </td>
+                                         <td className="p-3 text-right font-mono text-gray-300">
+                                             ${stats.totalBilledExtra || 0}
+                                         </td>
+                                         <td className="p-3 text-right font-mono text-green-400">
+                                             ${stats.totalPaidRegular || 0}
+                                         </td>
+                                         <td className="p-3 text-right font-mono text-green-400">
+                                             ${stats.totalPaidExtra || 0}
+                                         </td>
+                                         <td className="p-3 text-right font-mono font-bold text-red-400">
+                                             ${stats.totalDebt}
+                                         </td>
+                                         <td className="p-3 flex justify-center gap-2">
+                                             {!u.active ? (
+                                                 <button onClick={() => handleToggleActive(u.uid, u.active)} title="Reactivar / Aceptar" className="px-3 py-1.5 bg-green-600 rounded hover:bg-green-500 text-white font-bold text-xs">
+                                                     ✅ ACTIVAR
+                                                 </button>
+                                             ) : (
+                                                 <>
+                                                    <button onClick={() => handleToggleActive(u.uid, u.active)} title="Desactivar / Dar de Baja" className="p-1.5 bg-logia-900 border border-logia-700 rounded hover:bg-red-900/30 text-gray-400">
+                                                        🚫
+                                                    </button>
+                                                    <button onClick={() => handleOpenPayments(u.uid)} title="Gestionar Pagos" className="p-1.5 bg-yellow-600 rounded hover:bg-yellow-500 text-white">
+                                                        💰
+                                                    </button>
+                                                    <button onClick={() => handleOpenAdvancedPayment(u)} title="Pagos Anticipados (Multi-mes)" className="p-1.5 bg-purple-600 rounded hover:bg-purple-500 text-white">
+                                                        📅
+                                                    </button>
+                                                    <button onClick={() => setEditingUserProfile(u)} title="Editar Perfil" className="p-1.5 bg-blue-600 rounded hover:bg-blue-500 text-white">
+                                                        ✏️
+                                                    </button>
+                                                 </>
+                                             )}
+                                         </td>
+                                     </tr>
+                                     
+                                     {/* Extra Fee Detail Rows (when expanded) */}
+                                     {isExpanded && extraFeeDetails.length > 0 && extraFeeDetails.map((detail, idx) => (
+                                         <tr key={`${u.uid}-extra-${idx}`} className="bg-logia-900/30">
+                                             <td className="p-2 pl-8"></td>
+                                             <td className="p-2 text-xs text-gray-400" colSpan={3}>
+                                                 📌 {detail.desc}
+                                             </td>
+                                             <td className="p-2 text-xs text-indigo-300">
+                                                 {detail.period}
+                                             </td>
+                                             <td className="p-2 text-right font-mono text-xs text-gray-400">
+                                                 -
+                                             </td>
+                                             <td className="p-2 text-right font-mono text-xs text-yellow-400">
+                                                 ${detail.amount}
+                                             </td>
+                                             <td className="p-2 text-right font-mono text-xs text-gray-400">
+                                                 -
+                                             </td>
+                                             <td className="p-2 text-right font-mono text-xs text-green-400">
+                                                 ${detail.paid}
+                                             </td>
+                                             <td className="p-2 text-right font-mono text-xs text-red-400">
+                                                 ${detail.amount - detail.paid}
+                                             </td>
+                                             <td className="p-2"></td>
+                                         </tr>
+                                     ))}
+                                     
+                                     {isExpanded && extraFeeDetails.length === 0 && (
+                                         <tr className="bg-logia-900/30">
+                                             <td className="p-2 pl-8"></td>
+                                             <td className="p-2 text-xs text-gray-500 italic" colSpan={9}>
+                                                 Sin cuotas extras registradas
+                                             </td>
+                                         </tr>
+                                     )}
+                                 </React.Fragment>
                              );
                          })}
                      </tbody>
