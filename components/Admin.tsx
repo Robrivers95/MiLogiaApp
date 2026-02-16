@@ -1240,14 +1240,22 @@ const Admin: React.FC<Props> = ({ user }) => {
           const totalExtraAmount = updatedExtraFees.reduce((sum, fee) => sum + fee.amount, 0);
           const totalExtraPaid = updatedExtraFees.reduce((sum, fee) => sum + fee.paid, 0);
           
+          // Build update object without undefined fields
           const updatedPayment: Payment = {
               ...currentPayment,
-              extraFees: updatedExtraFees.length > 0 ? updatedExtraFees : undefined,
               extraAmount: totalExtraAmount,
               paidExtra: totalExtraPaid,
               paid: (currentPayment.paidRegular || 0) + totalExtraPaid,
               extraCovered: totalExtraPaid >= totalExtraAmount
           };
+          
+          // Only include extraFees if there are items remaining
+          if (updatedExtraFees.length > 0) {
+              updatedPayment.extraFees = updatedExtraFees;
+          } else {
+              // Remove extraFees field from payment object
+              delete (updatedPayment as any).extraFees;
+          }
           
           await dataService.updatePayment(editingUserLedger, updatedPayment);
           showMessage("Cuota extra eliminada");
