@@ -840,7 +840,8 @@ export const dataService = {
                 ...data,
                 amount: Number(data.amount) || 0,
                 paid: Number(data.paid) || 0,
-                extraAmount: Number(data.extraAmount) || 0
+                extraAmount: Number(data.extraAmount) || 0,
+                extraFees: data.extraFees || [] // Ensure extraFees is always an array
             } as Payment;
         });
     } catch (e) {
