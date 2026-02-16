@@ -171,102 +171,134 @@ const Payments: React.FC<Props> = ({ user }) => {
       ) : allRows.length === 0 ? (
         <p className="text-center text-gray-400 bg-logia-800/50 p-4 rounded-lg">No hay registros de pagos.</p>
       ) : (
-        <div className="bg-logia-800 rounded-xl border border-logia-700 overflow-hidden">
-          {/* Table Header */}
-          <div className="bg-logia-900 p-3 grid grid-cols-12 gap-2 text-xs font-bold text-gray-400 uppercase border-b border-logia-700">
-            <div className="col-span-3">Mes / Año</div>
-            <div className="col-span-2 text-right">Cuota Regular</div>
-            <div className="col-span-3">Cuota Extra</div>
-            <div className="col-span-2 text-right">Pagado</div>
-            <div className="col-span-2 text-right">Saldo</div>
+        <div className="bg-logia-800 rounded-lg border border-logia-700 overflow-hidden shadow-lg">
+          {/* Table Header - Estilo Excel */}
+          <div className="bg-gradient-to-r from-indigo-900 to-indigo-800 p-3 grid grid-cols-12 gap-1 text-xs font-bold text-gray-200 uppercase border-b-2 border-indigo-600">
+            <div className="col-span-3 pl-2">Período</div>
+            <div className="col-span-2 text-right pr-2">Cuota Regular</div>
+            <div className="col-span-2 text-right pr-2">Cuota Extra</div>
+            <div className="col-span-2 text-right pr-2">Pagado</div>
+            <div className="col-span-2 text-right pr-2">Saldo</div>
+            <div className="col-span-1 text-center">Info</div>
           </div>
           
-          {/* Table Body */}
+          {/* Table Body - Estilo Excel */}
           <div className="divide-y divide-logia-700">
             {allRows.map((row, idx) => {
               const isExpanded = expandedPeriods.has(row.period);
-              const hasDetails = row.isMainRow && (row.paymentDate || row.comments);
+              const hasDetails = row.isMainRow && (row.paymentDate || row.comments || row.extraFee);
               
               return (
                 <React.Fragment key={`${row.period}-${idx}`}>
                   <div 
-                    className={`p-3 grid grid-cols-12 gap-2 ${hasDetails ? 'cursor-pointer hover:bg-logia-700/30' : ''} ${row.isMainRow ? '' : 'bg-purple-900/10'}`}
-                    onClick={() => hasDetails && toggleExpand(row.period)}
+                    className={`grid grid-cols-12 gap-1 items-center hover:bg-logia-700/20 transition-colors ${
+                      row.isMainRow ? 'bg-logia-800/80' : 'bg-logia-900/50'
+                    } ${idx % 2 === 0 ? 'bg-opacity-50' : ''}`}
                   >
                     {/* Period Column */}
-                    <div className="col-span-3 flex items-center gap-2">
-                      <span className={`text-sm ${row.isMainRow ? 'font-bold text-indigo-300' : 'text-gray-400 text-xs'}`}>
+                    <div className="col-span-3 py-3 pl-2 border-r border-logia-700/50">
+                      <span className={`text-sm ${row.isMainRow ? 'font-bold text-indigo-300' : 'text-gray-400 text-xs pl-4'}`}>
                         {row.isMainRow ? row.periodDisplay : `↳ ${row.periodDisplay}`}
                       </span>
-                      {hasDetails && (
-                        <span className="text-xs text-indigo-400">{isExpanded ? '▼' : '▶'}</span>
-                      )}
                     </div>
                     
                     {/* Regular Fee Column */}
-                    <div className="col-span-2 text-right">
+                    <div className="col-span-2 py-3 pr-2 text-right border-r border-logia-700/50">
                       {row.regularAmount > 0 ? (
-                        <div className="text-sm">
+                        <div className="text-sm tabular-nums">
                           <div className="text-white font-medium">${row.regularAmount.toFixed(2)}</div>
                           {row.regularPaid > 0 && (
                             <div className="text-xs text-green-400">-${row.regularPaid.toFixed(2)}</div>
                           )}
                         </div>
                       ) : (
-                        <span className="text-gray-600">—</span>
+                        <span className="text-gray-600 text-sm">—</span>
                       )}
                     </div>
                     
-                    {/* Extra Fee Column */}
-                    <div className="col-span-3">
+                    {/* Extra Fee Column - SOLO MONTO */}
+                    <div className="col-span-2 py-3 pr-2 text-right border-r border-logia-700/50">
                       {row.extraFee ? (
-                        <div className="text-sm">
-                          <div className="text-purple-300 font-medium">{row.extraFee.description}</div>
-                          <div className="text-xs text-gray-400">${row.extraFee.amount.toFixed(2)}</div>
+                        <div className="text-sm tabular-nums">
+                          <div className="text-purple-300 font-medium">${row.extraFee.amount.toFixed(2)}</div>
+                          {row.extraFee.paid > 0 && (
+                            <div className="text-xs text-green-400">-${row.extraFee.paid.toFixed(2)}</div>
+                          )}
                         </div>
                       ) : (
-                        <span className="text-gray-600">—</span>
+                        <span className="text-gray-600 text-sm">—</span>
                       )}
                     </div>
                     
                     {/* Paid Column */}
-                    <div className="col-span-2 text-right">
-                      <div className="text-sm">
-                        {row.regularPaid > 0 && (
-                          <div className="text-green-400">${row.regularPaid.toFixed(2)}</div>
-                        )}
-                        {row.extraFee && row.extraFee.paid > 0 && (
-                          <div className="text-green-400">${row.extraFee.paid.toFixed(2)}</div>
-                        )}
-                        {row.regularPaid === 0 && (!row.extraFee || row.extraFee.paid === 0) && (
+                    <div className="col-span-2 py-3 pr-2 text-right border-r border-logia-700/50">
+                      <div className="text-sm tabular-nums">
+                        {(row.regularPaid > 0 || (row.extraFee && row.extraFee.paid > 0)) ? (
+                          <div className="text-green-400 font-medium">
+                            ${(row.regularPaid + (row.extraFee?.paid || 0)).toFixed(2)}
+                          </div>
+                        ) : (
                           <span className="text-gray-600">$0.00</span>
                         )}
                       </div>
                     </div>
                     
                     {/* Balance Column */}
-                    <div className="col-span-2 text-right">
-                      <span className={`text-sm font-bold ${row.totalBalance > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                    <div className="col-span-2 py-3 pr-2 text-right border-r border-logia-700/50">
+                      <span className={`text-sm font-bold tabular-nums ${row.totalBalance > 0 ? 'text-red-400' : 'text-green-400'}`}>
                         ${row.totalBalance.toFixed(2)}
                       </span>
+                    </div>
+                    
+                    {/* Info Button Column */}
+                    <div className="col-span-1 py-3 text-center">
+                      {hasDetails && (
+                        <button
+                          onClick={() => toggleExpand(row.period)}
+                          className="text-indigo-400 hover:text-indigo-300 text-xs font-bold"
+                          title="Ver detalles"
+                        >
+                          {isExpanded ? '▼' : '▶'}
+                        </button>
+                      )}
                     </div>
                   </div>
                   
                   {/* Expanded Details */}
                   {isExpanded && hasDetails && (
-                    <div className="bg-logia-900/50 p-3 border-t border-logia-700 text-xs">
-                      {row.paymentDate && (
-                        <div className="mb-1">
-                          <span className="text-gray-400">Fecha de Pago: </span>
-                          <span className="text-white">{new Date(row.paymentDate).toLocaleDateString('es-ES')}</span>
+                    <div className="bg-logia-900 border-t border-b-2 border-indigo-600/30">
+                      <div className="p-4 space-y-3">
+                        <p className="text-xs font-bold text-indigo-400 uppercase mb-2">📋 Detalles del Período</p>
+                        
+                        {/* Payment Info */}
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          {row.paymentDate && (
+                            <div className="bg-logia-800/50 p-2 rounded border border-logia-700">
+                              <span className="text-gray-400 text-xs block">Fecha de Pago:</span>
+                              <span className="text-white font-medium">{new Date(row.paymentDate).toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' })}</span>
+                            </div>
+                          )}
+                          {row.comments && (
+                            <div className="bg-logia-800/50 p-2 rounded border border-logia-700">
+                              <span className="text-gray-400 text-xs block">Comentarios:</span>
+                              <span className="text-white font-medium italic">"{row.comments}"</span>
+                            </div>
+                          )}
                         </div>
-                      )}
-                      {row.comments && (
-                        <div>
-                          <span className="text-gray-400">Comentarios: </span>
-                          <span className="text-white italic">"{row.comments}"</span>
-                        </div>
-                      )}
+                        
+                        {/* Extra Fee Description */}
+                        {row.extraFee && (
+                          <div className="bg-purple-900/20 p-3 rounded border border-purple-600/30">
+                            <span className="text-purple-400 text-xs font-bold block mb-1">Descripción de Cuota Extra:</span>
+                            <span className="text-purple-200 text-sm font-medium">{row.extraFee.description}</span>
+                            <div className="mt-2 flex gap-4 text-xs">
+                              <span className="text-gray-400">Monto: <span className="text-purple-300 font-bold">${row.extraFee.amount.toFixed(2)}</span></span>
+                              <span className="text-gray-400">Pagado: <span className="text-green-400 font-bold">${row.extraFee.paid.toFixed(2)}</span></span>
+                              <span className="text-gray-400">Pendiente: <span className={`font-bold ${row.extraBalance > 0 ? 'text-red-400' : 'text-green-400'}`}>${row.extraBalance.toFixed(2)}</span></span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </React.Fragment>
