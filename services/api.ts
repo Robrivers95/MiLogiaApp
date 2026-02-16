@@ -1708,6 +1708,98 @@ export const dataService = {
     }
     
     return extraFeeId;
+  },
+
+  // Migration function: Convert old extraAmount format to new extraFees array format
+  migrateExtraFeesToNewFormat: async (groupId: string): Promise<{
+    totalUsers: number;
+    totalPayments: number;
+    migratedPayments: number;
+    errors: string[];
+  }> => {
+    const errors: string[] = [];
+    let totalUsers = 0;
+    let totalPayments = 0;
+    let migratedPayments = 0;
+
+    try {
+      // Get all users from the group
+      const users = await dataService.getUsers(groupId);
+      totalUsers = users.length;
+
+      console.log(`🔄 Starting migration for ${totalUsers} users...`);
+
+      // Process each user
+      for (const user of users) {
+        try {
+          // Get all payments for this user
+          const ledgerSnapshot = await getDocs(collection(db, "users", user.uid, "ledger"));
+          
+          for (const paymentDoc of ledgerSnapshot.docs) {
+            totalPayments++;
+            const payment = paymentDoc.data() as Payment;
+            const period = paymentDoc.id;
+
+            // Check if this payment needs migration
+            const hasOldExtraAmount = payment.extraAmount && payment.extraAmount > 0;
+            const hasNoExtraFees = !payment.extraFees || payment.extraFees.length === 0;
+
+            if (hasOldExtraAmount && hasNoExtraFees) {
+              console.log(`  📝 Migrating ${user.name} - ${period}: $${payment.extraAmount}`);
+
+              // Create IndividualExtraFee from old data
+              const newExtraFee: IndividualExtraFee = {
+                id: `migrated_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                description: payment.extraDescription || 'Cuota Extraordinaria (Migrado)',
+                amount: Number(payment.extraAmount) || 0,
+                paid: Number(payment.paidExtra) || 0,
+                createdAt: new Date().toISOString(),
+                createdBy: 'system_migration'
+              };
+
+              // Update the payment with new format
+              const ledgerRef = doc(db, "users", user.uid, "ledger", period);
+              await updateDoc(ledgerRef, {
+                extraFees: [newExtraFee],
+                // Keep legacy fields for compatibility
+                extraAmount: newExtraFee.amount,
+                paidExtra: newExtraFee.paid,
+                extraCovered: newExtraFee.paid >= newExtraFee.amount
+              });
+
+              migratedPayments++;
+              console.log(`    ✅ Migrated successfully`);
+            }
+          }
+        } catch (userError: any) {
+          const errorMsg = `Error processing user ${user.name}: ${userError.message}`;
+          console.error(`  ❌ ${errorMsg}`);
+          errors.push(errorMsg);
+        }
+      }
+
+      console.log(`\n✨ Migration complete!`);
+      console.log(`   Total users: ${totalUsers}`);
+      console.log(`   Total payments: ${totalPayments}`);
+      console.log(`   Migrated payments: ${migratedPayments}`);
+      console.log(`   Errors: ${errors.length}`);
+
+      return {
+        totalUsers,
+        totalPayments,
+        migratedPayments,
+        errors
+      };
+    } catch (error: any) {
+      console.error('💥 Migration failed:', error);
+      errors.push(`Migration failed: ${error.message}`);
+      return {
+        totalUsers,
+        totalPayments,
+        migratedPayments,
+        errors
+      };
+    }
   }
 };
 

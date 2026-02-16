@@ -212,6 +212,16 @@ const Admin: React.FC<Props> = ({ user }) => {
 
   // Hamburger Menu State
   const [showMenu, setShowMenu] = useState(false);
+  
+  // Migration State (v3.4.2)
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationResult, setMigrationResult] = useState<{
+    totalUsers: number;
+    totalPayments: number;
+    migratedPayments: number;
+    errors: string[];
+  } | null>(null);
+  const [showMigrationModal, setShowMigrationModal] = useState(false);
 
   // PERMISSIONS
   const isReadOnly = user.role === 'viewer';
@@ -566,6 +576,48 @@ const Admin: React.FC<Props> = ({ user }) => {
           setExtraFees(data);
       } catch (e) {
           console.error("Error cargando cuotas extraordinarias", e);
+      }
+  };
+  
+  const handleMigrateExtraFees = async () => {
+      if (isReadOnly) {
+          showMessage("No tienes permisos para ejecutar migraciones", 'error');
+          return;
+      }
+      
+      if (!confirm('⚠️ MIGRACIÓN DE DATOS\n\nEsta operación convertirá todas las cuotas extraordinarias del formato antiguo al nuevo formato con array extraFees.\n\n¿Continuar?')) {
+          return;
+      }
+      
+      try {
+          setIsMigrating(true);
+          setShowMigrationModal(true);
+          console.log('🚀 Iniciando migración de cuotas extraordinarias...');
+          
+          const result = await dataService.migrateExtraFeesToNewFormat(user.groupId);
+          
+          setMigrationResult(result);
+          
+          if (result.errors.length === 0) {
+              showMessage(`✅ Migración completada: ${result.migratedPayments} pagos migrados`, 'success');
+          } else {
+              showMessage(`⚠️ Migración completada con ${result.errors.length} errores`, 'error');
+          }
+          
+          // Reload data to reflect changes
+          await loadUsers();
+          
+      } catch (e: any) {
+          console.error('Error en migración:', e);
+          showMessage(`Error en migración: ${e.message}`, 'error');
+          setMigrationResult({
+              totalUsers: 0,
+              totalPayments: 0,
+              migratedPayments: 0,
+              errors: [e.message]
+          });
+      } finally {
+          setIsMigrating(false);
       }
   };
 
@@ -2294,6 +2346,30 @@ const Admin: React.FC<Props> = ({ user }) => {
         {/* --- DASHBOARD TAB --- */}
         {activeTab === 'dashboard' && (
             <div className="space-y-6">
+                 {/* Migration Tool Card (v3.4.2) */}
+                 {user.role === 'admin' || user.role === 'master' ? (
+                    <div className="bg-purple-900/20 border border-purple-500 rounded-xl p-4">
+                        <div className="flex justify-between items-center mb-3">
+                            <div>
+                                <h3 className="text-purple-400 font-bold text-lg">🔄 Herramienta de Migración</h3>
+                                <p className="text-gray-400 text-sm">Convierte cuotas extraordinarias al nuevo formato con desglose individual</p>
+                            </div>
+                            <button 
+                                onClick={handleMigrateExtraFees}
+                                disabled={isMigrating}
+                                className="bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600 text-white font-bold py-2 px-4 rounded shadow-lg transition-all disabled:cursor-not-allowed"
+                            >
+                                {isMigrating ? '⏳ Migrando...' : '▶️ Ejecutar Migración'}
+                            </button>
+                        </div>
+                        <div className="text-xs text-gray-500 space-y-1">
+                            <p>✅ Convierte automáticamente cuotas del formato antiguo (extraAmount) al nuevo (extraFees[])</p>
+                            <p>✅ Preserva toda la información existente (montos, pagos, descripciones)</p>
+                            <p>⚠️ Solo ejecutar una vez. Los registros ya migrados se omiten automáticamente.</p>
+                        </div>
+                    </div>
+                 ) : null}
+                 
                  {/* Pending Users Card */}
                  {pendingUsers.length > 0 && (
                     <div className="bg-red-900/20 border border-red-500 rounded-xl p-4 flex justify-between items-center animate-pulse">
@@ -5229,6 +5305,75 @@ service cloud.firestore {
                         className="flex-1 py-3 bg-purple-600 hover:bg-purple-500 text-white rounded font-bold"
                     >
                         Guardar Cambios
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* MIGRATION RESULTS MODAL */}
+      {showMigrationModal && migrationResult && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-6">
+            <div className="bg-logia-800 border border-purple-500 p-6 rounded-xl max-w-lg w-full shadow-2xl">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xl font-bold text-white">📊 Resultados de Migración</h3>
+                    <button 
+                        onClick={() => setShowMigrationModal(false)}
+                        className="text-gray-400 hover:text-white text-2xl"
+                    >
+                        ×
+                    </button>
+                </div>
+                <div className="space-y-4">
+                    <div className="bg-logia-900 rounded-lg p-4 space-y-2">
+                        <div className="flex justify-between">
+                            <span className="text-gray-400">👥 Usuarios analizados:</span>
+                            <span className="text-white font-bold">{migrationResult.totalUsers}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-gray-400">📄 Pagos totales:</span>
+                            <span className="text-white font-bold">{migrationResult.totalPayments}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-gray-400">✅ Pagos migrados:</span>
+                            <span className="text-green-400 font-bold">{migrationResult.migratedPayments}</span>
+                        </div>
+                        {migrationResult.errors.length > 0 && (
+                            <div className="flex justify-between">
+                                <span className="text-gray-400">❌ Errores:</span>
+                                <span className="text-red-400 font-bold">{migrationResult.errors.length}</span>
+                            </div>
+                        )}
+                    </div>
+                    
+                    {migrationResult.errors.length > 0 && (
+                        <div className="bg-red-900/20 border border-red-500 rounded-lg p-4">
+                            <h4 className="text-red-400 font-bold mb-2">Errores encontrados:</h4>
+                            <div className="text-xs text-gray-300 space-y-1 max-h-40 overflow-y-auto">
+                                {migrationResult.errors.map((err, idx) => (
+                                    <div key={idx}>• {err}</div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    
+                    {migrationResult.migratedPayments > 0 && (
+                        <div className="bg-green-900/20 border border-green-500 rounded-lg p-3 text-center">
+                            <p className="text-green-400 font-bold">
+                                ✅ Migración completada exitosamente
+                            </p>
+                            <p className="text-gray-400 text-sm mt-1">
+                                Las cuotas extraordinarias ahora se mostrarán correctamente en la vista expandible
+                            </p>
+                        </div>
+                    )}
+                </div>
+                <div className="mt-6">
+                    <button 
+                        onClick={() => setShowMigrationModal(false)}
+                        className="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white rounded font-bold"
+                    >
+                        Cerrar
                     </button>
                 </div>
             </div>
