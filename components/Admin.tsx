@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { User, Payment, IndividualExtraFee, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Trivia, VisitRequest, Group, BankBalance, ExtraFee } from '../types';
-import { dataService, generateTriviaWithAI, authService } from '../services/api';
+import { dataService, generateTriviaWithAI, authService, notificationService } from '../services/api';
 import { doc, deleteDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
@@ -1226,6 +1226,16 @@ const Admin: React.FC<Props> = ({ user }) => {
               masonicRejoinDate: editingUserProfile.masonicRejoinDate
           });
           showMessage("Perfil actualizado");
+          // Notificar al usuario que su perfil fue editado
+          try {
+            await notificationService.createNotification(
+              [editingUserProfile.uid],
+              user.groupId,
+              'profile_edit',
+              '📝 Tu perfil fue actualizado',
+              `El administrador actualizó la información de tu cuenta`
+            );
+          } catch (_) {}
           setEditingUserProfile(null);
           await loadUsers();
       } catch (e) {
@@ -1502,6 +1512,17 @@ const Admin: React.FC<Props> = ({ user }) => {
           const uidsPresent = Array.from(attSelected);
           await dataService.recordAttendance(date, uidsPresent);
           showMessage("Asistencia registrada");
+          // Enviar notificación a los presentes
+          try {
+            const dateFormatted = new Date(date + 'T12:00:00').toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' });
+            await notificationService.createNotification(
+              uidsPresent,
+              user.groupId,
+              'attendance',
+              '✅ Asistencia registrada',
+              `Se registró tu asistencia a la tenida del ${dateFormatted}`
+            );
+          } catch (_) {}
           setAttSelected(new Set());
           setAttDate(new Date().toISOString().split('T')[0]);
           await loadAttendanceHistory();
@@ -3222,12 +3243,25 @@ const Admin: React.FC<Props> = ({ user }) => {
                                 try {
                                     await dataService.createTrivia({
                                         groupId: user.groupId,
-                                        week: new Date().toISOString().slice(0, 10), // Simple week ID
+                                        week: new Date().toISOString().slice(0, 10),
                                         question: triviaQ,
                                         options: triviaOpts,
                                         correctIndex: triviaCorrect
                                     });
                                     showMessage('Trivia publicada!');
+                                    // Notificar a todos los miembros del grupo
+                                    try {
+                                        const memberUids = users.filter(u => u.groupId === user.groupId && u.uid !== user.uid).map(u => u.uid);
+                                        if (memberUids.length > 0) {
+                                            await notificationService.createNotification(
+                                                memberUids,
+                                                user.groupId,
+                                                'trivia',
+                                                '🧠 Nueva Trivia disponible',
+                                                `¡Hay una nueva pregunta de trivia esperándote! Respóndela en la app.`
+                                            );
+                                        }
+                                    } catch (_) {}
                                     setTriviaQ('');
                                     setTriviaOpts(['','','','']);
                                     await loadTrivias();

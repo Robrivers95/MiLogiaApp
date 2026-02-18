@@ -1,5 +1,5 @@
 
-import { User, Payment, IndividualExtraFee, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee } from '../types';
+import { User, Payment, IndividualExtraFee, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee, AppNotification, NotificationType } from '../types';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { auth, db } from './firebase';
 import { 
@@ -1799,6 +1799,109 @@ export const dataService = {
         migratedPayments,
         errors
       };
+    }
+  }
+};
+
+// ─── NOTIFICATION SERVICE ────────────────────────────────────────────────────
+export const notificationService = {
+
+  /** Solicita permiso del navegador para mostrar notificaciones */
+  requestPermission: async (): Promise<boolean> => {
+    if (!('Notification' in window)) return false;
+    if (Notification.permission === 'granted') return true;
+    if (Notification.permission === 'denied') return false;
+    const result = await Notification.requestPermission();
+    return result === 'granted';
+  },
+
+  /** Guarda/actualiza en Firestore si el usuario ha dado permiso */
+  savePermissionStatus: async (uid: string, granted: boolean) => {
+    try {
+      await updateDoc(doc(db, 'users', uid), {
+        notifPermission: granted,
+        notifPermissionUpdatedAt: Date.now()
+      });
+    } catch (_) {}
+  },
+
+  /** Crea un documento de notificación en Firestore para uno o varios usuarios */
+  createNotification: async (
+    uids: string[],
+    groupId: string,
+    type: NotificationType,
+    title: string,
+    body: string
+  ) => {
+    const batch = writeBatch(db);
+    for (const uid of uids) {
+      const ref = doc(collection(db, 'users', uid, 'notifications'));
+      const notif: AppNotification = {
+        id: ref.id,
+        uid,
+        groupId,
+        type,
+        title,
+        body,
+        read: false,
+        createdAt: Date.now()
+      };
+      batch.set(ref, notif);
+    }
+    await batch.commit();
+  },
+
+  /** Obtiene las notificaciones no leídas de un usuario */
+  getUnread: async (uid: string): Promise<AppNotification[]> => {
+    try {
+      const q = query(
+        collection(db, 'users', uid, 'notifications'),
+        where('read', '==', false),
+        orderBy('createdAt', 'desc'),
+        limit(50)
+      );
+      const snap = await getDocs(q);
+      return snap.docs.map(d => d.data() as AppNotification);
+    } catch (_) {
+      return [];
+    }
+  },
+
+  /** Marca una notificación como leída */
+  markRead: async (uid: string, notifId: string) => {
+    await updateDoc(doc(db, 'users', uid, 'notifications', notifId), { read: true });
+  },
+
+  /** Marca todas las notificaciones como leídas */
+  markAllRead: async (uid: string) => {
+    const q = query(collection(db, 'users', uid, 'notifications'), where('read', '==', false));
+    const snap = await getDocs(q);
+    if (snap.empty) return;
+    const batch = writeBatch(db);
+    snap.docs.forEach(d => batch.update(d.ref, { read: true }));
+    await batch.commit();
+  },
+
+  /** Muestra una notificación nativa del navegador */
+  showBrowserNotification: (title: string, body: string, type: NotificationType) => {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const icons: Record<NotificationType, string> = {
+      attendance: '/icons/icon-192.png',
+      trivia: '/icons/icon-192.png',
+      notice: '/icons/icon-192.png',
+      profile_edit: '/icons/icon-192.png',
+      payment: '/icons/icon-192.png'
+    };
+    try {
+      new Notification(title, {
+        body,
+        icon: icons[type] || '/icons/icon-192.png',
+        badge: '/icons/icon-192.png',
+        tag: type, // agrupa notificaciones del mismo tipo
+        renotify: true
+      });
+    } catch (e) {
+      console.warn('Browser notification failed:', e);
     }
   }
 };

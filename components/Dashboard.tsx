@@ -9,19 +9,7 @@ interface Props {
 }
 
 const Dashboard: React.FC<Props> = ({ user }) => {
-  const [totalDebt, setTotalDebt] = useState(0);
   const [myTasks, setMyTasks] = useState<Task[]>([]);
-
-  useEffect(() => {
-    const loadDebt = async () => {
-        const payments = await dataService.getPayments(user.uid);
-        // Filter only payments from the user's own group
-        const filtered = payments.filter(p => !p.groupId || p.groupId === user.groupId);
-        const debt = filtered.reduce((acc, p) => acc + (p.amount - p.paid), 0);
-        setTotalDebt(debt);
-    };
-    loadDebt();
-  }, [user.uid, user.groupId]);
 
   useEffect(() => {
     const loadMyTasks = async () => {
@@ -62,21 +50,6 @@ const Dashboard: React.FC<Props> = ({ user }) => {
           </div>
         </div>
       </div>
-
-      {/* Debt Alert Card - HIDDEN FOR MASTER (To prevent confusion about seeing personal debt in other lodges) */}
-      {!isMaster && (
-        <div className={`rounded-xl p-4 border shadow-lg flex justify-between items-center ${totalDebt > 0 ? 'bg-red-900/20 border-red-500/50' : 'bg-green-900/20 border-green-500/50'}`}>
-            <div>
-                <p className="text-xs uppercase tracking-wider text-gray-400">Saldo Pendiente al Día</p>
-                <p className={`text-2xl font-bold ${totalDebt > 0 ? 'text-red-400' : 'text-green-400'}`}>
-                    ${totalDebt}
-                </p>
-            </div>
-            <div className="text-3xl">
-                {totalDebt > 0 ? '💸' : '✅'}
-            </div>
-        </div>
-      )}
 
       {/* Install PWA Banner - Floating at bottom */}
       <InstallPWA userId={user.uid} />

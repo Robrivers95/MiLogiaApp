@@ -240,3 +240,17 @@ export interface ExtraFee {
   createdAt: string; // ISO date
   appliedToUsers: string[]; // Lista de UIDs a los que se aplicó
 }
+
+// In-app + browser notifications vía Firestore
+export type NotificationType = 'attendance' | 'trivia' | 'notice' | 'profile_edit' | 'payment';
+
+export interface AppNotification {
+  id: string;
+  uid: string;         // destinatario
+  groupId: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  read: boolean;
+  createdAt: number;   // timestamp ms
+}

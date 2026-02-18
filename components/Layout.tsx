@@ -2,6 +2,7 @@
 import React from 'react';
 import { User } from '../types';
 import InstallPrompt from './InstallPrompt';
+import NotificationBell from './NotificationBell';
 
 interface Props {
   user: User;
@@ -88,7 +89,8 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
                 </button>
             )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+            <NotificationBell user={user} />
             <button 
               onClick={handleInstallClick}
               className="text-sm px-3 py-1 rounded border border-green-700 bg-green-900 text-green-200 hover:bg-green-800 flex items-center gap-1"
@@ -119,7 +121,7 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
 
       {/* Version Indicator */}
       <div className="fixed bottom-20 left-2 text-[10px] text-gray-600 font-mono bg-logia-900/80 px-2 py-1 rounded border border-logia-700/50 z-10">
-        v3.1.0
+        v3.5.0
       </div>
 
       {/* Bottom Nav (Mobile First) */}

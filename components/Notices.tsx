@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { User, Notice } from '../types';
-import { dataService } from '../services/api';
+import { dataService, notificationService } from '../services/api';
 
 interface Props {
   user: User;
@@ -64,6 +64,20 @@ const Notices: React.FC<Props> = ({ user }) => {
           date: new Date().toISOString(),
           createdBy: user.uid
         });
+        // Notificar a todos los miembros del grupo excepto al admin que lo crea
+        try {
+          const allUsers = await dataService.getUsers(user.groupId);
+          const memberUids = allUsers.filter(u => u.uid !== user.uid).map(u => u.uid);
+          if (memberUids.length > 0) {
+            await notificationService.createNotification(
+              memberUids,
+              user.groupId,
+              'notice',
+              `📌 Nuevo aviso: ${title}`,
+              desc.length > 100 ? desc.substring(0, 100) + '...' : desc
+            );
+          }
+        } catch (_) {}
       }
       resetForm();
       await loadNotices();
