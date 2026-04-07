@@ -544,6 +544,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const handleDeleteBank = async (id: string) => {
+      if (isReadOnly) return;
       if (!confirm('¿Eliminar este registro bancario?')) return;
       try {
           await dataService.deleteBankBalance(id);
@@ -697,7 +698,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const executeDeleteExtraFee = async () => {
-      if (!deletingExtraFeeId) return;
+      if (isReadOnly || !deletingExtraFeeId) return;
       const extraFee = extraFees.find(f => f.id === deletingExtraFeeId);
       if (!extraFee) return;
 
@@ -1000,7 +1001,7 @@ const Admin: React.FC<Props> = ({ user }) => {
       setShowDeleteTreasuryModal(true);
   };
   const handleExecuteDeleteTreasury = async () => {
-      if (!deletingTreasuryId) return;
+      if (isReadOnly || !deletingTreasuryId) return;
       try {
           await dataService.deleteTreasuryEntry(user.groupId!, deletingTreasuryId);
           showMessage("Movimiento eliminado");
@@ -1215,7 +1216,7 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
   };
   const handleUpdateUserProfile = async () => {
-      if (!editingUserProfile) return;
+      if (isReadOnly || !editingUserProfile) return;
       try {
           await dataService.updateUser(editingUserProfile.uid, {
               name: editingUserProfile.name,
@@ -1636,7 +1637,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const handleExecuteDeleteNotice = async () => {
-      if (!deletingNoticeId) return;
+      if (isReadOnly || !deletingNoticeId) return;
       try {
           await dataService.deleteNotice(user.groupId, deletingNoticeId);
           showMessage("Aviso eliminado");
@@ -1726,6 +1727,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const handleToggleTask = async (taskId: string, currentCompleted: boolean) => {
+      if (isReadOnly) return;
       try {
           await dataService.toggleTaskComplete(user.groupId, taskId, !currentCompleted, user.uid);
           await loadTasks();
@@ -1748,7 +1750,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const handleExecuteDeleteTask = async () => {
-      if (!deletingTaskId) return;
+      if (isReadOnly || !deletingTaskId) return;
       try {
           await dataService.deleteTask(user.groupId, deletingTaskId);
           showMessage("Tarea eliminada");
@@ -1775,7 +1777,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const handleExecuteDeleteTrivia = async () => {
-      if (!deletingTriviaId) return;
+      if (isReadOnly || !deletingTriviaId) return;
       try {
           await dataService.deleteTrivia(deletingTriviaId);
           showMessage("Trivia eliminada");
@@ -1789,6 +1791,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const handleResetAllAnswers = async () => {
+      if (isReadOnly) return;
       if (!confirm('¿Estás seguro de resetear TODAS las respuestas de trivia para todos los usuarios? Esta acción no se puede deshacer.')) {
           return;
       }
@@ -1802,6 +1805,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const handleRejectUser = async (uid: string) => {
+      if (isReadOnly) return;
       if (!confirm('¿Estás seguro de rechazar esta solicitud? El usuario será eliminado del sistema.')) {
           return;
       }
@@ -1886,7 +1890,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const handleSendVisitMessage = async () => {
-      if (!viewingVisitRequest || !newChatMessage.trim()) return;
+      if (isReadOnly || !viewingVisitRequest || !newChatMessage.trim()) return;
       try {
           await dataService.addMessageToVisitRequest(viewingVisitRequest.id, {
               senderId: user.uid,
@@ -1913,7 +1917,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const handleExecuteDeleteVisit = async () => {
-      if (!deletingVisitId) return;
+      if (isReadOnly || !deletingVisitId) return;
       try {
           await dataService.deleteVisitRequest(deletingVisitId);
           showMessage("Solicitud eliminada");
@@ -1928,6 +1932,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const handleCreateUser = async () => {
+      if (isReadOnly) return;
       if (!newUserName.trim()) {
           showMessage("El nombre es requerido", 'error');
           return;
@@ -1965,6 +1970,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const handleManualMerge = async () => {
+      if (isReadOnly) return;
       if (!selectedTempUser || !selectedRealUser) {
           showMessage("Debes seleccionar ambos usuarios", 'error');
           return;

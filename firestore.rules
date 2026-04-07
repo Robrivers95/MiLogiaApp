@@ -13,6 +13,13 @@ service cloud.firestore {
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'master'];
     }
+
+    // Helper: admin, master, or viewer (for read-only access)
+    function isAdminMasterOrViewer() {
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'master', 'viewer'];
+    }
     
     // Helper function to check if user belongs to a group
     function belongsToGroup(groupId) {
@@ -42,8 +49,8 @@ service cloud.firestore {
     
     // Users collection
     match /users/{userId} {
-      // Admin/Master can read all users (FIRST - highest priority)
-      allow read: if isAdminOrMaster();
+      // Admin/Master/Viewer can read all users
+      allow read: if isAdminMasterOrViewer();
       // Anyone can read their own profile
       allow read: if isSignedIn() && request.auth.uid == userId;
       // Users can create their own profile (during registration)
@@ -60,7 +67,7 @@ service cloud.firestore {
       // Subcollections
       match /ledger/{ledgerId} {
         allow read: if isSignedIn() && 
-                       (request.auth.uid == userId || isAdminOrMaster());
+                       (request.auth.uid == userId || isAdminMasterOrViewer());
         allow write: if isSignedIn() && 
                         (request.auth.uid == userId || isAdminOrMaster()) &&
                         (isMaster() || isUserGroupActive());
@@ -68,7 +75,7 @@ service cloud.firestore {
       
       match /attendance/{attendanceId} {
         allow read: if isSignedIn() && 
-                       (request.auth.uid == userId || isAdminOrMaster());
+                       (request.auth.uid == userId || isAdminMasterOrViewer());
         allow write: if isSignedIn() && 
                         (request.auth.uid == userId || isAdminOrMaster()) &&
                         (isMaster() || isUserGroupActive());
@@ -77,8 +84,8 @@ service cloud.firestore {
       match /triviaAnswers/{answerId} {
         // Users can read their own trivia answers
         allow read: if isSignedIn() && request.auth.uid == userId;
-        // Admin/Master can also read
-        allow read: if isAdminOrMaster();
+        // Admin/Master/Viewer can also read
+        allow read: if isAdminMasterOrViewer();
         // Write blocked if group suspended (except master)
         allow write: if isSignedIn() && request.auth.uid == userId && (isMaster() || isUserGroupActive());
         allow write: if isMaster();
@@ -94,17 +101,17 @@ service cloud.firestore {
       
       // Subcollections
       match /treasury/{entryId} {
-        allow read: if belongsToGroup(groupId) || isAdminOrMaster();
+        allow read: if belongsToGroup(groupId) || isAdminMasterOrViewer();
         allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
       }
       
       match /notices/{noticeId} {
-        allow read: if belongsToGroup(groupId) || isAdminOrMaster();
+        allow read: if belongsToGroup(groupId) || isAdminMasterOrViewer();
         allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
       }
       
       match /tasks/{taskId} {
-        allow read: if belongsToGroup(groupId) || isAdminOrMaster();
+        allow read: if belongsToGroup(groupId) || isAdminMasterOrViewer();
         allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
       }
     }
@@ -129,16 +136,16 @@ service cloud.firestore {
 
     // Bank Balances collection
     match /bankBalances/{balanceId} {
-      // Only admin/master can read bank balances
-      allow read: if isAdminOrMaster();
+      // Admin/Master/Viewer can read bank balances
+      allow read: if isAdminMasterOrViewer();
       // Blocked if group suspended (except master)
       allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
     }
 
     // Extra Fees collection
     match /extraFees/{feeId} {
-      // Only admin/master can read extra fees
-      allow read: if isAdminOrMaster();
+      // Admin/Master/Viewer can read extra fees
+      allow read: if isAdminMasterOrViewer();
       // Blocked if group suspended (except master)
       allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
     }
