@@ -161,6 +161,8 @@ export interface Group {
   description: string;
   createdAt?: number;
   priceHistory?: PriceHistoryEntry[];
+  active?: boolean;
+  suspendedAt?: string;
 }
 
 export interface Fee {

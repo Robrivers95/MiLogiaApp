@@ -4,6 +4,7 @@ import { User, Payment, IndividualExtraFee, PriceHistoryEntry, Role, MasonicDegr
 import { dataService, generateTriviaWithAI, authService, notificationService } from '../services/api';
 import { doc, deleteDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
+import { useReadOnly } from '../contexts/ReadOnlyContext';
 
 
 interface Props {
@@ -224,7 +225,8 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [showMigrationModal, setShowMigrationModal] = useState(false);
 
   // PERMISSIONS
-  const isReadOnly = user.role === 'viewer';
+  const suspended = useReadOnly();
+  const isReadOnly = user.role === 'viewer' || suspended;
   
   // Calculate pending users
   const pendingUsers = users.filter(u => !u.active);

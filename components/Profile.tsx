@@ -2,12 +2,14 @@
 import React, { useState } from 'react';
 import { User } from '../types';
 import { dataService } from '../services/api';
+import { useReadOnly } from '../contexts/ReadOnlyContext';
 
 interface Props {
   user: User;
 }
 
 const Profile: React.FC<Props> = ({ user }) => {
+  const suspended = useReadOnly();
   const [formData, setFormData] = useState({
     name: user.name || '',
     profession: user.profession || '',
@@ -121,8 +123,8 @@ const Profile: React.FC<Props> = ({ user }) => {
 
         <button 
           onClick={handleSave}
-          disabled={saving}
-          className="w-full bg-logia-accent hover:bg-logia-accentHover text-white font-bold py-3 rounded transition-colors"
+          disabled={saving || suspended}
+          className="w-full bg-logia-accent hover:bg-logia-accentHover text-white font-bold py-3 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {saving ? 'Guardando...' : 'Guardar Cambios'}
         </button>

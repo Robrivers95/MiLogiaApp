@@ -329,7 +329,8 @@ export const dataService = {
       name,
       description,
       createdAt: Date.now(),
-      priceHistory: []
+      priceHistory: [],
+      active: true
     };
     const docRef = await addDoc(collection(db, "groups"), newGroup);
     return { id: docRef.id, ...newGroup };
@@ -345,6 +346,15 @@ export const dataService = {
     if (!groupId) return;
     const ref = doc(db, "groups", groupId);
     await deleteDoc(ref);
+  },
+
+  toggleGroupStatus: async (groupId: string, active: boolean) => {
+    if (!groupId) return;
+    const ref = doc(db, "groups", groupId);
+    await updateDoc(ref, { 
+      active, 
+      suspendedAt: active ? deleteField() : new Date().toISOString() 
+    });
   },
 
   getGroupDetails: async (groupId: string): Promise<Group | null> => {

@@ -2,12 +2,14 @@
 import React, { useEffect, useState } from 'react';
 import { User, Trivia, TriviaAnswer } from '../types';
 import { dataService } from '../services/api';
+import { useReadOnly } from '../contexts/ReadOnlyContext';
 
 interface Props {
   user: User;
 }
 
 const TriviaView: React.FC<Props> = ({ user }) => {
+  const suspended = useReadOnly();
   const [trivia, setTrivia] = useState<Trivia | null>(null);
   const [answer, setAnswer] = useState<TriviaAnswer | undefined>(undefined);
   const [loading, setLoading] = useState(true);
@@ -87,7 +89,7 @@ const TriviaView: React.FC<Props> = ({ user }) => {
               return (
                 <button
                   key={idx}
-                  disabled={!!answer || submitting}
+                  disabled={!!answer || submitting || suspended}
                   onClick={() => setSelectedOption(idx)}
                   className={btnClass}
                 >
@@ -100,7 +102,7 @@ const TriviaView: React.FC<Props> = ({ user }) => {
           {!answer ? (
             <button
               onClick={handleSubmit}
-              disabled={selectedOption === null || submitting}
+              disabled={selectedOption === null || submitting || suspended}
               className="w-full bg-logia-accent hover:bg-logia-accentHover disabled:bg-gray-700 text-white font-bold py-3 rounded-lg transition-colors"
             >
               {submitting ? 'Enviando...' : 'Responder'}

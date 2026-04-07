@@ -11,9 +11,10 @@ interface Props {
   onLogout: () => void;
   onExitGroup?: () => void; // Optional for Master Role
   children: React.ReactNode;
+  suspended?: boolean;
 }
 
-const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onExitGroup, children }) => {
+const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onExitGroup, children, suspended }) => {
   const [showInstallModal, setShowInstallModal] = React.useState(false);
   const [deferredPrompt, setDeferredPrompt] = React.useState<any>(null);
   const [canInstall, setCanInstall] = React.useState(false);
@@ -113,6 +114,19 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
             </button>
         </div>
       </header>
+
+      {/* Suspended Group Banner */}
+      {suspended && (
+        <div className="bg-red-900/80 border-b border-red-700 px-4 py-3 text-center sticky top-[60px] z-20">
+          <p className="text-red-100 text-sm font-bold">
+            ⚠️ La fecha de pago expiró, comunícate con el administrador{' '}
+            <a href="https://wa.me/528611013113" target="_blank" rel="noopener noreferrer" className="underline text-white">
+              +52 8611013113
+            </a>
+          </p>
+          <p className="text-red-300 text-xs mt-1">Modo solo lectura — No se pueden realizar cambios</p>
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="w-full max-w-3xl mx-auto min-h-[calc(100vh-140px)]">

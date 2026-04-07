@@ -21,6 +21,25 @@ service cloud.firestore {
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId;
     }
     
+    // Helper function to check if a group is active (not suspended)
+    function isGroupActive(groupId) {
+      return !exists(/databases/$(database)/documents/groups/$(groupId)) ||
+             !('active' in get(/databases/$(database)/documents/groups/$(groupId)).data) ||
+             get(/databases/$(database)/documents/groups/$(groupId)).data.active == true;
+    }
+
+    // Helper: check if current user's group is active
+    function isUserGroupActive() {
+      return isGroupActive(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId);
+    }
+
+    // Helper: is master role
+    function isMaster() {
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master';
+    }
+    
     // Users collection
     match /users/{userId} {
       // Admin/Master can read all users (FIRST - highest priority)
@@ -40,20 +59,29 @@ service cloud.firestore {
       
       // Subcollections
       match /ledger/{ledgerId} {
-        allow read, write: if isSignedIn() && 
-                              (request.auth.uid == userId || isAdminOrMaster());
+        allow read: if isSignedIn() && 
+                       (request.auth.uid == userId || isAdminOrMaster());
+        allow write: if isSignedIn() && 
+                        (request.auth.uid == userId || isAdminOrMaster()) &&
+                        (isMaster() || isUserGroupActive());
       }
       
       match /attendance/{attendanceId} {
-        allow read, write: if isSignedIn() && 
-                              (request.auth.uid == userId || isAdminOrMaster());
+        allow read: if isSignedIn() && 
+                       (request.auth.uid == userId || isAdminOrMaster());
+        allow write: if isSignedIn() && 
+                        (request.auth.uid == userId || isAdminOrMaster()) &&
+                        (isMaster() || isUserGroupActive());
       }
       
       match /triviaAnswers/{answerId} {
-        // Users can read/write their own trivia answers
-        allow read, write: if isSignedIn() && request.auth.uid == userId;
-        // Admin/Master can also access
-        allow read, write: if isAdminOrMaster();
+        // Users can read their own trivia answers
+        allow read: if isSignedIn() && request.auth.uid == userId;
+        // Admin/Master can also read
+        allow read: if isAdminOrMaster();
+        // Write blocked if group suspended (except master)
+        allow write: if isSignedIn() && request.auth.uid == userId && (isMaster() || isUserGroupActive());
+        allow write: if isMaster();
       }
     }
     
@@ -67,17 +95,17 @@ service cloud.firestore {
       // Subcollections
       match /treasury/{entryId} {
         allow read: if belongsToGroup(groupId) || isAdminOrMaster();
-        allow write: if isAdminOrMaster();
+        allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
       }
       
       match /notices/{noticeId} {
         allow read: if belongsToGroup(groupId) || isAdminOrMaster();
-        allow write: if isAdminOrMaster();
+        allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
       }
       
       match /tasks/{taskId} {
         allow read: if belongsToGroup(groupId) || isAdminOrMaster();
-        allow write: if isAdminOrMaster();
+        allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
       }
     }
     
@@ -85,36 +113,34 @@ service cloud.firestore {
     match /trivias/{triviaId} {
       // Anyone authenticated can read trivias
       allow read: if isSignedIn();
-      // Only admin/master can create/update/delete trivias
-      allow write: if isAdminOrMaster();
+      // Only admin/master can write, blocked if group suspended (except master)
+      allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
     }
     
     // Visit Requests collection
     match /visitRequests/{requestId} {
       // Anyone authenticated can read visit requests (to see their own)
       allow read: if isSignedIn();
-      // Admin/Master can create visit requests
-      allow create: if isAdminOrMaster();
-      // Admin/Master can update visit requests
-      allow update: if isAdminOrMaster();
-      // Admin/Master can delete visit requests
-      allow delete: if isAdminOrMaster();
+      // Admin/Master can create visit requests, blocked if group suspended
+      allow create: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
+      allow update: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
+      allow delete: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
     }
 
     // Bank Balances collection
     match /bankBalances/{balanceId} {
       // Only admin/master can read bank balances
       allow read: if isAdminOrMaster();
-      // Only admin/master can create/update/delete bank balances
-      allow write: if isAdminOrMaster();
+      // Blocked if group suspended (except master)
+      allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
     }
 
     // Extra Fees collection
     match /extraFees/{feeId} {
       // Only admin/master can read extra fees
       allow read: if isAdminOrMaster();
-      // Only admin/master can create/update/delete extra fees
-      allow write: if isAdminOrMaster();
+      // Blocked if group suspended (except master)
+      allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
     }
 
     // App Configuration collection (for app icons, etc.)

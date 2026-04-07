@@ -18,6 +18,7 @@ import Notices from './components/Notices';
 import MasterDashboard from './components/MasterDashboard';
 import PendingApproval from './components/PendingApproval';
 import Visits from './components/Visits';
+import { ReadOnlyProvider } from './contexts/ReadOnlyContext';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -26,6 +27,7 @@ const App: React.FC = () => {
   
   // State for Master Admin Multi-Tenancy
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
+  const [groupSuspended, setGroupSuspended] = useState(false);
 
   if (!isConfigured) {
     return <Setup />;
@@ -66,6 +68,24 @@ const App: React.FC = () => {
     setView('home');
     setSelectedGroup(null); // Reset group selection on fresh login
   };
+
+  // Check if the user's group is suspended
+  useEffect(() => {
+    const checkGroupStatus = async () => {
+      const groupId = selectedGroup?.id || user?.groupId;
+      if (!groupId || user?.role === 'master') {
+        setGroupSuspended(false);
+        return;
+      }
+      try {
+        const group = await dataService.getGroupDetails(groupId);
+        setGroupSuspended(group?.active === false);
+      } catch {
+        setGroupSuspended(false);
+      }
+    };
+    checkGroupStatus();
+  }, [user, selectedGroup]);
 
   const handleLogout = () => {
     auth.signOut();
@@ -108,12 +128,14 @@ const App: React.FC = () => {
   const isAdminOrViewer = activeUserContext.role === 'admin' || activeUserContext.role === 'viewer' || activeUserContext.role === 'master';
 
   return (
+    <ReadOnlyProvider value={groupSuspended}>
     <Layout 
         user={activeUserContext} 
         currentView={view} 
         onNavigate={setView} 
         onLogout={handleLogout}
         onExitGroup={user.role === 'master' ? () => setSelectedGroup(null) : undefined}
+        suspended={groupSuspended}
     >
       {view === 'home' && <Dashboard user={activeUserContext} />}
       {view === 'notices' && <Notices user={activeUserContext} />}
@@ -128,6 +150,7 @@ const App: React.FC = () => {
         <div className="p-8 text-center text-red-400">Acceso denegado. Solo Admin.</div>
       )}
     </Layout>
+    </ReadOnlyProvider>
   );
 };
 

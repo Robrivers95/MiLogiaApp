@@ -28,6 +28,7 @@ const MasterDashboard: React.FC<Props> = ({ onSelectGroup, onLogout }) => {
   const [deletingGroup, setDeletingGroup] = useState<Group | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [togglingGroupId, setTogglingGroupId] = useState<string | null>(null);
 
   // App Icon State
   const [showIconConfig, setShowIconConfig] = useState(false);
@@ -105,6 +106,20 @@ const MasterDashboard: React.FC<Props> = ({ onSelectGroup, onLogout }) => {
       await loadGroups();
     } catch (e: any) {
       alert("Error eliminando logia: " + e.message);
+    }
+  };
+
+  const handleToggleGroupStatus = async (group: Group, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newStatus = !(group.active !== false);
+    setTogglingGroupId(group.id);
+    try {
+      await dataService.toggleGroupStatus(group.id, newStatus);
+      await loadGroups();
+    } catch (err: any) {
+      alert("Error cambiando estado: " + err.message);
+    } finally {
+      setTogglingGroupId(null);
     }
   };
 
@@ -303,16 +318,28 @@ const MasterDashboard: React.FC<Props> = ({ onSelectGroup, onLogout }) => {
                 <div 
                   key={group.id}
                   onClick={() => onSelectGroup(group)}
-                  className="bg-logia-800 p-6 rounded-xl border border-logia-700 shadow-lg hover:bg-logia-700 cursor-pointer transition-all group relative overflow-hidden"
+                  className={`bg-logia-800 p-6 rounded-xl border shadow-lg hover:bg-logia-700 cursor-pointer transition-all group relative overflow-hidden ${group.active === false ? 'border-red-700/60' : 'border-logia-700'}`}
                 >
                   <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 text-6xl pointer-events-none">
                     🏛️
                   </div>
+                  {group.active === false && (
+                    <div className="bg-red-900/40 border border-red-700/50 text-red-300 text-xs font-bold px-3 py-1 rounded mb-3 inline-block">
+                      ⛔ SUSPENDIDA
+                    </div>
+                  )}
                   <h3 className="text-xl font-bold text-white mb-2">{group.name}</h3>
                   <p className="text-gray-400 text-sm mb-4">{group.description || 'Sin descripción'}</p>
                   <div className="flex justify-between items-center mt-4">
                     <span className="text-xs text-gray-500 uppercase tracking-wider">ID: {group.id.slice(0,8)}...</span>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
+                      <button 
+                        onClick={(e) => handleToggleGroupStatus(group, e)}
+                        disabled={togglingGroupId === group.id}
+                        className={`${group.active === false ? 'bg-green-900 hover:bg-green-800 text-green-300 border-green-700' : 'bg-yellow-900 hover:bg-yellow-800 text-yellow-300 border-yellow-700'} px-3 py-1 rounded-full text-xs font-bold border z-10 disabled:opacity-50`}
+                      >
+                        {togglingGroupId === group.id ? '⏳' : group.active === false ? '✅ Activar' : '⏸️ Suspender'}
+                      </button>
                       <button 
                         onClick={(e) => openEditModal(group, e)}
                         className="bg-gray-700 hover:bg-gray-600 text-gray-300 px-3 py-1 rounded-full text-xs font-bold border border-gray-600 z-10"
