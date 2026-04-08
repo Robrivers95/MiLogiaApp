@@ -28,6 +28,7 @@ const App: React.FC = () => {
   // State for Master Admin Multi-Tenancy
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [groupSuspended, setGroupSuspended] = useState(false);
+  const [groupName, setGroupName] = useState('');
 
   if (!isConfigured) {
     return <Setup />;
@@ -69,10 +70,13 @@ const App: React.FC = () => {
     setSelectedGroup(null); // Reset group selection on fresh login
   };
 
-  // Check if the user's group is suspended
+  // Check if the user's group is suspended + get group name
   useEffect(() => {
     const checkGroupStatus = async () => {
       const groupId = selectedGroup?.id || user?.groupId;
+      if (selectedGroup?.name) {
+        setGroupName(selectedGroup.name);
+      }
       if (!groupId || user?.role === 'master') {
         setGroupSuspended(false);
         return;
@@ -80,6 +84,7 @@ const App: React.FC = () => {
       try {
         const group = await dataService.getGroupDetails(groupId);
         setGroupSuspended(group?.active === false);
+        if (group?.name) setGroupName(group.name);
       } catch {
         setGroupSuspended(false);
       }
@@ -136,6 +141,7 @@ const App: React.FC = () => {
         onLogout={handleLogout}
         onExitGroup={user.role === 'master' ? () => setSelectedGroup(null) : undefined}
         suspended={groupSuspended}
+        groupName={groupName}
     >
       {view === 'home' && <Dashboard user={activeUserContext} />}
       {view === 'notices' && <Notices user={activeUserContext} />}

@@ -12,9 +12,10 @@ interface Props {
   onExitGroup?: () => void; // Optional for Master Role
   children: React.ReactNode;
   suspended?: boolean;
+  groupName?: string;
 }
 
-const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onExitGroup, children, suspended }) => {
+const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onExitGroup, children, suspended, groupName }) => {
   const [showInstallModal, setShowInstallModal] = React.useState(false);
   const [deferredPrompt, setDeferredPrompt] = React.useState<any>(null);
   const [canInstall, setCanInstall] = React.useState(false);
@@ -81,6 +82,7 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
       <header className="bg-logia-800 border-b border-logia-700 p-4 flex justify-between items-center sticky top-0 z-20 shadow-md">
         <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold text-indigo-400">Mi Logia</h1>
+            {groupName && <span className="text-sm text-gray-400 font-medium">| {groupName}</span>}
             {user.role === 'master' && onExitGroup && (
                 <button 
                   onClick={onExitGroup}
