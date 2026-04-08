@@ -11,14 +11,17 @@ service cloud.firestore {
     function isAdminOrMaster() {
       return isSignedIn() && 
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'master'];
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master');
     }
 
     // Helper: admin, master, or viewer (for read-only access)
     function isAdminMasterOrViewer() {
       return isSignedIn() && 
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'master', 'viewer'];
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master' ||
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'viewer');
     }
     
     // Helper function to check if user belongs to a group
