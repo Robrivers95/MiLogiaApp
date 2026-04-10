@@ -123,19 +123,20 @@ export const authService = {
       groupId: existingUserData?.groupId || groupId,
       joinDate: existingUserData?.joinDate || new Date().toISOString(),
       profileEditable: true,
-      degree: existingUserData?.degree,
-      lodgeRole: existingUserData?.lodgeRole,
-      numericDegree: existingUserData?.numericDegree,
-      profession: existingUserData?.profession,
-      job: existingUserData?.job,
-      workAddress: existingUserData?.workAddress,
-      city: existingUserData?.city,
-      state: existingUserData?.state,
-      country: existingUserData?.country,
-      masonicJoinDate: existingUserData?.masonicJoinDate,
-      masonicRejoinDate: existingUserData?.masonicRejoinDate,
       rpg: existingUserData?.rpg || { ...INITIAL_RPG, name: name.split(' ')[0] },
-      totalPoints: existingUserData?.totalPoints || 0
+      totalPoints: existingUserData?.totalPoints || 0,
+      // Only include optional fields if they have a value (Firestore rejects undefined)
+      ...(existingUserData?.degree !== undefined && { degree: existingUserData.degree }),
+      ...(existingUserData?.lodgeRole !== undefined && { lodgeRole: existingUserData.lodgeRole }),
+      ...(existingUserData?.numericDegree !== undefined && { numericDegree: existingUserData.numericDegree }),
+      ...(existingUserData?.profession !== undefined && { profession: existingUserData.profession }),
+      ...(existingUserData?.job !== undefined && { job: existingUserData.job }),
+      ...(existingUserData?.workAddress !== undefined && { workAddress: existingUserData.workAddress }),
+      ...(existingUserData?.city !== undefined && { city: existingUserData.city }),
+      ...(existingUserData?.state !== undefined && { state: existingUserData.state }),
+      ...(existingUserData?.country !== undefined && { country: existingUserData.country }),
+      ...(existingUserData?.masonicJoinDate !== undefined && { masonicJoinDate: existingUserData.masonicJoinDate }),
+      ...(existingUserData?.masonicRejoinDate !== undefined && { masonicRejoinDate: existingUserData.masonicRejoinDate }),
     };
     
     await setDoc(doc(db, "users", uid), newUser);
