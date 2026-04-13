@@ -1159,53 +1159,19 @@ export const dataService = {
 
   getLeaderboard: async (groupId?: string): Promise<{name: string, points: number}[]> => {
     try {
-      let q;
-      if (groupId) {
-        // Try with groupId filter first
-        q = query(
-          collection(db, "users"),
-          where("groupId", "==", groupId),
-          where("totalPoints", ">", 0),
-          orderBy("totalPoints", "desc"),
-          limit(10)
-        );
-      } else {
-        q = query(
-          collection(db, "users"),
-          where("totalPoints", ">", 0),
-          orderBy("totalPoints", "desc"),
-          limit(10)
-        );
-      }
+      const q = groupId
+        ? query(collection(db, "users"), where("groupId", "==", groupId))
+        : query(collection(db, "users"));
+
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(d => {
-        const data = d.data() as User;
-        return { name: data.name, points: data.totalPoints || 0 };
-      });
+      return snapshot.docs
+        .map(d => {
+          const data = d.data() as User;
+          return { name: data.name, points: Number(data.totalPoints) || 0 };
+        })
+        .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
     } catch (e) {
       console.error("Error fetching leaderboard", e);
-      // If composite index error, try without groupId filter
-      if (groupId && (e as any)?.message?.includes('index')) {
-        console.warn("Composite index missing, fetching all users");
-        try {
-          const q = query(
-            collection(db, "users"),
-            where("totalPoints", ">", 0),
-            orderBy("totalPoints", "desc"),
-            limit(10)
-          );
-          const snapshot = await getDocs(q);
-          const allUsers = snapshot.docs.map(d => {
-            const data = d.data() as User;
-            return { name: data.name, points: data.totalPoints || 0, groupId: data.groupId };
-          });
-          // Filter by groupId locally
-          return allUsers.filter(u => u.groupId === groupId).map(u => ({name: u.name, points: u.points}));
-        } catch (e2) {
-          console.error("Fallback also failed", e2);
-          return [];
-        }
-      }
       return [];
     }
   },
