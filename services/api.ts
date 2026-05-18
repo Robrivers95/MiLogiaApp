@@ -1,5 +1,5 @@
 
-import { User, Payment, IndividualExtraFee, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee, AppNotification, NotificationType } from '../types';
+import { User, Payment, IndividualExtraFee, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee, AppNotification, NotificationType, PaymentReceipt } from '../types';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { auth, db } from './firebase';
 import { 
@@ -1265,7 +1265,164 @@ export const dataService = {
     await deleteDoc(ref);
   },
 
-  // --- TASKS ---
+  // --- PAYMENT RECEIPTS ---
+  // Compress image to base64 (client-side, max ~600px wide, quality 0.65)
+  compressImageToBase64: async (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { reject(new Error('Canvas not available')); return; }
+      const img = new Image();
+      img.onload = () => {
+        const MAX_W = 900;
+        let w = img.width;
+        let h = img.height;
+        if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
+        canvas.width = w;
+        canvas.height = h;
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.65));
+        URL.revokeObjectURL(img.src);
+      };
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+  },
+
+  submitPaymentReceipt: async (receipt: Omit<PaymentReceipt, 'id'>): Promise<string> => {
+    const ref = doc(collection(db, "groups", receipt.groupId, "paymentReceipts"));
+    await setDoc(ref, { ...receipt, id: ref.id });
+    return ref.id;
+  },
+
+  getPaymentReceipts: async (groupId: string): Promise<PaymentReceipt[]> => {
+    if (!groupId) return [];
+    try {
+      const q = query(collection(db, "groups", groupId, "paymentReceipts"));
+      const snap = await getDocs(q);
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as PaymentReceipt));
+      return list.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+    } catch (e) {
+      console.error("Error fetching payment receipts", e);
+      return [];
+    }
+  },
+
+  getUserPaymentReceipts: async (userId: string, groupId: string): Promise<PaymentReceipt[]> => {
+    if (!userId || !groupId) return [];
+    try {
+      const q = query(
+        collection(db, "groups", groupId, "paymentReceipts"),
+        where("userId", "==", userId)
+      );
+      const snap = await getDocs(q);
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as PaymentReceipt));
+      return list.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+    } catch (e) {
+      return [];
+    }
+  },
+
+  approvePaymentReceipt: async (
+    receipt: PaymentReceipt,
+    reviewerUid: string
+  ): Promise<void> => {
+    // 1. Mark receipt as approved
+    const receiptRef = doc(db, "groups", receipt.groupId, "paymentReceipts", receipt.id);
+    await updateDoc(receiptRef, {
+      status: 'approved',
+      reviewedAt: new Date().toISOString(),
+      reviewedBy: reviewerUid
+    });
+
+    // 2. Notify the member
+    try {
+      const periodsStr = receipt.periods.join(', ');
+      await notificationService.createNotification(
+        [receipt.userId],
+        receipt.groupId,
+        'payment_receipt',
+        '✅ Comprobante aprobado',
+        `Tu comprobante de pago para ${periodsStr} fue aprobado. Actualiza tu estado desde "Mis Pagos" si es necesario.`
+      );
+    } catch (_) {}
+  },
+
+  rejectPaymentReceipt: async (
+    groupId: string,
+    receiptId: string,
+    userId: string,
+    reviewerUid: string,
+    comments: string
+  ): Promise<void> => {
+    const receiptRef = doc(db, "groups", groupId, "paymentReceipts", receiptId);
+    await updateDoc(receiptRef, {
+      status: 'rejected',
+      reviewedAt: new Date().toISOString(),
+      reviewedBy: reviewerUid,
+      reviewComments: comments
+    });
+
+    // Notify the member
+    try {
+      await notificationService.createNotification(
+        [userId],
+        groupId,
+        'payment_receipt',
+        '❌ Comprobante rechazado',
+        comments ? `Tu comprobante fue rechazado: ${comments}` : 'Tu comprobante de pago fue rechazado. Contacta al administrador.'
+      );
+    } catch (_) {}
+  },
+
+  // --- DEBT NOTIFICATIONS ---
+  // Send in-app + browser notifications to users about pending months owed
+  sendDebtNotifications: async (
+    groupId: string,
+    adminUser: User,
+    targetUids?: string[] // If undefined, sends to all active members
+  ): Promise<number> => {
+    const allUsers = await dataService.getUsers(groupId);
+    const targets = targetUids
+      ? allUsers.filter(u => targetUids.includes(u.uid) && u.active)
+      : allUsers.filter(u => u.active && u.role === 'member');
+
+    let sent = 0;
+    const currentPeriod = new Date().toISOString().slice(0, 7); // YYYY-MM
+
+    for (const u of targets) {
+      try {
+        const payments = await dataService.getPayments(u.uid);
+        const pendingPeriods = payments
+          .filter(p => {
+            if (!p.groupId || p.groupId !== groupId) return false;
+            const debt = (p.amount - (p.paidRegular || 0)) + ((p.extraAmount || 0) - (p.paidExtra || 0));
+            return debt > 0 && p.period <= currentPeriod;
+          })
+          .map(p => {
+            const [yr, mo] = p.period.split('-');
+            const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+            return `${months[parseInt(mo)-1]} ${yr}`;
+          });
+
+        if (pendingPeriods.length === 0) continue;
+
+        const body = pendingPeriods.length <= 3
+          ? `Meses pendientes: ${pendingPeriods.join(', ')}`
+          : `Tienes ${pendingPeriods.length} meses pendientes de pago hasta la fecha.`;
+
+        await notificationService.createNotification(
+          [u.uid],
+          groupId,
+          'payment',
+          '💳 Recordatorio de pago',
+          body
+        );
+        sent++;
+      } catch (_) {}
+    }
+    return sent;
+  },
   getTasks: async (groupId: string): Promise<Task[]> => {
     if (!groupId) return [];
     try {

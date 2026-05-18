@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, Payment, IndividualExtraFee, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Trivia, VisitRequest, Group, BankBalance, ExtraFee } from '../types';
+import { User, Payment, IndividualExtraFee, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Trivia, VisitRequest, Group, BankBalance, ExtraFee, PaymentReceipt } from '../types';
 import { dataService, generateTriviaWithAI, authService, notificationService } from '../services/api';
 import { doc, deleteDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -11,7 +11,7 @@ interface Props {
   user: User;
 }
 
-type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'notices' | 'tasks' | 'banks' | 'visits' | 'payment-matrix' | 'create-user' | 'manual-merge';
+type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'notices' | 'tasks' | 'banks' | 'visits' | 'payment-matrix' | 'create-user' | 'manual-merge' | 'receipts' | 'debt-notify';
 
 const Admin: React.FC<Props> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
@@ -224,6 +224,22 @@ const Admin: React.FC<Props> = ({ user }) => {
   } | null>(null);
   const [showMigrationModal, setShowMigrationModal] = useState(false);
 
+  // Payment Receipts State
+  const [paymentReceipts, setPaymentReceipts] = useState<any[]>([]);
+  const [loadingReceipts, setLoadingReceipts] = useState(false);
+  const [receiptRejectId, setReceiptRejectId] = useState<string | null>(null);
+  const [receiptRejectUserId, setReceiptRejectUserId] = useState<string>('');
+  const [rejectComments, setRejectComments] = useState('');
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [viewingReceiptImage, setViewingReceiptImage] = useState<string | null>(null);
+  const [receiptFilter, setReceiptFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
+
+  // Debt Notification State
+  const [debtNotifTarget, setDebtNotifTarget] = useState<'all' | 'selected'>('all');
+  const [debtNotifSelected, setDebtNotifSelected] = useState<string[]>([]);
+  const [sendingDebtNotif, setSendingDebtNotif] = useState(false);
+  const [debtNotifMsg, setDebtNotifMsg] = useState<{text: string; type: 'success' | 'error'} | null>(null);
+
   // PERMISSIONS
   const suspended = useReadOnly();
   const isReadOnly = user.role === 'viewer' || suspended;
@@ -279,6 +295,9 @@ const Admin: React.FC<Props> = ({ user }) => {
       if (activeTab === 'manual-merge') {
           loadTempUsers();
       }
+      if (activeTab === 'receipts') {
+          loadPaymentReceipts();
+      }
   }, [activeTab, dashboardStart, dashboardEnd]);
 
   const refreshAllData = async () => {
@@ -323,6 +342,18 @@ const Admin: React.FC<Props> = ({ user }) => {
     } catch (e) {
         console.error("Error loading temp users", e);
         showMessage("Error cargando usuarios temporales", 'error');
+    }
+  };
+
+  const loadPaymentReceipts = async () => {
+    setLoadingReceipts(true);
+    try {
+      const recs = await dataService.getPaymentReceipts(user.groupId);
+      setPaymentReceipts(recs);
+    } catch (e) {
+      console.error("Error loading receipts", e);
+    } finally {
+      setLoadingReceipts(false);
     }
   };
 
@@ -2345,6 +2376,27 @@ const Admin: React.FC<Props> = ({ user }) => {
                 </button>
               </div>
 
+              {/* Pagos - nuevo */}
+              <div>
+                <h4 className="text-xs uppercase text-gray-500 font-bold mb-2">💸 Comprobantes</h4>
+                <button
+                  onClick={() => { setActiveTab('receipts'); loadPaymentReceipts(); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors ${
+                    activeTab === 'receipts' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  🧾 Revisar Comprobantes
+                </button>
+                <button
+                  onClick={() => { setActiveTab('debt-notify'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
+                    activeTab === 'debt-notify' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  🔔 Notificaciones de Deuda
+                </button>
+              </div>
+
               {/* Games */}
               <div>
                 <h4 className="text-xs uppercase text-gray-500 font-bold mb-2">🎮 Actividades</h4>
@@ -4344,9 +4396,213 @@ const Admin: React.FC<Props> = ({ user }) => {
             </div>
         )}
 
+        {/* --- RECEIPTS TAB --- */}
+        {activeTab === 'receipts' && (
+          <div className="space-y-4">
+            <div className="bg-logia-800 rounded-xl p-4 border border-logia-700">
+              <h3 className="text-xl font-bold text-white mb-4">🧾 Comprobantes de Pago</h3>
+
+              {/* Filtro */}
+              <div className="flex gap-2 flex-wrap mb-4">
+                {(['pending', 'approved', 'rejected', 'all'] as const).map(f => (
+                  <button key={f} onClick={() => setReceiptFilter(f)}
+                    className={`px-3 py-1 rounded text-sm font-bold transition-colors ${receiptFilter === f ? 'bg-logia-accent text-white' : 'bg-logia-900 text-gray-400 hover:bg-logia-700'}`}>
+                    {f === 'pending' ? '⏳ Pendientes' : f === 'approved' ? '✅ Aprobados' : f === 'rejected' ? '❌ Rechazados' : '📋 Todos'}
+                  </button>
+                ))}
+                <button onClick={loadPaymentReceipts} className="ml-auto px-3 py-1 rounded text-sm bg-logia-900 text-gray-400 hover:bg-logia-700">
+                  🔄 Actualizar
+                </button>
+              </div>
+
+              {loadingReceipts ? (
+                <p className="text-center text-gray-400 py-8">Cargando...</p>
+              ) : (
+                (() => {
+                  const filtered = paymentReceipts.filter(r => receiptFilter === 'all' || r.status === receiptFilter);
+                  if (filtered.length === 0) return <p className="text-center text-gray-500 py-8">No hay comprobantes.</p>;
+                  return (
+                    <div className="space-y-3">
+                      {filtered.map((receipt: any) => (
+                        <div key={receipt.id} className={`rounded-lg border p-4 space-y-2 ${
+                          receipt.status === 'pending' ? 'border-yellow-600/60 bg-yellow-900/10' :
+                          receipt.status === 'approved' ? 'border-green-600/60 bg-green-900/10' :
+                          'border-red-600/60 bg-red-900/10'
+                        }`}>
+                          <div className="flex flex-wrap justify-between items-start gap-2">
+                            <div>
+                              <p className="font-bold text-white">{receipt.userName}</p>
+                              <p className="text-xs text-gray-400">Enviado: {new Date(receipt.submittedAt).toLocaleString('es-MX')}</p>
+                              <p className="text-xs text-gray-400">Transferencia: {new Date(receipt.transferDate).toLocaleString('es-MX')}</p>
+                              <p className="text-sm text-gray-300 mt-1">Períodos: <span className="font-bold text-white">{receipt.periods.join(', ')}</span></p>
+                              {receipt.amount && <p className="text-sm text-gray-300">Monto declarado: <span className="font-bold text-yellow-300">${receipt.amount}</span></p>}
+                            </div>
+                            <div className="flex flex-col gap-2 items-end">
+                              <span className={`text-xs px-2 py-1 rounded-full font-bold ${
+                                receipt.status === 'pending' ? 'bg-yellow-700 text-yellow-100' :
+                                receipt.status === 'approved' ? 'bg-green-700 text-green-100' :
+                                'bg-red-700 text-red-100'
+                              }`}>
+                                {receipt.status === 'pending' ? '⏳ Pendiente' : receipt.status === 'approved' ? '✅ Aprobado' : '❌ Rechazado'}
+                              </span>
+                              {receipt.receiptImageBase64 && (
+                                <button onClick={() => setViewingReceiptImage(receipt.receiptImageBase64)}
+                                  className="text-xs bg-logia-900 hover:bg-logia-700 text-blue-300 px-3 py-1 rounded border border-blue-600/40">
+                                  🖼️ Ver Foto
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          {receipt.reviewComments && (
+                            <p className="text-xs text-gray-400 italic bg-logia-900 p-2 rounded">Comentario: {receipt.reviewComments}</p>
+                          )}
+                          {receipt.status === 'pending' && !isReadOnly && (
+                            <div className="flex gap-2 pt-1 flex-wrap">
+                              <button onClick={async () => {
+                                if (!window.confirm(`¿Aprobar comprobante de ${receipt.userName} (${receipt.periods.join(', ')})?`)) return;
+                                try {
+                                  await dataService.approvePaymentReceipt(receipt, user.uid);
+                                  showMessage('Comprobante aprobado', 'success');
+                                  loadPaymentReceipts();
+                                } catch(e) { showMessage('Error al aprobar', 'error'); }
+                              }} className="bg-green-700 hover:bg-green-600 text-white text-xs px-4 py-2 rounded font-bold">
+                                ✅ Aprobar
+                              </button>
+                              <button onClick={() => {
+                                setReceiptRejectId(receipt.id);
+                                setReceiptRejectUserId(receipt.userId);
+                                setRejectComments('');
+                                setShowRejectModal(true);
+                              }} className="bg-red-700 hover:bg-red-600 text-white text-xs px-4 py-2 rounded font-bold">
+                                ❌ Rechazar
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* --- DEBT NOTIFY TAB --- */}
+        {activeTab === 'debt-notify' && (
+          <div className="space-y-4">
+            <div className="bg-logia-800 rounded-xl p-4 border border-logia-700">
+              <h3 className="text-xl font-bold text-white mb-2">🔔 Notificaciones de Deuda</h3>
+              <p className="text-gray-400 text-sm mb-4">Envía recordatorios a los miembros indicando los meses que adeudan. Se envía una notificación in-app a cada usuario con su lista de períodos pendientes.</p>
+
+              <div className="space-y-4">
+                <div className="flex gap-3 flex-wrap">
+                  <button onClick={() => setDebtNotifTarget('all')}
+                    className={`px-4 py-2 rounded font-bold text-sm transition-colors ${debtNotifTarget === 'all' ? 'bg-logia-accent text-white' : 'bg-logia-900 text-gray-300 hover:bg-logia-700'}`}>
+                    Todos los miembros
+                  </button>
+                  <button onClick={() => setDebtNotifTarget('selected')}
+                    className={`px-4 py-2 rounded font-bold text-sm transition-colors ${debtNotifTarget === 'selected' ? 'bg-logia-accent text-white' : 'bg-logia-900 text-gray-300 hover:bg-logia-700'}`}>
+                    Seleccionar miembros
+                  </button>
+                </div>
+
+                {debtNotifTarget === 'selected' && (
+                  <div className="bg-logia-900 rounded-lg p-3 max-h-64 overflow-y-auto space-y-1">
+                    {users.filter(u => u.active && u.role === 'member').map(u => (
+                      <label key={u.uid} className="flex items-center gap-3 cursor-pointer hover:bg-logia-800 rounded px-2 py-1">
+                        <input type="checkbox"
+                          checked={debtNotifSelected.includes(u.uid)}
+                          onChange={e => {
+                            if (e.target.checked) setDebtNotifSelected(prev => [...prev, u.uid]);
+                            else setDebtNotifSelected(prev => prev.filter(id => id !== u.uid));
+                          }}
+                          className="w-4 h-4"
+                        />
+                        <span className="text-sm text-gray-200">{u.name || u.email}</span>
+                      </label>
+                    ))}
+                    {users.filter(u => u.active && u.role === 'member').length === 0 && (
+                      <p className="text-gray-500 text-sm text-center py-4">No hay miembros activos.</p>
+                    )}
+                  </div>
+                )}
+
+                {debtNotifMsg && (
+                  <div className={`p-3 rounded text-sm font-bold ${debtNotifMsg.type === 'success' ? 'bg-green-900/30 text-green-300 border border-green-600' : 'bg-red-900/30 text-red-300 border border-red-600'}`}>
+                    {debtNotifMsg.text}
+                  </div>
+                )}
+
+                <button
+                  disabled={sendingDebtNotif || isReadOnly || (debtNotifTarget === 'selected' && debtNotifSelected.length === 0)}
+                  onClick={async () => {
+                    setSendingDebtNotif(true);
+                    setDebtNotifMsg(null);
+                    try {
+                      const targetUids = debtNotifTarget === 'selected' ? debtNotifSelected : undefined;
+                      const count = await dataService.sendDebtNotifications(user.groupId, user, targetUids);
+                      setDebtNotifMsg({ text: `✅ Notificaciones enviadas a ${count} miembro(s) con pagos pendientes.`, type: 'success' });
+                    } catch(e) {
+                      setDebtNotifMsg({ text: '❌ Error al enviar notificaciones.', type: 'error' });
+                    } finally {
+                      setSendingDebtNotif(false);
+                    }
+                  }}
+                  className="w-full py-3 bg-yellow-700 hover:bg-yellow-600 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-bold rounded-lg transition-colors"
+                >
+                  {sendingDebtNotif ? '⏳ Enviando...' : '🔔 Enviar Recordatorios de Pago'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
-      
-      {/* VISIT REQUEST CHAT MODAL */}
+
+      {/* REJECT RECEIPT MODAL */}
+      {showRejectModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-logia-800 rounded-xl border border-logia-700 shadow-2xl w-full max-w-md p-6 space-y-4">
+            <h3 className="text-lg font-bold text-white">❌ Rechazar Comprobante</h3>
+            <p className="text-gray-400 text-sm">Escribe el motivo del rechazo para notificar al miembro:</p>
+            <textarea
+              value={rejectComments}
+              onChange={e => setRejectComments(e.target.value)}
+              rows={3}
+              placeholder="Ej: La imagen está borrosa o el monto no coincide..."
+              className="w-full px-3 py-2 bg-logia-900 border border-logia-700 rounded text-white text-sm focus:ring-2 focus:ring-red-500 resize-none"
+            />
+            <div className="flex gap-3">
+              <button onClick={() => setShowRejectModal(false)} className="flex-1 py-2 bg-logia-900 text-gray-300 rounded font-bold">
+                Cancelar
+              </button>
+              <button onClick={async () => {
+                if (!receiptRejectId) return;
+                try {
+                  await dataService.rejectPaymentReceipt(user.groupId, receiptRejectId, receiptRejectUserId, user.uid, rejectComments);
+                  showMessage('Comprobante rechazado', 'success');
+                  setShowRejectModal(false);
+                  loadPaymentReceipts();
+                } catch(e) { showMessage('Error al rechazar', 'error'); }
+              }} className="flex-1 py-2 bg-red-700 hover:bg-red-600 text-white rounded font-bold">
+                Confirmar Rechazo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RECEIPT IMAGE VIEWER MODAL */}
+      {viewingReceiptImage && (
+        <div className="fixed inset-0 bg-black/95 flex items-center justify-center z-50 p-4 cursor-pointer"
+          onClick={() => setViewingReceiptImage(null)}>
+          <img src={viewingReceiptImage} alt="Comprobante" className="max-w-full max-h-full rounded-lg shadow-2xl object-contain" />
+          <button className="absolute top-4 right-4 text-white text-3xl font-bold bg-black/40 w-10 h-10 rounded-full flex items-center justify-center">
+            ✕
+          </button>
+        </div>
+      )}
       {viewingVisitRequest && (
           <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
               <div className="bg-logia-800 w-full max-w-2xl rounded-xl border border-logia-700 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">

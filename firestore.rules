@@ -73,6 +73,16 @@ service cloud.firestore {
         allow write: if isSignedIn() && request.auth.uid == userId && (isMaster() || isUserGroupActive());
         allow write: if isMaster();
       }
+
+      match /notifications/{notifId} {
+        // User can read their own notifications
+        allow read: if isSignedIn() && request.auth.uid == userId;
+        // Any signed-in user can create notifications for others (admin notifying members)
+        allow create: if isSignedIn();
+        // User can update their own (mark read), admin can also update
+        allow update: if isSignedIn() && (request.auth.uid == userId || isAdminOrMaster());
+        allow delete: if isSignedIn() && (request.auth.uid == userId || isAdminOrMaster());
+      }
     }
     
     // Groups collection
@@ -93,6 +103,19 @@ service cloud.firestore {
         // Any authenticated user can read notices
         allow read: if isSignedIn();
         allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
+      }
+      
+      match /paymentReceipts/{receiptId} {
+        // Admin can read all receipts; members can read their own
+        allow read: if isSignedIn() && 
+                       (isAdminOrMaster() || resource.data.userId == request.auth.uid);
+        // Any active member can submit a receipt (must be their own userId)
+        allow create: if isSignedIn() && 
+                         request.resource.data.userId == request.auth.uid &&
+                         (isMaster() || isGroupActive(groupId));
+        // Only admin can approve/reject
+        allow update: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
+        allow delete: if isAdminOrMaster();
       }
       
       match /tasks/{taskId} {

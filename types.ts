@@ -70,9 +70,26 @@ export interface Notice {
   groupId: string;
   title: string;
   description: string;
-  imageUrl?: string;
+  imageUrl?: string;       // Base64 image
+  sendPushOnCreate?: boolean; // Whether to send push notification
   date: string; // ISO
   createdBy: string;
+}
+
+export interface PaymentReceipt {
+  id: string;
+  groupId: string;
+  userId: string;
+  userName: string;
+  periods: string[];           // Array de YYYY-MM que desea pagar
+  transferDate: string;        // ISO fecha/hora de la transferencia
+  receiptImageBase64: string;  // Foto comprimida en base64
+  amount?: number;             // Monto declarado (opcional)
+  status: 'pending' | 'approved' | 'rejected';
+  submittedAt: string;         // ISO
+  reviewedAt?: string;         // ISO
+  reviewedBy?: string;         // UID del admin
+  reviewComments?: string;
 }
 
 export interface Task {
@@ -244,7 +261,7 @@ export interface ExtraFee {
 }
 
 // In-app + browser notifications vía Firestore
-export type NotificationType = 'attendance' | 'trivia' | 'notice' | 'profile_edit' | 'payment';
+export type NotificationType = 'attendance' | 'trivia' | 'notice' | 'profile_edit' | 'payment' | 'payment_receipt';
 
 export interface AppNotification {
   id: string;
