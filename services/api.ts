@@ -1290,8 +1290,15 @@ export const dataService = {
   },
 
   submitPaymentReceipt: async (receipt: Omit<PaymentReceipt, 'id'>): Promise<string> => {
+    // Use auth.currentUser.uid to ensure it matches request.auth.uid in Firestore rules
+    const currentAuthUid = auth.currentUser?.uid;
+    if (!currentAuthUid) throw new Error('No autenticado. Recarga la app.');
+    if (!receipt.groupId) throw new Error('Sin grupo asignado.');
     const ref = doc(collection(db, "groups", receipt.groupId, "paymentReceipts"));
-    await setDoc(ref, { ...receipt, id: ref.id });
+    // Strip undefined values and enforce userId = auth UID
+    const raw = { ...receipt, id: ref.id, userId: currentAuthUid };
+    const cleanData = Object.fromEntries(Object.entries(raw).filter(([, v]) => v !== undefined));
+    await setDoc(ref, cleanData);
     return ref.id;
   },
 

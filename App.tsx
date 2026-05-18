@@ -42,7 +42,8 @@ const App: React.FC = () => {
         try {
           const profile = await dataService.getUserProfile(firebaseUser.uid);
           if (profile) {
-            setUser(profile);
+            // Ensure uid always matches Firebase Auth uid (avoids Firestore rules mismatch)
+            setUser({ ...profile, uid: firebaseUser.uid });
             // Also cache to local storage for offline checks if needed
             localStorage.setItem('logia_session', JSON.stringify(profile));
           } else {

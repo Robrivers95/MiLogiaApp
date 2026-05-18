@@ -153,13 +153,17 @@ const Payments: React.FC<Props> = ({ user }) => {
       setReceiptMsg({ text: 'Completa todos los campos requeridos.', type: 'error' });
       return;
     }
+    if (!user.groupId) {
+      setReceiptMsg({ text: 'Error: tu cuenta no está asociada a un grupo. Contacta al administrador.', type: 'error' });
+      return;
+    }
     setSubmittingReceipt(true);
     try {
       const base64 = await dataService.compressImageToBase64(receiptFile);
       await dataService.submitPaymentReceipt({
         groupId: user.groupId,
         userId: user.uid,
-        userName: user.name,
+        userName: user.name || user.email,
         periods: receiptPeriods,
         transferDate: receiptTransferDate,
         receiptImageBase64: base64,
@@ -167,17 +171,24 @@ const Payments: React.FC<Props> = ({ user }) => {
         status: 'pending',
         submittedAt: new Date().toISOString()
       });
-      const recs = await dataService.getUserPaymentReceipts(user.uid, user.groupId);
-      setReceipts(recs);
-      setReceiptMsg({ text: 'Comprobante enviado. El administrador lo revisará pronto.', type: 'success' });
+      // Show success immediately after submit succeeds
+      setReceiptMsg({ text: '✅ Comprobante enviado. El administrador lo revisará pronto.', type: 'success' });
       setReceiptPeriods([]);
       setReceiptTransferDate('');
       setReceiptFile(null);
       setReceiptPreview(null);
       setReceiptAmount('');
+      // Refresh receipts list non-critically (don't show error if this fails)
+      dataService.getUserPaymentReceipts(user.uid, user.groupId)
+        .then(recs => setReceipts(recs))
+        .catch(() => {});
       setTimeout(() => { setShowReceiptModal(false); setReceiptMsg(null); }, 2800);
     } catch (err: any) {
-      setReceiptMsg({ text: `Error al enviar: ${err.message || err}`, type: 'error' });
+      console.error('Receipt submit error:', err);
+      const errMsg = err?.code === 'permission-denied'
+        ? 'Sin permisos. Recarga la app e intenta de nuevo.'
+        : `Error al enviar: ${err.message || err}`;
+      setReceiptMsg({ text: errMsg, type: 'error' });
     } finally {
       setSubmittingReceipt(false);
     }
