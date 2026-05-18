@@ -109,12 +109,11 @@ service cloud.firestore {
         // Admin can read all receipts; members can read their own
         allow read: if isSignedIn() && 
                        (isAdminOrMaster() || resource.data.userId == request.auth.uid);
-        // Any active member can submit a receipt (must be their own userId)
+        // Any signed-in user can submit a receipt for their own userId
         allow create: if isSignedIn() && 
-                         request.resource.data.userId == request.auth.uid &&
-                         (isMaster() || isGroupActive(groupId));
-        // Only admin can approve/reject
-        allow update: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
+                         request.resource.data.userId == request.auth.uid;
+        // Only admin/master can approve/reject
+        allow update: if isAdminOrMaster();
         allow delete: if isAdminOrMaster();
       }
       
