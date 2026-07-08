@@ -172,6 +172,8 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [matrixYear, setMatrixYear] = useState(new Date().getFullYear());
   const [matrixMonths] = useState(['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']);
   const [allUserLedgers, setAllUserLedgers] = useState<Record<string, Payment[]>>({});
+  const [matrixFilter, setMatrixFilter] = useState<'regular' | 'extra' | 'all'>('regular');
+  const [matrixExtraDesc, setMatrixExtraDesc] = useState<string>('');
 
   // Manual Merge State
   const [tempUsers, setTempUsers] = useState<User[]>([]);
@@ -4455,20 +4457,60 @@ const Admin: React.FC<Props> = ({ user }) => {
                             </button>
                         </div>
                     </div>
-                    <p className="text-gray-400 mb-6 text-sm">
+                    <p className="text-gray-400 mb-4 text-sm">
                         Vista rápida de los pagos mensuales. Haz clic en una celda para registrar o editar el pago.
                     </p>
                     
-                    <div className="mb-4">
-                        <label className="block text-sm font-medium text-gray-300 mb-2">Año</label>
-                        <input
-                            type="number"
-                            value={matrixYear}
-                            onChange={(e) => setMatrixYear(Number(e.target.value))}
-                            min="2020"
-                            max="2100"
-                            className="w-32 px-4 py-2 bg-logia-900 border border-logia-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500"
-                        />
+                    {/* Año + Filtro */}
+                    <div className="flex flex-wrap gap-4 mb-5 items-end">
+                        <div>
+                            <label className="block text-xs font-medium text-gray-400 mb-1 uppercase">Año</label>
+                            <input
+                                type="number"
+                                value={matrixYear}
+                                onChange={(e) => setMatrixYear(Number(e.target.value))}
+                                min="2020" max="2100"
+                                className="w-28 px-3 py-2 bg-logia-900 border border-logia-700 rounded text-white text-sm focus:ring-2 focus:ring-indigo-500"
+                            />
+                        </div>
+                        <div className="flex-1">
+                            <label className="block text-xs font-medium text-gray-400 mb-1 uppercase">Filtrar por cuota</label>
+                            <div className="flex flex-wrap gap-2">
+                                {/* Cuota mensual */}
+                                <button
+                                    onClick={() => { setMatrixFilter('regular'); setMatrixExtraDesc(''); }}
+                                    className={`px-3 py-1.5 rounded text-xs font-bold border transition-colors ${matrixFilter === 'regular' ? 'bg-indigo-700 border-indigo-500 text-white' : 'bg-logia-900 border-logia-700 text-gray-300 hover:bg-logia-700'}`}
+                                >
+                                    📅 Cuota mensual
+                                </button>
+                                {/* Cuotas extraordinarias únicas detectadas */}
+                                {(() => {
+                                    const descs = new Set<string>();
+                                    for (const ledger of Object.values(allUserLedgers)) {
+                                        for (const p of ledger) {
+                                            if (!p.period.startsWith(String(matrixYear))) continue;
+                                            if (p.extraFees?.length) p.extraFees.forEach(ef => descs.add(ef.description));
+                                            else if (p.extraAmount && p.extraAmount > 0) descs.add(p.extraDescription || 'Cuota Extra');
+                                        }
+                                    }
+                                    return Array.from(descs).map(desc => (
+                                        <button key={desc}
+                                            onClick={() => { setMatrixFilter('extra'); setMatrixExtraDesc(desc); }}
+                                            className={`px-3 py-1.5 rounded text-xs font-bold border transition-colors ${matrixFilter === 'extra' && matrixExtraDesc === desc ? 'bg-purple-700 border-purple-500 text-white' : 'bg-logia-900 border-logia-700 text-gray-300 hover:bg-logia-700'}`}
+                                        >
+                                            ⭐ {desc}
+                                        </button>
+                                    ));
+                                })()}
+                                {/* Sin filtro */}
+                                <button
+                                    onClick={() => { setMatrixFilter('all'); setMatrixExtraDesc(''); }}
+                                    className={`px-3 py-1.5 rounded text-xs font-bold border transition-colors ${matrixFilter === 'all' ? 'bg-gray-600 border-gray-500 text-white' : 'bg-logia-900 border-logia-700 text-gray-300 hover:bg-logia-700'}`}
+                                >
+                                    📊 General (todo)
+                                </button>
+                            </div>
+                        </div>
                     </div>
                     
                     <div className="overflow-x-auto">
@@ -4494,37 +4536,66 @@ const Admin: React.FC<Props> = ({ user }) => {
                                             const period = `${matrixYear}-${monthNum}`;
                                             const userLedger = allUserLedgers[u.uid] || [];
                                             const paymentData = userLedger.find(p => p.period === period);
-                                            const isPaid = paymentData?.regularCovered || false;
-                                            const isPartial = !isPaid && paymentData && (paymentData.paidRegular !== undefined ? paymentData.paidRegular > 0 : false);
-                                            const noPeriod = !paymentData;
-                                            // Extraordinary fee status
-                                            const hasExtra = paymentData && (
-                                              (paymentData.extraFees?.length && paymentData.extraFees.length > 0) ||
-                                              (paymentData.extraAmount && paymentData.extraAmount > 0)
-                                            );
-                                            const extraDebt = paymentData ? (() => {
-                                              if (paymentData.extraFees?.length) return paymentData.extraFees.reduce((s, ef) => s + Math.max(0, ef.amount - ef.paid), 0);
-                                              if (paymentData.extraAmount) return Math.max(0, paymentData.extraAmount - (paymentData.paidExtra || 0));
-                                              return 0;
-                                            })() : 0;
-                                            const extraPaid = hasExtra && extraDebt <= 0;
-                                            
+
                                             let cellClass = 'bg-logia-900/50 text-gray-600 cursor-default';
                                             let cellTitle = 'Sin cuota registrada';
                                             let cellText = '–';
-                                            if (!noPeriod) {
-                                              if (isPaid && extraPaid) { cellClass = 'bg-green-600 text-white cursor-pointer hover:brightness-110'; cellTitle = 'Pagado (regular + extra)'; cellText = '✓'; }
-                                              else if (isPaid && hasExtra && extraDebt > 0) { cellClass = 'bg-teal-700 text-white cursor-pointer hover:brightness-110'; cellTitle = `Cuota pagada, extra pendiente $${extraDebt.toFixed(0)}`; cellText = '✓*'; }
-                                              else if (isPaid) { cellClass = 'bg-green-600 text-white cursor-pointer hover:brightness-110'; cellTitle = 'Pagado'; cellText = '✓'; }
-                                              else if (isPartial) { cellClass = 'bg-yellow-700/60 text-yellow-200 cursor-pointer hover:brightness-110'; cellTitle = 'Parcial'; cellText = '½'; }
-                                              else { cellClass = 'bg-red-900/30 text-gray-400 cursor-pointer hover:brightness-110'; cellTitle = 'Pendiente'; cellText = '✗'; }
+
+                                            if (matrixFilter === 'regular') {
+                                                // Solo cuota mensual regular
+                                                if (!paymentData) { cellTitle = 'Sin cuota'; }
+                                                else {
+                                                    const isPaid = !!paymentData.regularCovered;
+                                                    const paidReg = Number(paymentData.paidRegular ?? paymentData.paid ?? 0);
+                                                    const isPartial = !isPaid && paidReg > 0;
+                                                    if (isPaid) { cellClass = 'bg-green-600 text-white cursor-pointer hover:brightness-110'; cellTitle = `Pagado $${paymentData.amount}`; cellText = '✓'; }
+                                                    else if (isPartial) { cellClass = 'bg-yellow-700/60 text-yellow-200 cursor-pointer hover:brightness-110'; cellTitle = `Parcial: $${paidReg.toFixed(0)} / $${paymentData.amount}`; cellText = '½'; }
+                                                    else { cellClass = 'bg-red-900/30 text-gray-400 cursor-pointer hover:brightness-110'; cellTitle = `Pendiente: $${paymentData.amount}`; cellText = '✗'; }
+                                                }
+                                            } else if (matrixFilter === 'extra' && matrixExtraDesc) {
+                                                // Cuota extraordinaria específica
+                                                const ef = paymentData?.extraFees?.find(f => f.description === matrixExtraDesc);
+                                                const legacyMatch = !paymentData?.extraFees?.length && paymentData?.extraAmount &&
+                                                    (paymentData.extraDescription || 'Cuota Extra') === matrixExtraDesc;
+                                                if (!paymentData || (!ef && !legacyMatch)) {
+                                                    cellTitle = 'Sin esta cuota extra'; cellText = '–';
+                                                } else if (ef) {
+                                                    const covered = ef.paid >= ef.amount;
+                                                    const partial = !covered && ef.paid > 0;
+                                                    if (covered) { cellClass = 'bg-purple-600 text-white cursor-pointer hover:brightness-110'; cellTitle = `Pagado $${ef.amount}`; cellText = '✓'; }
+                                                    else if (partial) { cellClass = 'bg-purple-900/60 text-purple-200 cursor-pointer hover:brightness-110'; cellTitle = `Parcial: $${ef.paid.toFixed(0)} / $${ef.amount}`; cellText = '½'; }
+                                                    else { cellClass = 'bg-red-900/30 text-gray-400 cursor-pointer hover:brightness-110'; cellTitle = `Pendiente: $${ef.amount}`; cellText = '✗'; }
+                                                } else if (legacyMatch) {
+                                                    const paidExtra = paymentData.paidExtra || 0;
+                                                    const covered = paidExtra >= (paymentData.extraAmount || 0);
+                                                    const partial = !covered && paidExtra > 0;
+                                                    if (covered) { cellClass = 'bg-purple-600 text-white cursor-pointer hover:brightness-110'; cellTitle = `Pagado $${paymentData.extraAmount}`; cellText = '✓'; }
+                                                    else if (partial) { cellClass = 'bg-purple-900/60 text-purple-200 cursor-pointer hover:brightness-110'; cellTitle = `Parcial: $${paidExtra.toFixed(0)} / $${paymentData.extraAmount}`; cellText = '½'; }
+                                                    else { cellClass = 'bg-red-900/30 text-gray-400 cursor-pointer hover:brightness-110'; cellTitle = `Pendiente: $${paymentData.extraAmount}`; cellText = '✗'; }
+                                                }
+                                            } else {
+                                                // General — todo combinado
+                                                if (!paymentData) { cellTitle = 'Sin cuota'; }
+                                                else {
+                                                    const isPaid = !!paymentData.regularCovered;
+                                                    const paidReg = Number(paymentData.paidRegular ?? paymentData.paid ?? 0);
+                                                    const isPartial = !isPaid && paidReg > 0;
+                                                    const extraDebt = paymentData.extraFees?.length
+                                                        ? paymentData.extraFees.reduce((s, ef) => s + Math.max(0, ef.amount - ef.paid), 0)
+                                                        : paymentData.extraAmount ? Math.max(0, paymentData.extraAmount - (paymentData.paidExtra || 0)) : 0;
+                                                    const hasExtra = (paymentData.extraFees?.length || 0) > 0 || (paymentData.extraAmount || 0) > 0;
+                                                    if (isPaid && (!hasExtra || extraDebt <= 0)) { cellClass = 'bg-green-600 text-white cursor-pointer hover:brightness-110'; cellTitle = 'Pagado (todo)'; cellText = '✓'; }
+                                                    else if (isPaid && extraDebt > 0) { cellClass = 'bg-teal-700 text-white cursor-pointer hover:brightness-110'; cellTitle = `Cuota pagada, extra pendiente $${extraDebt.toFixed(0)}`; cellText = '✓*'; }
+                                                    else if (isPartial) { cellClass = 'bg-yellow-700/60 text-yellow-200 cursor-pointer hover:brightness-110'; cellTitle = 'Parcial'; cellText = '½'; }
+                                                    else { cellClass = 'bg-red-900/30 text-gray-400 cursor-pointer hover:brightness-110'; cellTitle = 'Pendiente'; cellText = '✗'; }
+                                                }
                                             }
                                             
                                             return (
                                                 <td 
                                                     key={idx} 
                                                     className={`p-2 text-center border border-logia-700 transition-colors ${cellClass}`}
-                                                    onClick={() => !noPeriod && handleOpenMatrixModal(u.uid, u.name, period)}
+                                                    onClick={() => paymentData && handleOpenMatrixModal(u.uid, u.name, period)}
                                                     title={cellTitle}
                                                 >
                                                     {cellText}
@@ -4538,11 +4609,27 @@ const Admin: React.FC<Props> = ({ user }) => {
                     </div>
                     
                     <div className="mt-4 flex flex-wrap gap-4 text-xs">
-                        <div className="flex items-center gap-2"><div className="w-4 h-4 bg-green-600 rounded"></div><span className="text-gray-400">Pagado</span></div>
-                        <div className="flex items-center gap-2"><div className="w-4 h-4 bg-teal-700 rounded"></div><span className="text-gray-400">Cuota pagada, extra pendiente</span></div>
-                        <div className="flex items-center gap-2"><div className="w-4 h-4 bg-yellow-700/60 rounded"></div><span className="text-gray-400">Parcial</span></div>
-                        <div className="flex items-center gap-2"><div className="w-4 h-4 bg-red-900/30 rounded border border-logia-700"></div><span className="text-gray-400">Pendiente</span></div>
-                        <div className="flex items-center gap-2"><div className="w-4 h-4 bg-logia-900/50 rounded border border-logia-700"></div><span className="text-gray-400">Sin cuota</span></div>
+                        {matrixFilter === 'extra'
+                            ? <>
+                                <div className="flex items-center gap-2"><div className="w-4 h-4 bg-purple-600 rounded"></div><span className="text-gray-400">Pagado</span></div>
+                                <div className="flex items-center gap-2"><div className="w-4 h-4 bg-purple-900/60 rounded"></div><span className="text-gray-400">Parcial</span></div>
+                                <div className="flex items-center gap-2"><div className="w-4 h-4 bg-red-900/30 rounded border border-logia-700"></div><span className="text-gray-400">Pendiente</span></div>
+                                <div className="flex items-center gap-2"><div className="w-4 h-4 bg-logia-900/50 rounded border border-logia-700"></div><span className="text-gray-400">Sin esta cuota</span></div>
+                            </>
+                            : matrixFilter === 'all'
+                            ? <>
+                                <div className="flex items-center gap-2"><div className="w-4 h-4 bg-green-600 rounded"></div><span className="text-gray-400">Todo pagado</span></div>
+                                <div className="flex items-center gap-2"><div className="w-4 h-4 bg-teal-700 rounded"></div><span className="text-gray-400">Cuota pagada, extra pendiente</span></div>
+                                <div className="flex items-center gap-2"><div className="w-4 h-4 bg-yellow-700/60 rounded"></div><span className="text-gray-400">Parcial</span></div>
+                                <div className="flex items-center gap-2"><div className="w-4 h-4 bg-red-900/30 rounded border border-logia-700"></div><span className="text-gray-400">Pendiente</span></div>
+                            </>
+                            : <>
+                                <div className="flex items-center gap-2"><div className="w-4 h-4 bg-green-600 rounded"></div><span className="text-gray-400">Pagado</span></div>
+                                <div className="flex items-center gap-2"><div className="w-4 h-4 bg-yellow-700/60 rounded"></div><span className="text-gray-400">Parcial</span></div>
+                                <div className="flex items-center gap-2"><div className="w-4 h-4 bg-red-900/30 rounded border border-logia-700"></div><span className="text-gray-400">Pendiente</span></div>
+                                <div className="flex items-center gap-2"><div className="w-4 h-4 bg-logia-900/50 rounded border border-logia-700"></div><span className="text-gray-400">Sin cuota</span></div>
+                            </>
+                        }
                     </div>
                 </div>
             </div>

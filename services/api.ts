@@ -1238,7 +1238,15 @@ export const dataService = {
     try {
       const q = query(collection(db, "groups", groupId, "notices"));
       const snapshot = await getDocs(q);
-      const list = snapshot.docs.map(d => ({id: d.id, ...d.data()} as Notice));
+      const list = snapshot.docs.map(d => {
+        const raw = d.data() as any;
+        return {
+          id: d.id,
+          ...raw,
+          // Normalizar: versiones antiguas guardaban el contenido como 'content' en vez de 'description'
+          description: raw.description || raw.content || '',
+        } as Notice;
+      });
       // Client sort by date desc
       return list.sort((a,b) => b.date.localeCompare(a.date));
     } catch (e) {
