@@ -189,6 +189,8 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [forgivePeriod, setForgivePeriod] = useState<string>('');
   const [forgivingFee, setForgivingFee] = useState(false);
   const [forgiveMsg, setForgiveMsg] = useState<{text: string; type: 'success'|'error'} | null>(null);
+  // Mostrar cuotas extras cerradas en filtro
+  const [showClosedExtraFilters, setShowClosedExtraFilters] = useState(false);
 
   // Manual Merge State
   const [tempUsers, setTempUsers] = useState<User[]>([]);
@@ -4498,24 +4500,67 @@ const Admin: React.FC<Props> = ({ user }) => {
                                 >
                                     📅 Cuota mensual
                                 </button>
-                                {/* Cuotas extraordinarias únicas detectadas */}
+                                {/* Cuotas extraordinarias — solo activas por defecto */}
                                 {(() => {
-                                    const descs = new Set<string>();
+                                    const activeDescs = new Set<string>();   // tienen deuda activa
+                                    const closedDescs = new Set<string>();   // todas pagadas/perdonadas
+
                                     for (const ledger of Object.values(allUserLedgers)) {
                                         for (const p of ledger) {
                                             if (!p.period.startsWith(String(matrixYear))) continue;
-                                            if (p.extraFees?.length) p.extraFees.forEach(ef => descs.add(ef.description));
-                                            else if (p.extraAmount && p.extraAmount > 0) descs.add(p.extraDescription || 'Cuota Extra');
+                                            if (p.extraFees?.length) {
+                                                p.extraFees.forEach(ef => {
+                                                    if (!ef.forgiven && ef.paid < ef.amount) {
+                                                        activeDescs.add(ef.description);
+                                                    } else {
+                                                        // Solo agregar a cerradas si NO está ya en activas
+                                                        if (!activeDescs.has(ef.description)) closedDescs.add(ef.description);
+                                                    }
+                                                });
+                                            } else if (p.extraAmount && p.extraAmount > 0) {
+                                                const desc = p.extraDescription || 'Cuota Extra';
+                                                const debt = Math.max(0, p.extraAmount - (p.paidExtra || 0));
+                                                if (debt > 0) activeDescs.add(desc);
+                                                else if (!activeDescs.has(desc)) closedDescs.add(desc);
+                                            }
                                         }
                                     }
-                                    return Array.from(descs).map(desc => (
-                                        <button key={desc}
-                                            onClick={() => { setMatrixFilter('extra'); setMatrixExtraDesc(desc); }}
-                                            className={`px-3 py-1.5 rounded text-xs font-bold border transition-colors ${matrixFilter === 'extra' && matrixExtraDesc === desc ? 'bg-purple-700 border-purple-500 text-white' : 'bg-logia-900 border-logia-700 text-gray-300 hover:bg-logia-700'}`}
-                                        >
-                                            ⭐ {desc}
-                                        </button>
-                                    ));
+                                    // Remove from closed anything that's also active
+                                    activeDescs.forEach(d => closedDescs.delete(d));
+
+                                    const visibleDescs = showClosedExtraFilters
+                                        ? [...Array.from(activeDescs), ...Array.from(closedDescs)]
+                                        : Array.from(activeDescs);
+
+                                    return (
+                                        <>
+                                            {visibleDescs.map(desc => {
+                                                const isClosed = !activeDescs.has(desc);
+                                                return (
+                                                    <button key={desc}
+                                                        onClick={() => { setMatrixFilter('extra'); setMatrixExtraDesc(desc); }}
+                                                        className={`px-3 py-1.5 rounded text-xs font-bold border transition-colors ${
+                                                            matrixFilter === 'extra' && matrixExtraDesc === desc
+                                                                ? 'bg-purple-700 border-purple-500 text-white'
+                                                                : isClosed
+                                                                    ? 'bg-logia-900 border-logia-700 text-gray-500 line-through'
+                                                                    : 'bg-logia-900 border-logia-700 text-gray-300 hover:bg-logia-700'
+                                                        }`}
+                                                    >
+                                                        {isClosed ? '✓' : '⭐'} {desc}
+                                                    </button>
+                                                );
+                                            })}
+                                            {closedDescs.size > 0 && (
+                                                <button
+                                                    onClick={() => setShowClosedExtraFilters(p => !p)}
+                                                    className="px-2 py-1 text-xs text-gray-500 hover:text-gray-300 underline"
+                                                >
+                                                    {showClosedExtraFilters ? 'Ocultar cerradas' : `ver ${closedDescs.size} cerrada${closedDescs.size > 1 ? 's' : ''}`}
+                                                </button>
+                                            )}
+                                        </>
+                                    );
                                 })()}
                                 {/* Sin filtro */}
                                 <button
@@ -4536,8 +4581,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                         >
                             <span className="text-white font-bold text-sm">⭐ Crear Cuota Extra Masiva</span>
                             <span className="text-gray-400 text-xs">{showBulkExtraPanel ? '▲ ocultar' : '▼ expandir'}</span>
-                        </button>
-                        {showBulkExtraPanel && (
+                        </button>                        {showBulkExtraPanel && (
                             <div className="p-4 bg-logia-800/60 space-y-3">
                                 <p className="text-gray-400 text-xs">Asigna una cuota extraordinaria a todos (o algunos) miembros en un mes específico. Aparecerá en el filtro de la matriz automáticamente.</p>
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -4625,7 +4669,74 @@ const Admin: React.FC<Props> = ({ user }) => {
                         )}
                     </div>
 
-                    {/* ── PANEL: Cerrar/Perdonar cuota extra ── */}
+                    {/* ── PANEL: Cerrar TODAS las extras del año (legacy cleanup) ── */}
+                    <div className="border border-red-800/40 rounded-lg overflow-hidden mb-4">
+                        <button
+                            className="w-full flex justify-between items-center px-4 py-3 bg-red-900/20 hover:bg-red-900/30 text-left"
+                            onClick={() => { setMatrixExtraDesc(''); setMatrixFilter('all'); setShowForgivePanel(p => !p); }}
+                        >
+                            <span className="text-red-300 font-bold text-sm">🧹 Cerrar / Perdonar TODAS las cuotas extras del año {matrixYear}</span>
+                            <span className="text-gray-400 text-xs">{(!matrixExtraDesc && showForgivePanel) ? '▲ ocultar' : '▼ expandir'}</span>
+                        </button>
+                        {!matrixExtraDesc && showForgivePanel && (
+                            <div className="p-4 bg-logia-800/60 space-y-3">
+                                <div className="bg-red-900/30 border border-red-700/40 rounded p-3 text-xs text-red-200">
+                                    ⚠️ Esto perdonará TODAS las cuotas extras sin pagar de {matrixYear} para todos los miembros activos, sin importar la descripción. Los que pagaron se quedan como pagados. Ideal para limpiar cuotas legacy.
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="text-xs text-gray-400 uppercase font-bold block mb-1">Período (opcional)</label>
+                                        <div className="flex gap-2">
+                                            <button onClick={() => setForgivePeriod('')}
+                                                className={'px-3 py-1 rounded text-xs font-bold border ' + (forgivePeriod === '' ? 'bg-red-700 border-red-600 text-white' : 'bg-logia-900 border-logia-700 text-gray-300')}>
+                                                Todo el año {matrixYear}
+                                            </button>
+                                            <input type="month" value={forgivePeriod} onChange={e => setForgivePeriod(e.target.value)}
+                                                className="flex-1 bg-logia-900 border border-logia-700 rounded p-1 text-white text-xs" />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-gray-400 uppercase font-bold block mb-1">Nota (opcional)</label>
+                                        <input type="text" value={forgiveNote} onChange={e => setForgiveNote(e.target.value)}
+                                            placeholder="Ej: Limpieza de cuotas legacy"
+                                            className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-xs" />
+                                    </div>
+                                </div>
+                                {forgiveMsg && (
+                                    <div className={'text-xs p-2 rounded ' + (forgiveMsg.type === 'success' ? 'bg-green-900/40 text-green-300 border border-green-700' : 'bg-red-900/40 text-red-300 border border-red-700')}>
+                                        {forgiveMsg.text}
+                                    </div>
+                                )}
+                                <button
+                                    disabled={forgivingFee || isReadOnly}
+                                    onClick={async () => {
+                                        const periodLabel = forgivePeriod ? 'del mes ' + forgivePeriod : 'de todo el año ' + matrixYear;
+                                        if (!window.confirm('¿Perdonar TODAS las cuotas extras sin pagar ' + periodLabel + ' de todos los miembros activos?')) return;
+                                        setForgivingFee(true); setForgiveMsg(null);
+                                        try {
+                                            const targets = filteredUsers.filter(u => u.active).map(u => u.uid);
+                                            const count = await dataService.forgiveExtraFee(
+                                                null,  // null = todas las descripciones
+                                                forgivePeriod || null,
+                                                forgivePeriod ? null : matrixYear,
+                                                targets, user.uid, forgiveNote.trim()
+                                            );
+                                            setForgiveMsg({ text: '✅ ' + count + ' registro(s) perdonados. El filtro de cuotas activas se actualizará.', type: 'success' });
+                                            setForgiveNote(''); setForgivePeriod('');
+                                            loadAllLedgers();
+                                        } catch(e: any) {
+                                            setForgiveMsg({ text: 'Error: ' + (e?.message || e), type: 'error' });
+                                        } finally { setForgivingFee(false); }
+                                    }}
+                                    className="bg-red-700 hover:bg-red-600 disabled:opacity-40 text-white font-bold px-4 py-2 rounded text-sm"
+                                >
+                                    {forgivingFee ? 'Procesando...' : '🧹 Perdonar TODAS las extras sin pagar'}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* ── PANEL: Cerrar/Perdonar cuota extra específica ── */}
                     {matrixFilter === 'extra' && matrixExtraDesc && (
                         <div className="border border-orange-700/50 rounded-lg overflow-hidden mb-4">
                             <button

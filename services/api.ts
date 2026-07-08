@@ -1657,20 +1657,23 @@ export const dataService = {
   },
 
   /**
-   * Perdona/cierra una cuota extra para los miembros que NO pagaron (o pagaron parcialmente).
-   * El registro permanece, pero la deuda ya no se contabiliza.
-   * Retorna cuántos registros fueron perdonados.
+   * Perdona/cierra cuotas extras para los miembros que NO pagaron.
+   * - description: descripción específica, o null para perdonar TODAS las descripciones
+   * - El registro permanece pero la deuda deja de contabilizarse.
    */
   forgiveExtraFee: async (
-    description: string,
-    period: string | null,   // null = todos los períodos del año
-    year: number | null,     // usado cuando period = null
+    description: string | null,   // null = perdonar TODAS las descripciones
+    period: string | null,        // null = todos los períodos del año
+    year: number | null,
     targetUids: string[],
     forgiverUid: string,
     note: string
   ): Promise<number> => {
     let count = 0;
     const now = new Date().toISOString();
+    const matchesFee = (ef: IndividualExtraFee) =>
+      (description === null || ef.description === description) && !ef.forgiven && ef.paid < ef.amount;
+
     for (const uid of targetUids) {
       try {
         if (period) {
@@ -1680,7 +1683,7 @@ export const dataService = {
           const data = snap.data() as Payment;
           if (!data.extraFees?.length) continue;
           const updated = data.extraFees.map(ef =>
-            ef.description === description && !ef.forgiven && ef.paid < ef.amount
+            matchesFee(ef)
               ? { ...ef, forgiven: true, forgivenAt: now, forgivenBy: forgiverUid, forgivenNote: note }
               : ef
           );
@@ -1689,14 +1692,13 @@ export const dataService = {
             count++;
           }
         } else {
-          // Todos los períodos del año indicado
           const snap = await getDocs(collection(db, 'users', uid, 'ledger'));
           for (const pdoc of snap.docs) {
             if (year && !pdoc.id.startsWith(String(year))) continue;
             const data = pdoc.data() as Payment;
             if (!data.extraFees?.length) continue;
             const updated = data.extraFees.map(ef =>
-              ef.description === description && !ef.forgiven && ef.paid < ef.amount
+              matchesFee(ef)
                 ? { ...ef, forgiven: true, forgivenAt: now, forgivenBy: forgiverUid, forgivenNote: note }
                 : ef
             );
@@ -1707,7 +1709,7 @@ export const dataService = {
           }
         }
       } catch (e) {
-        console.error(`forgiveExtraFee uid=${uid}`, e);
+        console.error('forgiveExtraFee uid=' + uid, e);
       }
     }
     return count;
