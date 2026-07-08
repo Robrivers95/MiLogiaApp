@@ -1342,7 +1342,130 @@ export const dataService = {
       reviewedBy: reviewerUid
     });
 
-    // 2. Notify the member
+    // 2. Auto-apply payment to the user's ledger for each period in the receipt
+    try {
+      const sortedPeriods = [...receipt.periods].sort(); // oldest first
+      const approvalDate = new Date().toISOString().split('T')[0];
+
+      // Helper: get totalExtraAmount from a payment
+      const getTotalExtra = (p: Payment): number =>
+        p.extraFees && p.extraFees.length > 0
+          ? p.extraFees.reduce((s, ef) => s + ef.amount, 0)
+          : Number(p.extraAmount) || 0;
+
+      // Helper: compute payment status from covered flags and paid amounts
+      const computeStatus = (
+        paidReg: number, paidExtra: number,
+        regCovered: boolean, extCovered: boolean
+      ): Payment['status'] =>
+        regCovered && extCovered ? 'Pagado' :
+        (paidReg > 0 || paidExtra > 0) ? 'Parcial' : 'Pendiente';
+
+      // Helper: build updated comment
+      const buildComment = (existing: string, date: string): string =>
+        existing ? `${existing} | Aprobado ${date}` : `Aprobado ${date}`;
+
+      // Helper: derive legacy-compatible paidRegular from a payment record
+      const getLegacyPaidReg = (p: Payment): number => {
+        if (p.paidRegular !== undefined) return Number(p.paidRegular) || 0;
+        // Legacy 'paid' field covers regular first, then extra
+        const legacyPaid = Number(p.paid) || 0;
+        return Math.min(legacyPaid, Number(p.amount) || 0);
+      };
+
+      if (receipt.amount && Number(receipt.amount) > 0) {
+        // Distribute the declared amount across periods, oldest first
+        let remaining = Number(receipt.amount);
+
+        for (const period of sortedPeriods) {
+          if (remaining <= 0) break;
+          const ledgerRef = doc(db, "users", receipt.userId, "ledger", period);
+          const ledgerDoc = await getDoc(ledgerRef);
+          if (!ledgerDoc.exists()) continue;
+
+          const payment = ledgerDoc.data() as Payment;
+          const currentPaidReg = getLegacyPaidReg(payment);
+          const regularDebt = Math.max(0, Number(payment.amount) - currentPaidReg);
+
+          // Apply to regular fee first
+          const applyToRegular = Math.min(remaining, regularDebt);
+          const newPaidReg = currentPaidReg + applyToRegular;
+          remaining -= applyToRegular;
+
+          // Apply remaining amount to individual extra fees, then legacy extra
+          let newPaidExtra = Number(payment.paidExtra) || 0;
+          let newExtraFees: IndividualExtraFee[] | undefined;
+
+          if (remaining > 0 && payment.extraFees && payment.extraFees.length > 0) {
+            newExtraFees = payment.extraFees.map(ef => ({ ...ef }));
+            for (const ef of newExtraFees) {
+              if (remaining <= 0) break;
+              const efDebt = Math.max(0, ef.amount - ef.paid);
+              const applyToEf = Math.min(remaining, efDebt);
+              ef.paid += applyToEf;
+              newPaidExtra += applyToEf;
+              remaining -= applyToEf;
+            }
+          } else if (remaining > 0 && Number(payment.extraAmount) > 0) {
+            const legacyDebt = Math.max(0, Number(payment.extraAmount) - newPaidExtra);
+            const applyToLegacy = Math.min(remaining, legacyDebt);
+            newPaidExtra += applyToLegacy;
+            remaining -= applyToLegacy;
+          }
+
+          const totalExtraAmount = newExtraFees
+            ? newExtraFees.reduce((s, ef) => s + ef.amount, 0)
+            : Number(payment.extraAmount) || 0;
+          const regularCovered = newPaidReg >= Number(payment.amount);
+          const extraCovered = totalExtraAmount <= 0 || newPaidExtra >= totalExtraAmount;
+
+          const updateData: Record<string, any> = {
+            paidRegular: newPaidReg,
+            paid: newPaidReg + newPaidExtra,
+            paidExtra: newPaidExtra,
+            regularCovered,
+            extraCovered,
+            status: computeStatus(newPaidReg, newPaidExtra, regularCovered, extraCovered),
+            paymentDate: approvalDate,
+            comments: buildComment(payment.comments, approvalDate)
+          };
+          if (newExtraFees) updateData.extraFees = newExtraFees;
+
+          await updateDoc(ledgerRef, updateData);
+        }
+      } else {
+        // No amount declared: mark each period's regular fee as fully paid
+        for (const period of sortedPeriods) {
+          const ledgerRef = doc(db, "users", receipt.userId, "ledger", period);
+          const ledgerDoc = await getDoc(ledgerRef);
+          if (!ledgerDoc.exists()) continue;
+
+          const payment = ledgerDoc.data() as Payment;
+          const regularAmount = Number(payment.amount) || 0;
+          const currentPaidExtra = Number(payment.paidExtra) || 0;
+          const totalExtraAmount = getTotalExtra(payment);
+          const extraCovered = totalExtraAmount <= 0 || currentPaidExtra >= totalExtraAmount;
+
+          await updateDoc(ledgerRef, {
+            paidRegular: regularAmount,
+            paid: regularAmount + currentPaidExtra,
+            regularCovered: true,
+            extraCovered,
+            status: computeStatus(regularAmount, currentPaidExtra, true, extraCovered),
+            paymentDate: approvalDate,
+            comments: buildComment(payment.comments, approvalDate)
+          });
+        }
+      }
+    } catch (err) {
+      // Log but do not re-throw: receipt is already marked approved
+      console.error(
+        `Error auto-applying approved receipt ${receipt.id} (user ${receipt.userId}, periods ${receipt.periods.join(', ')}) to ledger:`,
+        err
+      );
+    }
+
+    // 3. Notify the member
     try {
       const periodsStr = receipt.periods.join(', ');
       await notificationService.createNotification(
@@ -1350,7 +1473,7 @@ export const dataService = {
         receipt.groupId,
         'payment_receipt',
         '✅ Comprobante aprobado',
-        `Tu comprobante de pago para ${periodsStr} fue aprobado. Actualiza tu estado desde "Mis Pagos" si es necesario.`
+        `Tu comprobante de pago para ${periodsStr} fue aprobado y registrado en tu cuenta.`
       );
     } catch (_) {}
   },

@@ -125,7 +125,14 @@ const Payments: React.FC<Props> = ({ user }) => {
   const pendingPeriods = payments
     .filter(p => {
       const reg = p.paidRegular !== undefined ? p.paidRegular : (Number(p.paid) || 0);
-      return (p.amount - reg) > 0;
+      const regularBalance = Math.max(0, p.amount - reg);
+      let extraBalance = 0;
+      if (p.extraFees && p.extraFees.length > 0) {
+        extraBalance = p.extraFees.reduce((s, ef) => s + Math.max(0, ef.amount - ef.paid), 0);
+      } else if (p.extraAmount) {
+        extraBalance = Math.max(0, p.extraAmount - (p.paidExtra || 0));
+      }
+      return regularBalance > 0 || extraBalance > 0;
     })
     .map(p => p.period);
 
