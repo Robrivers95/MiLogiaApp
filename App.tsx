@@ -18,6 +18,7 @@ import Notices from './components/Notices';
 import MasterDashboard from './components/MasterDashboard';
 import PendingApproval from './components/PendingApproval';
 import Visits from './components/Visits';
+import Biblioteca from './components/Biblioteca';
 import { ReadOnlyProvider } from './contexts/ReadOnlyContext';
 
 const App: React.FC = () => {
@@ -70,6 +71,25 @@ const App: React.FC = () => {
     setView('home');
     setSelectedGroup(null); // Reset group selection on fresh login
   };
+
+  // Leer ?view= de la URL (para cuando llega desde una push notification)
+  // y escuchar postMessage del service worker cuando la app ya está abierta
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const viewParam = params.get('view');
+    if (viewParam) {
+      setView(viewParam);
+      window.history.replaceState({}, '', '/');
+    }
+
+    const handleSwMessage = (e: MessageEvent) => {
+      if (e.data?.type === 'NAVIGATE' && e.data.view) {
+        setView(e.data.view);
+      }
+    };
+    navigator.serviceWorker?.addEventListener('message', handleSwMessage);
+    return () => navigator.serviceWorker?.removeEventListener('message', handleSwMessage);
+  }, []);
 
   // Check if the user's group is suspended + get group name
   useEffect(() => {
@@ -152,6 +172,7 @@ const App: React.FC = () => {
       {view === 'trivia' && <Trivia user={activeUserContext} />}
       {view === 'profile' && <Profile user={activeUserContext} />}
       {view === 'admin' && isAdminOrViewer && <Admin user={activeUserContext} />}
+      {view === 'biblioteca' && <Biblioteca user={activeUserContext} />}
       
       {view === 'admin' && !isAdminOrViewer && (
         <div className="p-8 text-center text-red-400">Acceso denegado. Solo Admin.</div>

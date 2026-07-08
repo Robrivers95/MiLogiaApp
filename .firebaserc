@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "gen-lang-client-0255480722"
+    "default": "registrologia",
+    "hosting": "gen-lang-client-0255480722"
   }
 }
+

@@ -1,0 +1,20 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Comprobantes de pago: solo usuarios autenticados pueden leer/escribir
+    match /groups/{groupId}/receipts/{receiptId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // PDFs de la Biblioteca de Alejandría Masónica
+    match /biblioteca/{fileName} {
+      // Cualquier usuario autenticado puede leer (el control de grado es en Firestore)
+      allow read: if request.auth != null;
+      // Solo usuarios autenticados pueden subir; máx 20 MB; solo PDF
+      allow write: if request.auth != null &&
+                      request.resource.size <= 20 * 1024 * 1024 &&
+                      request.resource.contentType == 'application/pdf';
+    }
+  }
+}

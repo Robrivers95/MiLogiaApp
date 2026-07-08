@@ -7,6 +7,7 @@ import { db } from '../services/firebase';
 
 interface Props {
   user: User;
+  onNavigate?: (view: string) => void;
 }
 
 const TYPE_ICONS: Record<string, string> = {
@@ -14,10 +15,21 @@ const TYPE_ICONS: Record<string, string> = {
   trivia: '🧠',
   notice: '📢',
   profile_edit: '📝',
-  payment: '💰'
+  payment: '💰',
+  payment_receipt: '🧾'
 };
 
-const NotificationBell: React.FC<Props> = ({ user }) => {
+// Mapeo tipo de notificación → sección de la app
+const TYPE_TO_VIEW: Record<string, string> = {
+  notice: 'notices',
+  payment: 'payments',
+  payment_receipt: 'payments',
+  attendance: 'attendance',
+  trivia: 'trivia',
+  profile_edit: 'profile',
+};
+
+const NotificationBell: React.FC<Props> = ({ user, onNavigate }) => {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [open, setOpen] = useState(false);
   const [permissionAsked, setPermissionAsked] = useState(false);
@@ -92,6 +104,15 @@ const NotificationBell: React.FC<Props> = ({ user }) => {
     await notificationService.markRead(user.uid, notif.id);
   };
 
+  const handleNotifClick = async (notif: AppNotification) => {
+    await notificationService.markRead(user.uid, notif.id);
+    setOpen(false);
+    if (onNavigate) {
+      const view = TYPE_TO_VIEW[notif.type];
+      if (view) onNavigate(view);
+    }
+  };
+
   const handleMarkAllRead = async () => {
     await notificationService.markAllRead(user.uid);
     setOpen(false);
@@ -116,9 +137,9 @@ const NotificationBell: React.FC<Props> = ({ user }) => {
         )}
       </button>
 
-      {/* Panel desplegable */}
+      {/* Panel desplegable — fixed para no salirse de pantalla en móvil */}
       {open && (
-        <div className="absolute right-0 top-12 w-80 max-h-[420px] bg-logia-800 border border-logia-700 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+        <div className="fixed right-2 top-[65px] w-80 max-w-[calc(100vw-1rem)] max-h-[70vh] bg-logia-800 border border-logia-700 rounded-xl shadow-2xl z-[200] flex flex-col overflow-hidden">
           {/* Header */}
           <div className="flex justify-between items-center px-4 py-3 border-b border-logia-700 bg-logia-900">
             <h3 className="font-bold text-white text-sm">Notificaciones</h3>
@@ -144,7 +165,7 @@ const NotificationBell: React.FC<Props> = ({ user }) => {
                 <div
                   key={notif.id}
                   className="flex gap-3 px-4 py-3 border-b border-logia-700/50 hover:bg-logia-700/30 cursor-pointer"
-                  onClick={() => handleMarkRead(notif)}
+                  onClick={() => handleNotifClick(notif)}
                 >
                   <div className="text-2xl flex-shrink-0 mt-0.5">
                     {TYPE_ICONS[notif.type] || '🔔'}

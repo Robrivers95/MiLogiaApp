@@ -63,13 +63,15 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
     }
   };
   
-  const navItems = [
+  const navItems: { id: string; label: string; icon: string; href?: string }[] = [
     { id: 'home', label: 'Inicio', icon: '🏠' },
     { id: 'notices', label: 'Avisos', icon: '📢' },
     { id: 'payments', label: 'Pagos', icon: '💰' },
     { id: 'attendance', label: 'Asist.', icon: '📅' },
     // RPG hidden
     { id: 'trivia', label: 'Trivia', icon: '❓' },
+    { id: 'biblioteca', label: 'Biblioteca', icon: '📚' },
+    { id: 'trivia-online', label: 'Trivia Online', icon: '🎲', href: 'https://juegodemesamasonico.web.app' },
   ];
 
   if (user.role === 'admin' || user.role === 'viewer' || user.role === 'master') {
@@ -93,7 +95,7 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
             )}
         </div>
         <div className="flex gap-2 items-center">
-            <NotificationBell user={user} />
+            <NotificationBell user={user} onNavigate={onNavigate} />
             <button 
               onClick={handleInstallClick}
               className="text-sm px-3 py-1 rounded border border-green-700 bg-green-900 text-green-200 hover:bg-green-800 flex items-center gap-1"
@@ -143,18 +145,31 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
       {/* Bottom Nav (Mobile First) */}
       <nav className="fixed bottom-0 left-0 w-full bg-logia-800 border-t border-logia-700 pb-safe z-30 overflow-x-auto">
         <div className="max-w-3xl mx-auto flex justify-between items-center h-16 min-w-[350px]">
-          {navItems.map(item => (
-            <button
-              key={item.id}
-              onClick={() => onNavigate(item.id)}
-              className={`flex flex-col items-center justify-center w-full min-w-[60px] h-full transition-colors ${
-                currentView === item.id ? 'text-logia-accent' : 'text-gray-500 hover:text-gray-300'
-              }`}
-            >
-              <span className="text-xl mb-1">{item.icon}</span>
-              <span className="text-[10px] font-medium uppercase tracking-wide">{item.label}</span>
-            </button>
-          ))}
+          {navItems.map(item =>
+            item.href ? (
+              <a
+                key={item.id}
+                href={item.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex flex-col items-center justify-center w-full min-w-[60px] h-full transition-colors text-gray-500 hover:text-gray-300 no-underline"
+              >
+                <span className="text-xl mb-1">{item.icon}</span>
+                <span className="text-[10px] font-medium uppercase tracking-wide">{item.label}</span>
+              </a>
+            ) : (
+              <button
+                key={item.id}
+                onClick={() => onNavigate(item.id)}
+                className={`flex flex-col items-center justify-center w-full min-w-[60px] h-full transition-colors ${
+                  currentView === item.id ? 'text-logia-accent' : 'text-gray-500 hover:text-gray-300'
+                }`}
+              >
+                <span className="text-xl mb-1">{item.icon}</span>
+                <span className="text-[10px] font-medium uppercase tracking-wide">{item.label}</span>
+              </button>
+            )
+          )}
         </div>
       </nav>
 

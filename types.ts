@@ -83,8 +83,10 @@ export interface PaymentReceipt {
   userName: string;
   periods: string[];           // Array de YYYY-MM que desea pagar
   transferDate: string;        // ISO fecha/hora de la transferencia
-  receiptImageBase64: string;  // Foto comprimida en base64
+  receiptImageUrl: string;     // URL de imagen en Firebase Storage
   amount?: number;             // Monto declarado (opcional)
+  receiptType: 'cuota_mensual' | 'concepto_adicional'; // Tipo de pago
+  conceptDescription?: string; // Descripción para "concepto_adicional"
   status: 'pending' | 'approved' | 'rejected';
   submittedAt: string;         // ISO
   reviewedAt?: string;         // ISO
@@ -136,6 +138,7 @@ export interface Payment {
   groupId?: string; // Logia/Group ID para filtrado
   regularCovered?: boolean; // Si la cuota mensual está cubierta
   extraCovered?: boolean; // Si la cuota extraordinaria está cubierta
+  adminReceiptUrl?: string; // URL de comprobante subido por el admin
 }
 
 export interface PriceHistoryEntry {
@@ -259,6 +262,49 @@ export interface ExtraFee {
   createdAt: string; // ISO date
   appliedToUsers: string[]; // Lista de UIDs a los que se aplicó
 }
+
+// ─── BIBLIOTECA DE ALEJANDRÍA MASÓNICA ──────────────────────────────────────
+
+export type BibliotecaDegree = 'aprendiz' | 'companero' | 'maestro';
+
+export interface BibliotecaTrazado {
+  id: string;
+  title: string;
+  description: string;
+  pdfUrl: string;
+  degree: BibliotecaDegree;          // Grado al que está dirigido
+  uploaderUid: string;
+  uploaderName: string;
+  groupId: string;                   // Logia del autor
+  groupName: string;
+  isPublic: boolean;                 // true = todas las logias; false = solo su logia
+  viewCount: number;
+  likeCount: number;
+  likedBy: string[];                 // UIDs que dieron like
+  createdAt: number;                 // timestamp ms
+}
+
+export interface BibliotecaComment {
+  id: string;
+  trazadoId: string;
+  uid: string;
+  userName: string;
+  groupName: string;
+  text: string;
+  createdAt: number;
+}
+
+// Preguntas del reteje por grado – administradas por el Master
+export interface RetejeQuestion {
+  id: string;
+  degree: BibliotecaDegree;
+  question: string;
+  options: string[];       // 4 opciones
+  correctIndex: number;   // índice 0‑3
+  createdAt: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 // In-app + browser notifications vía Firestore
 export type NotificationType = 'attendance' | 'trivia' | 'notice' | 'profile_edit' | 'payment' | 'payment_receipt';

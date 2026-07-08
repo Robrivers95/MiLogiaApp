@@ -33,9 +33,16 @@ const Payments: React.FC<Props> = ({ user }) => {
   const [loading, setLoading] = useState(true);
   const [expandedPeriods, setExpandedPeriods] = useState<Set<string>>(new Set());
 
+  // Year filter: current year ± 1 (3 years total)
+  const currentYear = new Date().getFullYear();
+  const [selectedYear, setSelectedYear] = useState(currentYear);
+  const availableYears = [currentYear - 1, currentYear, currentYear + 1];
+
   // Comprobante state
   const [receipts, setReceipts] = useState<PaymentReceipt[]>([]);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [receiptType, setReceiptType] = useState<'cuota_mensual' | 'concepto_adicional'>('cuota_mensual');
+  const [conceptDescription, setConceptDescription] = useState('');
   const [receiptPeriods, setReceiptPeriods] = useState<string[]>([]);
   const [receiptTransferDate, setReceiptTransferDate] = useState('');
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
@@ -115,6 +122,9 @@ const Payments: React.FC<Props> = ({ user }) => {
 
   const allRows: PaymentRow[] = payments.flatMap(p => buildPaymentRows(p));
 
+  // Filter rows by selected year
+  const filteredRows = allRows.filter(r => r.period.startsWith(String(selectedYear)));
+
   const summary = {
     totalRegularDebt: allRows.filter(r => r.isMainRow).reduce((s, r) => s + r.regularBalance, 0),
     totalExtraDebt: allRows.reduce((s, r) => s + r.extraBalance, 0),
@@ -122,6 +132,16 @@ const Payments: React.FC<Props> = ({ user }) => {
     pendingCount: allRows.filter(r => r.isMainRow && r.totalBalance > 0).length
   };
 
+  // All months for cuota_mensual — incluye todos los meses del año seleccionado + los de años anteriores registrados
+  const currentPeriod = new Date().toISOString().slice(0, 7);
+  const allPeriods = Array.from(new Set([
+    ...payments.map(p => p.period),
+    currentPeriod,
+    // Generar todos los meses del año seleccionado para que el usuario pueda pagar por adelantado
+    ...Array.from({ length: 12 }, (_, i) => `${selectedYear}-${String(i + 1).padStart(2, '0')}`)
+  ])).sort().reverse();
+
+  // pendingPeriods only used as quick-filter label now; modal shows allPeriods for cuota_mensual too
   const pendingPeriods = payments
     .filter(p => {
       const reg = p.paidRegular !== undefined ? p.paidRegular : (Number(p.paid) || 0);
@@ -129,8 +149,15 @@ const Payments: React.FC<Props> = ({ user }) => {
     })
     .map(p => p.period);
 
-  const receiptByPeriod = (period: string): PaymentReceipt | undefined =>
-    receipts.find(r => r.periods.includes(period));
+  // Multiple receipts per period
+  const receiptsByPeriod = (period: string): PaymentReceipt[] =>
+    receipts.filter(r => r.periods.includes(period));
+
+  // For the badge: show latest status
+  const latestReceiptByPeriod = (period: string): PaymentReceipt | undefined => {
+    const recs = receiptsByPeriod(period);
+    return recs.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))[0];
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -149,8 +176,16 @@ const Payments: React.FC<Props> = ({ user }) => {
 
   const handleSubmitReceipt = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!receiptFile || receiptPeriods.length === 0 || !receiptTransferDate) {
+    if (!receiptFile || !receiptTransferDate) {
       setReceiptMsg({ text: 'Completa todos los campos requeridos.', type: 'error' });
+      return;
+    }
+    if (receiptType === 'cuota_mensual' && receiptPeriods.length === 0) {
+      setReceiptMsg({ text: 'Selecciona al menos un mes para pagar.', type: 'error' });
+      return;
+    }
+    if (receiptType === 'concepto_adicional' && !conceptDescription.trim()) {
+      setReceiptMsg({ text: 'Escribe la descripción del concepto.', type: 'error' });
       return;
     }
     if (!user.groupId) {
@@ -159,26 +194,27 @@ const Payments: React.FC<Props> = ({ user }) => {
     }
     setSubmittingReceipt(true);
     try {
-      const base64 = await dataService.compressImageToBase64(receiptFile);
-      await dataService.submitPaymentReceipt({
+      await dataService.submitPaymentReceipt(receiptFile, {
         groupId: user.groupId,
         userId: user.uid,
         userName: user.name || user.email,
         periods: receiptPeriods,
         transferDate: receiptTransferDate,
-        receiptImageBase64: base64,
+        receiptImageUrl: '',
         amount: receiptAmount ? Number(receiptAmount) : undefined,
+        receiptType,
+        conceptDescription: receiptType === 'concepto_adicional' ? conceptDescription.trim() : undefined,
         status: 'pending',
         submittedAt: new Date().toISOString()
       });
-      // Show success immediately after submit succeeds
       setReceiptMsg({ text: '✅ Comprobante enviado. El administrador lo revisará pronto.', type: 'success' });
       setReceiptPeriods([]);
       setReceiptTransferDate('');
       setReceiptFile(null);
       setReceiptPreview(null);
       setReceiptAmount('');
-      // Refresh receipts list non-critically (don't show error if this fails)
+      setReceiptType('cuota_mensual');
+      setConceptDescription('');
       dataService.getUserPaymentReceipts(user.uid, user.groupId)
         .then(recs => setReceipts(recs))
         .catch(() => {});
@@ -258,6 +294,58 @@ const Payments: React.FC<Props> = ({ user }) => {
       ) : allRows.length === 0 ? (
         <p className="text-center text-gray-400 bg-logia-800/50 p-4 rounded-lg">No hay registros de pagos.</p>
       ) : (
+        <>
+          {/* Year selector */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-gray-400 uppercase font-bold">Año:</span>
+            {availableYears.map(y => (
+              <button key={y} onClick={() => setSelectedYear(y)}
+                className={`px-4 py-1 rounded-full text-sm font-bold transition-colors ${selectedYear === y ? 'bg-indigo-700 text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700 border border-logia-700'}`}>
+                {y}
+              </button>
+            ))}
+          </div>
+
+          {/* Payment status grid */}
+          {(() => {
+            const months = Array.from({ length: 12 }, (_, i) => {
+              const m = String(i + 1).padStart(2, '0');
+              return `${selectedYear}-${m}`;
+            });
+            return (
+              <div className="bg-logia-800/60 rounded-xl p-4 border border-logia-700">
+                <p className="text-xs font-bold text-gray-400 uppercase mb-3">Línea de pagos {selectedYear}</p>
+                <div className="grid grid-cols-6 sm:grid-cols-12 gap-1.5">
+                  {months.map(period => {
+                    const pmt = payments.find(p => p.period === period);
+                    const reg = pmt ? (pmt.paidRegular !== undefined ? pmt.paidRegular : (Number(pmt.paid) || 0)) : 0;
+                    const bal = pmt ? (pmt.amount - reg) : null;
+                    const label = MONTH_NAMES[parseInt(period.slice(5)) - 1].slice(0, 3);
+                    let color = 'bg-logia-900 text-gray-600 border-logia-700';
+                    let title = `${label}: Sin registro`;
+                    if (pmt) {
+                      if (bal !== null && bal <= 0) { color = 'bg-green-700 text-green-100 border-green-600'; title = `${label}: Pagado`; }
+                      else if (reg > 0) { color = 'bg-yellow-700 text-yellow-100 border-yellow-600'; title = `${label}: Parcial ($${bal?.toFixed(2)} pendiente)`; }
+                      else { color = 'bg-red-800 text-red-200 border-red-700'; title = `${label}: Pendiente ($${pmt.amount})`; }
+                    }
+                    return (
+                      <div key={period} title={title}
+                        className={`rounded border p-1 text-center text-[10px] font-bold cursor-default select-none ${color}`}>
+                        {label}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex gap-3 mt-2 text-[10px] text-gray-400 flex-wrap">
+                  <span><span className="inline-block w-3 h-3 rounded bg-green-700 mr-1 align-middle"></span>Pagado</span>
+                  <span><span className="inline-block w-3 h-3 rounded bg-yellow-700 mr-1 align-middle"></span>Parcial</span>
+                  <span><span className="inline-block w-3 h-3 rounded bg-red-800 mr-1 align-middle"></span>Pendiente</span>
+                  <span><span className="inline-block w-3 h-3 rounded bg-logia-900 mr-1 align-middle border border-logia-700"></span>Sin registro</span>
+                </div>
+              </div>
+            );
+          })()}
+
         <div className="bg-logia-800 rounded-lg border border-logia-700 overflow-hidden shadow-lg">
           {/* Header */}
           <div className="bg-gradient-to-r from-indigo-900 to-indigo-800 p-3 grid grid-cols-12 gap-1 text-xs font-bold text-gray-200 uppercase border-b-2 border-indigo-600">
@@ -270,10 +358,13 @@ const Payments: React.FC<Props> = ({ user }) => {
           </div>
 
           <div className="divide-y divide-logia-700">
-            {allRows.map((row, idx) => {
+            {filteredRows.length === 0 ? (
+              <p className="text-center text-gray-500 py-6 text-sm">Sin registros para {selectedYear}</p>
+            ) : filteredRows.map((row, idx) => {
               const isExpanded = expandedPeriods.has(row.period);
-              const receipt = row.isMainRow ? receiptByPeriod(row.period) : undefined;
-              const hasDetails = row.isMainRow && (row.paymentDate || row.comments || row.extraFee || receipt);
+              const receipt = row.isMainRow ? latestReceiptByPeriod(row.period) : undefined;
+              const allPeriodReceipts = row.isMainRow ? receiptsByPeriod(row.period) : [];
+              const hasDetails = row.isMainRow && (row.paymentDate || row.comments || row.extraFee || allPeriodReceipts.length > 0);
 
               return (
                 <React.Fragment key={`${row.period}-${idx}`}>
@@ -369,34 +460,38 @@ const Payments: React.FC<Props> = ({ user }) => {
                           </div>
                         )}
 
-                        {receipt && (
-                          <div className={`p-3 rounded border ${receipt.status === 'approved' ? 'border-green-600/40 bg-green-900/20' : receipt.status === 'rejected' ? 'border-red-600/40 bg-red-900/20' : 'border-yellow-600/40 bg-yellow-900/20'}`}>
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-xs font-bold text-gray-300 uppercase">📄 Comprobante Enviado</span>
-                              {statusBadge(receipt)}
-                            </div>
-                            <p className="text-xs text-gray-400">
-                              Transferencia: <span className="text-white">{new Date(receipt.transferDate).toLocaleString('es-ES')}</span>
-                            </p>
-                            {receipt.amount && (
-                              <p className="text-xs text-gray-400">
-                                Monto declarado: <span className="text-white font-bold">${Number(receipt.amount).toFixed(2)}</span>
-                              </p>
-                            )}
-                            {receipt.reviewComments && (
-                              <p className="text-xs text-red-300 mt-1">Comentario: "{receipt.reviewComments}"</p>
-                            )}
-                            {receipt.receiptImageBase64 && (
-                              <div className="mt-2">
-                                <img
-                                  src={receipt.receiptImageBase64}
-                                  alt="Comprobante"
-                                  className="max-w-full rounded border border-logia-700 max-h-48 object-contain cursor-pointer"
-                                  onClick={() => window.open(receipt.receiptImageBase64, '_blank')}
-                                />
-                                <p className="text-xs text-gray-500 mt-1">Toca la imagen para verla completa</p>
+                        {allPeriodReceipts.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-xs font-bold text-gray-300 uppercase">📄 Comprobantes Enviados ({allPeriodReceipts.length})</p>
+                            {allPeriodReceipts.sort((a,b) => b.submittedAt.localeCompare(a.submittedAt)).map((r) => (
+                              <div key={r.id} className={`p-3 rounded border ${r.status === 'approved' ? 'border-green-600/40 bg-green-900/20' : r.status === 'rejected' ? 'border-red-600/40 bg-red-900/20' : 'border-yellow-600/40 bg-yellow-900/20'}`}>
+                                <div className="flex items-center justify-between mb-1">
+                                  {statusBadge(r)}
+                                  <span className="text-xs text-gray-500">{new Date(r.submittedAt).toLocaleDateString('es-ES')}</span>
+                                </div>
+                                <p className="text-xs text-gray-400">
+                                  Transferencia: <span className="text-white">{new Date(r.transferDate).toLocaleString('es-ES')}</span>
+                                </p>
+                                {r.amount && (
+                                  <p className="text-xs text-gray-400">
+                                    Monto: <span className="text-white font-bold">${Number(r.amount).toFixed(2)}</span>
+                                  </p>
+                                )}
+                                {r.reviewComments && (
+                                  <p className="text-xs text-red-300 mt-1">"{r.reviewComments}"</p>
+                                )}
+                                {r.receiptImageUrl && (
+                                  <div className="mt-2">
+                                    <img
+                                      src={r.receiptImageUrl}
+                                      alt="Comprobante"
+                                      className="max-w-full rounded border border-logia-700 max-h-48 object-contain cursor-pointer"
+                                      onClick={() => window.open(r.receiptImageUrl, '_blank')}
+                                    />
+                                  </div>
+                                )}
                               </div>
-                            )}
+                            ))}
                           </div>
                         )}
                       </div>
@@ -407,6 +502,7 @@ const Payments: React.FC<Props> = ({ user }) => {
             })}
           </div>
         </div>
+        </>
       )}
 
       {/* ── MODAL: Reportar Pago ── */}
@@ -425,20 +521,74 @@ const Payments: React.FC<Props> = ({ user }) => {
             )}
 
             <form onSubmit={handleSubmitReceipt} className="space-y-4">
+
+              {/* Tipo de pago */}
               <div>
                 <label className="block text-xs font-bold text-gray-400 uppercase mb-2">
-                  Meses que estás pagando <span className="text-red-400">*</span>
+                  Tipo de pago <span className="text-red-400">*</span>
                 </label>
-                {pendingPeriods.length === 0 ? (
-                  <p className="text-gray-500 text-sm">No tienes meses pendientes de pago.</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className={`flex items-center gap-2 p-3 rounded border cursor-pointer transition-colors ${receiptType === 'cuota_mensual' ? 'border-indigo-500 bg-indigo-900/30' : 'border-logia-700 bg-logia-900/50'}`}>
+                    <input type="radio" name="receiptType" value="cuota_mensual" checked={receiptType === 'cuota_mensual'}
+                      onChange={() => { setReceiptType('cuota_mensual'); setReceiptPeriods([]); }} className="accent-indigo-500" />
+                    <div>
+                      <span className="text-sm font-bold text-white block">📅 Cuota Mensual</span>
+                      <span className="text-xs text-gray-400">Pago de mensualidad regular</span>
+                    </div>
+                  </label>
+                  <label className={`flex items-center gap-2 p-3 rounded border cursor-pointer transition-colors ${receiptType === 'concepto_adicional' ? 'border-purple-500 bg-purple-900/30' : 'border-logia-700 bg-logia-900/50'}`}>
+                    <input type="radio" name="receiptType" value="concepto_adicional" checked={receiptType === 'concepto_adicional'}
+                      onChange={() => { setReceiptType('concepto_adicional'); setReceiptPeriods([]); }} className="accent-purple-500" />
+                    <div>
+                      <span className="text-sm font-bold text-white block">💡 Concepto Adicional</span>
+                      <span className="text-xs text-gray-400">Cuota extra, evento, etc.</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Descripción (solo para concepto adicional) */}
+              {receiptType === 'concepto_adicional' && (
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">
+                    Descripción del concepto <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={conceptDescription}
+                    onChange={e => setConceptDescription(e.target.value)}
+                    placeholder="Ej: Cena anual, evento especial, cuota extraordinaria..."
+                    className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
+                  />
+                </div>
+              )}
+
+              {/* Selección de meses */}
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">
+                  {receiptType === 'cuota_mensual'
+                    ? <>Meses que estás pagando <span className="text-red-400">*</span></>
+                    : 'Período al que corresponde (opcional)'}
+                </label>
+                {receiptType === 'cuota_mensual' && allPeriods.length === 0 ? (
+                  <p className="text-gray-500 text-sm bg-logia-900/50 p-3 rounded border border-logia-700">No hay períodos disponibles.</p>
                 ) : (
                   <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
-                    {pendingPeriods.map(period => (
-                      <label key={period} className={`flex items-center gap-2 p-2 rounded border cursor-pointer transition-colors ${receiptPeriods.includes(period) ? 'border-green-500 bg-green-900/30' : 'border-logia-700 bg-logia-900/50'}`}>
-                        <input type="checkbox" checked={receiptPeriods.includes(period)} onChange={() => handleTogglePeriod(period)} className="accent-green-500" />
+                    {(allPeriods).map(period => {
+                      const isPending = pendingPeriods.includes(period);
+                      return (
+                      <label key={period} className={`flex items-center gap-2 p-2 rounded border cursor-pointer transition-colors ${receiptPeriods.includes(period)
+                        ? (receiptType === 'cuota_mensual' ? 'border-green-500 bg-green-900/30' : 'border-purple-500 bg-purple-900/30')
+                        : 'border-logia-700 bg-logia-900/50'}`}>
+                        <input type="checkbox" checked={receiptPeriods.includes(period)} onChange={() => handleTogglePeriod(period)}
+                          className={receiptType === 'cuota_mensual' ? 'accent-green-500' : 'accent-purple-500'} />
                         <span className="text-sm text-white">{formatPeriod(period)}</span>
+                        {receiptType === 'cuota_mensual' && isPending && (
+                          <span className="text-[9px] text-red-400 font-bold ml-auto">⚠️ pendiente</span>
+                        )}
                       </label>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -465,6 +615,9 @@ const Payments: React.FC<Props> = ({ user }) => {
                   placeholder="Ej: 250.00"
                   className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
                 />
+                {receiptType === 'cuota_mensual' && receiptPeriods.length > 1 && receiptAmount && (
+                  <p className="text-xs text-gray-500 mt-1">Se distribuirá ${(Number(receiptAmount) / receiptPeriods.length).toFixed(2)} por cada mes seleccionado.</p>
+                )}
               </div>
 
               <div>
@@ -485,7 +638,8 @@ const Payments: React.FC<Props> = ({ user }) => {
               </div>
 
               <div className="bg-yellow-900/20 border border-yellow-600/30 rounded p-3 text-xs text-yellow-200">
-                ⚠️ Enviar este comprobante <strong>no confirma tu pago automáticamente</strong>. El administrador lo revisará y aprobará. Recibirás una notificación cuando sea revisado.
+                ⚠️ El administrador revisará y aprobará el comprobante. Recibirás una notificación.
+                {receiptType === 'cuota_mensual' && ' Al ser aprobado, tu saldo se actualizará automáticamente.'}
               </div>
 
               <div className="flex gap-3 pt-2">
@@ -494,7 +648,7 @@ const Payments: React.FC<Props> = ({ user }) => {
                 </button>
                 <button
                   type="submit"
-                  disabled={submittingReceipt || receiptPeriods.length === 0}
+                  disabled={submittingReceipt}
                   className="flex-1 py-3 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded font-bold"
                 >
                   {submittingReceipt ? 'Enviando...' : '📤 Enviar Comprobante'}

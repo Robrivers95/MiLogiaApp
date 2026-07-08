@@ -165,5 +165,45 @@ service cloud.firestore {
       // Only Master can write app configuration
       allow write: if isMaster();
     }
+
+    // ─── BIBLIOTECA DE ALEJANDRÍA MASÓNICA ─────────────────────────────────
+
+    match /biblioteca/{trazadoId} {
+      // Lectura: cualquier usuario autenticado puede leer.
+      // El filtro de grado y visibilidad (pública vs privada de logia)
+      // se aplica en la query de la app, no aquí, para evitar que Firestore
+      // rechace consultas que devuelvan documentos de grados mixtos.
+      allow read: if isSignedIn();
+
+      // Creación: el campo uploaderUid debe coincidir con el usuario autenticado
+      allow create: if isSignedIn() && isUserGroupActive() &&
+                       request.resource.data.uploaderUid == request.auth.uid;
+
+      // Actualización: el propio autor (likes, vistas) o admin/master
+      allow update: if isSignedIn() &&
+                       (resource.data.uploaderUid == request.auth.uid || isAdminOrMaster());
+
+      // Eliminación: el propio autor o admin/master
+      allow delete: if isSignedIn() &&
+                       (resource.data.uploaderUid == request.auth.uid || isAdminOrMaster());
+
+      // Comentarios
+      match /comments/{commentId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && isUserGroupActive() &&
+                         request.resource.data.uid == request.auth.uid;
+        allow delete: if isSignedIn() &&
+                         (resource.data.uid == request.auth.uid || isAdminOrMaster());
+        allow update: if false;
+      }
+    }
+
+    // Preguntas del Reteje (solo master puede escribir; cualquier autenticado puede leer)
+    match /retejeQuestions/{questionId} {
+      allow read: if isSignedIn();
+      allow write: if isMaster();
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
   }
 }
