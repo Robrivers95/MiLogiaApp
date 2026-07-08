@@ -93,7 +93,7 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
             )}
         </div>
         <div className="flex gap-2 items-center">
-            <NotificationBell user={user} />
+            <NotificationBell user={user} onNavigate={onNavigate} />
             <button 
               onClick={handleInstallClick}
               className="text-sm px-3 py-1 rounded border border-green-700 bg-green-900 text-green-200 hover:bg-green-800 flex items-center gap-1"

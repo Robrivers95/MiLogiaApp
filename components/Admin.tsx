@@ -110,6 +110,9 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [editingNotice, setEditingNotice] = useState<Notice | null>(null);
   const [deletingNoticeId, setDeletingNoticeId] = useState<string | null>(null);
   const [showDeleteNoticeModal, setShowDeleteNoticeModal] = useState(false);
+  const [noticeImageFile, setNoticeImageFile] = useState<File | null>(null);
+  const [noticeImagePreview, setNoticeImagePreview] = useState<string | null>(null);
+  const [noticeSendPush, setNoticeSendPush] = useState(true);
 
   // Tasks State
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -233,6 +236,17 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [viewingReceiptImage, setViewingReceiptImage] = useState<string | null>(null);
   const [receiptFilter, setReceiptFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
+  // Edit receipt before approving
+  const [editingReceiptId, setEditingReceiptId] = useState<string | null>(null);
+  const [editReceiptPeriods, setEditReceiptPeriods] = useState<string[]>([]);
+  const [editReceiptAmount, setEditReceiptAmount] = useState<string>('');
+  const [editReceiptType, setEditReceiptType] = useState<'cuota_mensual' | 'concepto_adicional'>('cuota_mensual');
+  const [editReceiptConcept, setEditReceiptConcept] = useState<string>('');
+  const [savingReceiptEdit, setSavingReceiptEdit] = useState(false);
+  // Admin manual receipt photo upload
+  const [adminPhotoPaymentPeriod, setAdminPhotoPaymentPeriod] = useState<string | null>(null);
+  const [adminPhotoFile, setAdminPhotoFile] = useState<File | null>(null);
+  const [uploadingAdminPhoto, setUploadingAdminPhoto] = useState(false);
 
   // Debt Notification State
   const [debtNotifTarget, setDebtNotifTarget] = useState<'all' | 'selected'>('all');
@@ -354,6 +368,64 @@ const Admin: React.FC<Props> = ({ user }) => {
       console.error("Error loading receipts", e);
     } finally {
       setLoadingReceipts(false);
+    }
+  };
+
+  const startEditingReceipt = (receipt: any) => {
+    setEditingReceiptId(receipt.id);
+    setEditReceiptPeriods(receipt.periods || []);
+    setEditReceiptAmount(receipt.amount != null ? String(receipt.amount) : '');
+    setEditReceiptType(receipt.receiptType || 'cuota_mensual');
+    setEditReceiptConcept(receipt.conceptDescription || '');
+  };
+
+  const cancelEditingReceipt = () => {
+    setEditingReceiptId(null);
+    setEditReceiptPeriods([]);
+    setEditReceiptAmount('');
+    setEditReceiptType('cuota_mensual');
+    setEditReceiptConcept('');
+  };
+
+  const saveReceiptEdit = async (receipt: any) => {
+    setSavingReceiptEdit(true);
+    try {
+      await dataService.updatePaymentReceipt(receipt.groupId || user.groupId, receipt.id, {
+        periods: editReceiptPeriods,
+        amount: editReceiptAmount !== '' ? Number(editReceiptAmount) : undefined,
+        receiptType: editReceiptType,
+        conceptDescription: editReceiptType === 'concepto_adicional' ? editReceiptConcept : undefined,
+      });
+      cancelEditingReceipt();
+      loadPaymentReceipts();
+    } catch (e) {
+      console.error("Error saving receipt edit", e);
+    } finally {
+      setSavingReceiptEdit(false);
+    }
+  };
+
+  const handleAdminPhotoUpload = async (memberId: string, period: string) => {
+    if (!adminPhotoFile) return;
+    setUploadingAdminPhoto(true);
+    try {
+      const url = await dataService.uploadAdminReceipt(memberId, period, user.groupId, adminPhotoFile);
+      showMessage(`✅ Comprobante subido correctamente`, 'success');
+      // Refresh ledger data
+      setAllUserLedgers(prev => {
+        const prevPayments = prev[memberId] || [];
+        return {
+          ...prev,
+          [memberId]: prevPayments.map(p => p.period === period ? { ...p, adminReceiptUrl: url } : p)
+        };
+      });
+      setAdminPhotoFile(null);
+      setAdminPhotoPaymentPeriod(null);
+    } catch (e) {
+      showMessage('Error al subir la foto', 'error');
+      console.error(e);
+    } finally {
+      setUploadingAdminPhoto(false);
     }
   };
 
@@ -1628,24 +1700,50 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
       try {
           setIsSubmitting(true);
+          let imageUrl: string | undefined = editingNotice?.imageUrl;
+          if (noticeImageFile) {
+              imageUrl = await dataService.compressImageToBase64(noticeImageFile);
+          }
           if (editingNotice) {
               await dataService.updateNotice(user.groupId, editingNotice.id, {
                   title: newNoticeTitle,
-                  content: newNoticeContent,
-                  date: new Date().toISOString().split('T')[0]
+                  description: newNoticeContent,
+                  date: new Date().toISOString(),
+                  ...(imageUrl !== undefined && { imageUrl })
               });
               showMessage("Aviso actualizado");
           } else {
               await dataService.createNotice({
                   groupId: user.groupId,
                   title: newNoticeTitle,
-                  content: newNoticeContent,
-                  date: new Date().toISOString().split('T')[0]
+                  description: newNoticeContent,
+                  date: new Date().toISOString(),
+                  createdBy: user.uid,
+                  ...(imageUrl && { imageUrl })
               });
-              showMessage("Aviso creado");
+              // Enviar notificación a TODOS los miembros activos (incluyendo al admin)
+              if (noticeSendPush) {
+                  try {
+                      const allUsers = await dataService.getUsers(user.groupId);
+                      const uids = allUsers.filter(u => u.active).map(u => u.uid);
+                      if (uids.length > 0) {
+                          await notificationService.createNotification(
+                              uids,
+                              user.groupId,
+                              'notice',
+                              `📌 Nuevo aviso: ${newNoticeTitle}`,
+                              newNoticeContent.length > 100 ? newNoticeContent.substring(0, 100) + '...' : newNoticeContent
+                          );
+                      }
+                  } catch (_) {}
+              }
+              showMessage("Aviso creado y notificación enviada ✅");
           }
           setNewNoticeTitle('');
           setNewNoticeContent('');
+          setNoticeImageFile(null);
+          setNoticeImagePreview(null);
+          setNoticeSendPush(true);
           setEditingNotice(null);
           await loadNotices();
       } catch (e) {
@@ -1659,7 +1757,9 @@ const Admin: React.FC<Props> = ({ user }) => {
   const handleEditNotice = (notice: Notice) => {
       setEditingNotice(notice);
       setNewNoticeTitle(notice.title);
-      setNewNoticeContent(notice.content);
+      setNewNoticeContent(notice.description);
+      setNoticeImageFile(null);
+      setNoticeImagePreview(null);
   };
 
   const handleDeleteNotice = (id: string) => {
@@ -1685,6 +1785,9 @@ const Admin: React.FC<Props> = ({ user }) => {
       setEditingNotice(null);
       setNewNoticeTitle('');
       setNewNoticeContent('');
+      setNoticeImageFile(null);
+      setNoticeImagePreview(null);
+      setNoticeSendPush(true);
   };
 
   // TASKS HANDLERS
@@ -3411,6 +3514,52 @@ const Admin: React.FC<Props> = ({ user }) => {
                             rows={5}
                             className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
                         />
+
+                        {/* Imagen */}
+                        <div>
+                            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Imagen (opcional)</label>
+                            <input
+                                type="file"
+                                accept="image/*"
+                                disabled={isReadOnly}
+                                onChange={e => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    setNoticeImageFile(file);
+                                    const reader = new FileReader();
+                                    reader.onloadend = () => setNoticeImagePreview(reader.result as string);
+                                    reader.readAsDataURL(file);
+                                }}
+                                className="w-full text-sm text-gray-300 file:mr-3 file:py-2 file:px-3 file:rounded file:border-0 file:text-sm file:font-bold file:bg-indigo-700 file:text-white hover:file:bg-indigo-600 cursor-pointer"
+                            />
+                            {(noticeImagePreview || editingNotice?.imageUrl) && (
+                                <div className="mt-2 relative inline-block">
+                                    <img
+                                        src={noticeImagePreview || editingNotice?.imageUrl}
+                                        alt="Vista previa"
+                                        className="max-h-36 rounded border border-logia-700 object-contain"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => { setNoticeImageFile(null); setNoticeImagePreview(null); }}
+                                        className="absolute top-1 right-1 bg-red-700 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold"
+                                    >×</button>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Toggle notificación push */}
+                        {!editingNotice && (
+                            <label className="flex items-center gap-3 cursor-pointer select-none">
+                                <div
+                                    onClick={() => setNoticeSendPush(p => !p)}
+                                    className={`w-10 h-5 rounded-full transition-colors ${noticeSendPush ? 'bg-indigo-600' : 'bg-gray-600'} relative cursor-pointer`}
+                                >
+                                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${noticeSendPush ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                                </div>
+                                <span className="text-sm text-gray-300">Enviar notificación a todos los miembros</span>
+                            </label>
+                        )}
                         
                         <div className="flex gap-3">
                             <button 
@@ -3441,32 +3590,37 @@ const Admin: React.FC<Props> = ({ user }) => {
                             <p className="text-gray-400 text-center py-4">No hay avisos publicados</p>
                         ) : (
                             notices.map(notice => (
-                                <div key={notice.id} className="bg-logia-900 p-4 rounded border border-logia-700 flex flex-col gap-2">
-                                    <div className="flex justify-between items-start gap-2">
-                                        <div className="flex-1">
-                                            <h5 className="font-bold text-white text-lg">{notice.title}</h5>
-                                            <p className="text-xs text-gray-400">{notice.date}</p>
+                                <div key={notice.id} className="bg-logia-900 rounded border border-logia-700 overflow-hidden">
+                                    {notice.imageUrl && (
+                                        <img src={notice.imageUrl} alt={notice.title} className="w-full max-h-48 object-cover" />
+                                    )}
+                                    <div className="p-4 flex flex-col gap-2">
+                                        <div className="flex justify-between items-start gap-2">
+                                            <div className="flex-1">
+                                                <h5 className="font-bold text-white text-lg">{notice.title}</h5>
+                                                <p className="text-xs text-gray-400">{new Date(notice.date).toLocaleDateString('es-ES', { year:'numeric', month:'long', day:'numeric' })}</p>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button 
+                                                    onClick={() => handleEditNotice(notice)}
+                                                    disabled={isReadOnly}
+                                                    className="text-gray-400 hover:text-white p-2 bg-logia-800 rounded border border-logia-700"
+                                                    title="Editar"
+                                                >
+                                                    ✏️
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleDeleteNotice(notice.id)}
+                                                    disabled={isReadOnly}
+                                                    className="text-white p-2 bg-red-600 rounded border border-red-700 hover:bg-red-500"
+                                                    title="Eliminar"
+                                                >
+                                                    🗑️
+                                                </button>
+                                            </div>
                                         </div>
-                                        <div className="flex gap-2">
-                                            <button 
-                                                onClick={() => handleEditNotice(notice)}
-                                                disabled={isReadOnly}
-                                                className="text-gray-400 hover:text-white p-2 bg-logia-800 rounded border border-logia-700"
-                                                title="Editar"
-                                            >
-                                                ✏️
-                                            </button>
-                                            <button 
-                                                onClick={() => handleDeleteNotice(notice.id)}
-                                                disabled={isReadOnly}
-                                                className="text-white p-2 bg-red-600 rounded border border-red-700 hover:bg-red-500"
-                                                title="Eliminar"
-                                            >
-                                                🗑️
-                                            </button>
-                                        </div>
+                                        <p className="text-gray-300 text-sm whitespace-pre-wrap">{notice.description}</p>
                                     </div>
-                                    <p className="text-gray-300 text-sm whitespace-pre-wrap">{notice.content}</p>
                                 </div>
                             ))
                         )}
@@ -4434,10 +4588,18 @@ const Admin: React.FC<Props> = ({ user }) => {
                               <p className="font-bold text-white">{receipt.userName}</p>
                               <p className="text-xs text-gray-400">Enviado: {new Date(receipt.submittedAt).toLocaleString('es-MX')}</p>
                               <p className="text-xs text-gray-400">Transferencia: {new Date(receipt.transferDate).toLocaleString('es-MX')}</p>
-                              <p className="text-sm text-gray-300 mt-1">Períodos: <span className="font-bold text-white">{receipt.periods.join(', ')}</span></p>
+                              {receipt.receiptType === 'concepto_adicional'
+                                ? <p className="text-sm text-gray-300 mt-1">Concepto: <span className="font-bold text-purple-300">{receipt.conceptDescription || '—'}</span></p>
+                                : <p className="text-sm text-gray-300 mt-1">Períodos: <span className="font-bold text-white">{(receipt.periods || []).join(', ')}</span></p>
+                              }
                               {receipt.amount && <p className="text-sm text-gray-300">Monto declarado: <span className="font-bold text-yellow-300">${receipt.amount}</span></p>}
                             </div>
                             <div className="flex flex-col gap-2 items-end">
+                              <span className={`text-xs px-2 py-1 rounded-full font-bold ${
+                                receipt.receiptType === 'concepto_adicional' ? 'bg-purple-800 text-purple-200' : 'bg-indigo-800 text-indigo-200'
+                              }`}>
+                                {receipt.receiptType === 'concepto_adicional' ? '💡 Concepto Adicional' : '📅 Cuota Mensual'}
+                              </span>
                               <span className={`text-xs px-2 py-1 rounded-full font-bold ${
                                 receipt.status === 'pending' ? 'bg-yellow-700 text-yellow-100' :
                                 receipt.status === 'approved' ? 'bg-green-700 text-green-100' :
@@ -4445,25 +4607,85 @@ const Admin: React.FC<Props> = ({ user }) => {
                               }`}>
                                 {receipt.status === 'pending' ? '⏳ Pendiente' : receipt.status === 'approved' ? '✅ Aprobado' : '❌ Rechazado'}
                               </span>
-                              {receipt.receiptImageBase64 && (
-                                <button onClick={() => setViewingReceiptImage(receipt.receiptImageBase64)}
+                              {receipt.receiptImageUrl && (
+                                <button onClick={() => setViewingReceiptImage(receipt.receiptImageUrl)}
                                   className="text-xs bg-logia-900 hover:bg-logia-700 text-blue-300 px-3 py-1 rounded border border-blue-600/40">
                                   🖼️ Ver Foto
                                 </button>
                               )}
                             </div>
                           </div>
+
+                          {/* INLINE EDIT FORM */}
+                          {editingReceiptId === receipt.id && (
+                            <div className="mt-3 bg-logia-900 rounded-lg p-3 border border-yellow-600/40 space-y-3">
+                              <p className="text-yellow-300 font-bold text-sm">✏️ Editando comprobante</p>
+                              <div>
+                                <label className="text-xs text-gray-400 block mb-1">Tipo</label>
+                                <div className="flex gap-3">
+                                  <label className="flex items-center gap-1 text-sm text-white">
+                                    <input type="radio" checked={editReceiptType === 'cuota_mensual'}
+                                      onChange={() => setEditReceiptType('cuota_mensual')} className="accent-yellow-400" />
+                                    Cuota Mensual
+                                  </label>
+                                  <label className="flex items-center gap-1 text-sm text-white">
+                                    <input type="radio" checked={editReceiptType === 'concepto_adicional'}
+                                      onChange={() => setEditReceiptType('concepto_adicional')} className="accent-yellow-400" />
+                                    Concepto Adicional
+                                  </label>
+                                </div>
+                              </div>
+                              {editReceiptType === 'concepto_adicional' && (
+                                <div>
+                                  <label className="text-xs text-gray-400 block mb-1">Descripción del concepto</label>
+                                  <input type="text" value={editReceiptConcept} onChange={e => setEditReceiptConcept(e.target.value)}
+                                    className="w-full bg-logia-800 text-white px-3 py-1 rounded border border-logia-700 text-sm" />
+                                </div>
+                              )}
+                              <div>
+                                <label className="text-xs text-gray-400 block mb-1">Períodos (separados por coma, ej: 2025-01, 2025-02)</label>
+                                <input type="text" value={editReceiptPeriods.join(', ')}
+                                  onChange={e => setEditReceiptPeriods(e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+                                  className="w-full bg-logia-800 text-white px-3 py-1 rounded border border-logia-700 text-sm" />
+                              </div>
+                              <div>
+                                <label className="text-xs text-gray-400 block mb-1">Monto declarado ($)</label>
+                                <input type="number" value={editReceiptAmount} onChange={e => setEditReceiptAmount(e.target.value)}
+                                  className="w-full bg-logia-800 text-white px-3 py-1 rounded border border-logia-700 text-sm" />
+                              </div>
+                              <div className="flex gap-2">
+                                <button onClick={() => saveReceiptEdit(receipt)} disabled={savingReceiptEdit}
+                                  className="bg-yellow-600 hover:bg-yellow-500 disabled:opacity-50 text-white text-xs px-4 py-2 rounded font-bold">
+                                  {savingReceiptEdit ? 'Guardando...' : '💾 Guardar cambios'}
+                                </button>
+                                <button onClick={cancelEditingReceipt}
+                                  className="bg-logia-700 hover:bg-logia-600 text-gray-300 text-xs px-4 py-2 rounded">
+                                  Cancelar
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
                           {receipt.reviewComments && (
                             <p className="text-xs text-gray-400 italic bg-logia-900 p-2 rounded">Comentario: {receipt.reviewComments}</p>
                           )}
                           {receipt.status === 'pending' && !isReadOnly && (
                             <div className="flex gap-2 pt-1 flex-wrap">
+                              {editingReceiptId !== receipt.id && (
+                                <button onClick={() => startEditingReceipt(receipt)}
+                                  className="bg-yellow-700 hover:bg-yellow-600 text-white text-xs px-4 py-2 rounded font-bold">
+                                  ✏️ Editar
+                                </button>
+                              )}
                               <button onClick={async () => {
-                                if (!window.confirm(`¿Aprobar comprobante de ${receipt.userName} (${receipt.periods.join(', ')})?`)) return;
+                                if (!window.confirm(`¿Aprobar comprobante de ${receipt.userName} (${(receipt.periods || []).join(', ')})?`)) return;
                                 try {
                                   await dataService.approvePaymentReceipt(receipt, user.uid);
-                                  showMessage('Comprobante aprobado', 'success');
+                                  showMessage('Comprobante aprobado ✅ El saldo del miembro se actualizó.', 'success');
                                   loadPaymentReceipts();
+                                  // Refresh ledger & member data so Matriz de pagos and Gestión de Miembros reflect the change
+                                  loadAllLedgers();
+                                  loadUsers();
                                 } catch(e) { showMessage('Error al aprobar', 'error'); }
                               }} className="bg-green-700 hover:bg-green-600 text-white text-xs px-4 py-2 rounded font-bold">
                                 ✅ Aprobar
@@ -4946,6 +5168,38 @@ const Admin: React.FC<Props> = ({ user }) => {
                                             className="w-full bg-logia-800 border border-logia-600 rounded p-1 text-white text-xs"
                                          />
                                      </div>
+
+                                     {/* Admin receipt photo upload */}
+                                     {!isReadOnly && (
+                                       <div className="flex flex-col gap-1">
+                                         <label className="text-[9px] text-gray-500 uppercase">Comprobante (foto)</label>
+                                         {p.adminReceiptUrl && (
+                                           <button onClick={() => setViewingReceiptImage(p.adminReceiptUrl!)}
+                                             className="text-[10px] text-blue-400 hover:underline text-left">🖼️ Ver foto</button>
+                                         )}
+                                         {adminPhotoPaymentPeriod === p.period ? (
+                                           <div className="flex flex-col gap-1">
+                                             <input type="file" accept="image/*" onChange={e => setAdminPhotoFile(e.target.files?.[0] || null)}
+                                               className="text-[10px] text-gray-300" />
+                                             <div className="flex gap-1">
+                                               <button onClick={() => {
+                                                 if (adminPhotoFile && selectedMember) handleAdminPhotoUpload(selectedMember.uid, p.period);
+                                               }} disabled={!adminPhotoFile || uploadingAdminPhoto}
+                                                 className="text-[10px] bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white px-2 py-1 rounded">
+                                                 {uploadingAdminPhoto ? '...' : '⬆️ Subir'}
+                                               </button>
+                                               <button onClick={() => { setAdminPhotoPaymentPeriod(null); setAdminPhotoFile(null); }}
+                                                 className="text-[10px] bg-logia-700 text-gray-300 px-2 py-1 rounded">✕</button>
+                                             </div>
+                                           </div>
+                                         ) : (
+                                           <button onClick={() => { setAdminPhotoPaymentPeriod(p.period); setAdminPhotoFile(null); }}
+                                             className="text-[10px] bg-logia-700 hover:bg-logia-600 text-gray-300 px-2 py-1 rounded w-fit">
+                                             📎 {p.adminReceiptUrl ? 'Reemplazar' : 'Subir foto'}
+                                           </button>
+                                         )}
+                                       </div>
+                                     )}
 
                                      <div className="flex gap-1 mt-3 md:mt-0">
                                          <button 

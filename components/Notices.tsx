@@ -91,11 +91,11 @@ const Notices: React.FC<Props> = ({ user }) => {
           ...(imageUrl && { imageUrl })
         });
 
-        // Send in-app notification + browser push to all members
+        // Send in-app notification + browser push to ALL members (including creator to confirm it works)
         if (sendPush) {
           try {
             const allUsers = await dataService.getUsers(user.groupId);
-            const memberUids = allUsers.filter(u => u.uid !== user.uid).map(u => u.uid);
+            const memberUids = allUsers.filter(u => u.active).map(u => u.uid);
             if (memberUids.length > 0) {
               await notificationService.createNotification(
                 memberUids,
@@ -103,12 +103,6 @@ const Notices: React.FC<Props> = ({ user }) => {
                 'notice',
                 `📌 Nuevo aviso: ${title}`,
                 desc.length > 100 ? desc.substring(0, 100) + '...' : desc
-              );
-              // Trigger browser push for each member (they'll see it if app is open)
-              notificationService.showBrowserNotification(
-                `📌 Nuevo aviso: ${title}`,
-                desc.length > 100 ? desc.substring(0, 100) + '...' : desc,
-                'notice'
               );
             }
           } catch (_) {}
@@ -160,7 +154,7 @@ const Notices: React.FC<Props> = ({ user }) => {
   const handleSendPushForNotice = async (notice: Notice) => {
     try {
       const allUsers = await dataService.getUsers(user.groupId);
-      const memberUids = allUsers.filter(u => u.uid !== user.uid).map(u => u.uid);
+      const memberUids = allUsers.filter(u => u.active).map(u => u.uid);
       if (memberUids.length > 0) {
         await notificationService.createNotification(
           memberUids,
@@ -168,11 +162,6 @@ const Notices: React.FC<Props> = ({ user }) => {
           'notice',
           `📌 ${notice.title}`,
           notice.description.length > 100 ? notice.description.substring(0, 100) + '...' : notice.description
-        );
-        notificationService.showBrowserNotification(
-          `📌 ${notice.title}`,
-          notice.description.length > 100 ? notice.description.substring(0, 100) + '...' : notice.description,
-          'notice'
         );
         alert(`Notificación enviada a ${memberUids.length} miembro(s).`);
       } else {

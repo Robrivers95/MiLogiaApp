@@ -120,21 +120,29 @@ self.addEventListener('notificationclick', (event) => {
   if (event.action === 'close') {
     return;
   }
+
+  // Extraer la vista destino del data de la notificación
+  const notifData = event.notification.data || {};
+  const view = notifData.view || '';
+  const targetUrl = view ? `/?view=${view}` : '/';
   
   // Abrir o enfocar la app
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true })
       .then((clientList) => {
-        // Si hay una ventana abierta, enfocarla
+        // Si hay una ventana abierta, enviar mensaje de navegación y enfocarla
         for (let i = 0; i < clientList.length; i++) {
           const client = clientList[i];
           if (client.url.includes(self.location.origin) && 'focus' in client) {
+            if (view) {
+              client.postMessage({ type: 'NAVIGATE', view });
+            }
             return client.focus();
           }
         }
-        // Si no hay ventana abierta, abrir una nueva
+        // Si no hay ventana abierta, abrir una nueva con la URL de destino
         if (clients.openWindow) {
-          return clients.openWindow('/');
+          return clients.openWindow(targetUrl);
         }
       })
   );

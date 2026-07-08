@@ -83,8 +83,10 @@ export interface PaymentReceipt {
   userName: string;
   periods: string[];           // Array de YYYY-MM que desea pagar
   transferDate: string;        // ISO fecha/hora de la transferencia
-  receiptImageBase64: string;  // Foto comprimida en base64
+  receiptImageUrl: string;     // URL de imagen en Firebase Storage
   amount?: number;             // Monto declarado (opcional)
+  receiptType: 'cuota_mensual' | 'concepto_adicional'; // Tipo de pago
+  conceptDescription?: string; // Descripción para "concepto_adicional"
   status: 'pending' | 'approved' | 'rejected';
   submittedAt: string;         // ISO
   reviewedAt?: string;         // ISO
@@ -136,6 +138,7 @@ export interface Payment {
   groupId?: string; // Logia/Group ID para filtrado
   regularCovered?: boolean; // Si la cuota mensual está cubierta
   extraCovered?: boolean; // Si la cuota extraordinaria está cubierta
+  adminReceiptUrl?: string; // URL de comprobante subido por el admin
 }
 
 export interface PriceHistoryEntry {

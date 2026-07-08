@@ -1,7 +1,8 @@
 
 import { User, Payment, IndividualExtraFee, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee, AppNotification, NotificationType, PaymentReceipt } from '../types';
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { auth, db } from './firebase';
+import { auth, db, storage } from './firebase';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
@@ -1289,14 +1290,21 @@ export const dataService = {
     });
   },
 
-  submitPaymentReceipt: async (receipt: Omit<PaymentReceipt, 'id'>): Promise<string> => {
-    // Use auth.currentUser.uid to ensure it matches request.auth.uid in Firestore rules
+  submitPaymentReceipt: async (imageFile: File, receipt: Omit<PaymentReceipt, 'id'>): Promise<string> => {
     const currentAuthUid = auth.currentUser?.uid;
     if (!currentAuthUid) throw new Error('No autenticado. Recarga la app.');
     if (!receipt.groupId) throw new Error('Sin grupo asignado.');
+
+    // 1. Create the Firestore doc ref first to get an ID
     const ref = doc(collection(db, "groups", receipt.groupId, "paymentReceipts"));
-    // Strip undefined values and enforce userId = auth UID
-    const raw = { ...receipt, id: ref.id, userId: currentAuthUid };
+
+    // 2. Upload image to Firebase Storage
+    const imgRef = storageRef(storage, `groups/${receipt.groupId}/receipts/${ref.id}.jpg`);
+    await uploadBytes(imgRef, imageFile);
+    const receiptImageUrl = await getDownloadURL(imgRef);
+
+    // 3. Save Firestore document with the Storage URL
+    const raw = { ...receipt, id: ref.id, userId: currentAuthUid, receiptImageUrl };
     const cleanData = Object.fromEntries(Object.entries(raw).filter(([, v]) => v !== undefined));
     await setDoc(ref, cleanData);
     return ref.id;
@@ -1342,15 +1350,92 @@ export const dataService = {
       reviewedBy: reviewerUid
     });
 
-    // 2. Notify the member
+    // 2. Auto-update ledger for "cuota_mensual" receipts with CHRONOLOGICAL distribution
+    const isCuotaMensual = !receipt.receiptType || receipt.receiptType === 'cuota_mensual';
+    if (isCuotaMensual && receipt.periods.length > 0) {
+      // Sort periods chronologically ascending (oldest first)
+      const sortedPeriods = [...receipt.periods].sort();
+      let remainingAmount = receipt.amount ?? null; // null = marcar todo como pagado
+
+      for (const period of sortedPeriods) {
+        try {
+          const ledgerRef = doc(db, "users", receipt.userId, "ledger", period);
+          const ledgerSnap = await getDoc(ledgerRef);
+
+          if (!ledgerSnap.exists()) {
+            // Mes futuro sin entrada — obtener cuota del grupo y crear entrada
+            const groupSnap = await getDoc(doc(db, "groups", receipt.groupId));
+            const feeAmount = groupSnap.exists() ? (groupSnap.data().membershipFee || 0) : 0;
+            if (feeAmount <= 0) continue;
+
+            const toApply = remainingAmount === null
+              ? feeAmount
+              : Math.min(remainingAmount, feeAmount);
+            const covered = toApply >= feeAmount;
+            await setDoc(ledgerRef, {
+              period,
+              amount: feeAmount,
+              paidRegular: toApply,
+              paid: toApply,
+              regularCovered: covered,
+              status: covered ? 'Pagado' : (toApply > 0 ? 'Parcial' : 'Pendiente'),
+              comments: '',
+              paymentDate: covered ? (receipt.transferDate || new Date().toISOString()) : null,
+              groupId: receipt.groupId
+            });
+            if (remainingAmount !== null) remainingAmount -= toApply;
+            if (remainingAmount !== null && remainingAmount <= 0) break;
+            continue;
+          }
+
+          const ledgerData = ledgerSnap.data() as Payment;
+          const feeAmount = ledgerData.amount || 0;
+          const currentPaidRegular = ledgerData.paidRegular ?? Number(ledgerData.paid) ?? 0;
+          const remainingDebt = Math.max(0, feeAmount - currentPaidRegular);
+
+          if (remainingDebt <= 0) continue; // Ya está pagado, saltar
+
+          const toAdd = remainingAmount === null
+            ? remainingDebt  // sin monto declarado → cubrir completamente
+            : Math.min(remainingAmount, remainingDebt);
+
+          const newPaidRegular = currentPaidRegular + toAdd;
+          const covered = newPaidRegular >= feeAmount;
+          const newStatus = covered ? 'Pagado' : (newPaidRegular > 0 ? 'Parcial' : 'Pendiente');
+
+          const updates: Record<string, unknown> = {
+            paidRegular: newPaidRegular,
+            paid: newPaidRegular,
+            regularCovered: covered,
+            status: newStatus,
+          };
+          if (covered && !ledgerData.paymentDate) {
+            updates.paymentDate = receipt.transferDate || new Date().toISOString();
+          }
+          await updateDoc(ledgerRef, updates);
+
+          if (remainingAmount !== null) {
+            remainingAmount -= toAdd;
+            if (remainingAmount <= 0) break; // Sin dinero, detener
+          }
+        } catch (e) {
+          console.error(`Error actualizando ledger para período ${period}:`, e);
+        }
+      }
+    }
+
+    // 3. Notify the member
     try {
       const periodsStr = receipt.periods.join(', ');
+      const label = receipt.receiptType === 'concepto_adicional'
+        ? `tu pago de "${receipt.conceptDescription || 'concepto adicional'}"`
+        : `los períodos ${periodsStr}`;
       await notificationService.createNotification(
         [receipt.userId],
         receipt.groupId,
         'payment_receipt',
         '✅ Comprobante aprobado',
-        `Tu comprobante de pago para ${periodsStr} fue aprobado. Actualiza tu estado desde "Mis Pagos" si es necesario.`
+        `Tu comprobante de pago para ${label} fue aprobado.`
       );
     } catch (_) {}
   },
@@ -1382,6 +1467,36 @@ export const dataService = {
     } catch (_) {}
   },
 
+  /** Admin edita un comprobante antes de aprobarlo */
+  updatePaymentReceipt: async (
+    groupId: string,
+    receiptId: string,
+    updates: Partial<PaymentReceipt>
+  ): Promise<void> => {
+    const ref = doc(db, "groups", groupId, "paymentReceipts", receiptId);
+    // Only allow updating these fields
+    const allowed: (keyof PaymentReceipt)[] = ['periods', 'amount', 'receiptType', 'conceptDescription', 'transferDate'];
+    const clean = Object.fromEntries(
+      Object.entries(updates).filter(([k]) => allowed.includes(k as keyof PaymentReceipt) && updates[k as keyof PaymentReceipt] !== undefined)
+    );
+    await updateDoc(ref, clean);
+  },
+
+  /** Admin sube un comprobante para un pago ya registrado */
+  uploadAdminReceipt: async (
+    userId: string,
+    period: string,
+    groupId: string,
+    imageFile: File
+  ): Promise<string> => {
+    const imgRef = storageRef(storage, `groups/${groupId}/admin-receipts/${userId}-${period}.jpg`);
+    await uploadBytes(imgRef, imageFile);
+    const url = await getDownloadURL(imgRef);
+    const ledgerRef = doc(db, "users", userId, "ledger", period);
+    await updateDoc(ledgerRef, { adminReceiptUrl: url });
+    return url;
+  },
+
   // --- DEBT NOTIFICATIONS ---
   // Send in-app + browser notifications to users about pending months owed
   sendDebtNotifications: async (
@@ -1392,7 +1507,7 @@ export const dataService = {
     const allUsers = await dataService.getUsers(groupId);
     const targets = targetUids
       ? allUsers.filter(u => targetUids.includes(u.uid) && u.active)
-      : allUsers.filter(u => u.active && u.role === 'member');
+      : allUsers.filter(u => u.active && u.role !== 'viewer'); // Todos los roles activos excepto viewers
 
     let sent = 0;
     const currentPeriod = new Date().toISOString().slice(0, 7); // YYYY-MM
@@ -1966,7 +2081,7 @@ export const notificationService = {
     } catch (_) {}
   },
 
-  /** Crea un documento de notificación en Firestore para uno o varios usuarios */
+  /** Crea un documento de notificación en Firestore para uno o varios usuarios y envía push FCM */
   createNotification: async (
     uids: string[],
     groupId: string,
@@ -1974,6 +2089,7 @@ export const notificationService = {
     title: string,
     body: string
   ) => {
+    // 1. In-app notifications in Firestore
     const batch = writeBatch(db);
     for (const uid of uids) {
       const ref = doc(collection(db, 'users', uid, 'notifications'));
@@ -1990,6 +2106,33 @@ export const notificationService = {
       batch.set(ref, notif);
     }
     await batch.commit();
+
+    // 2. FCM push via Cloud Function (best effort — doesn't fail the whole operation)
+    try {
+      const tokenDocs = await Promise.all(uids.map(uid => getDoc(doc(db, 'users', uid))));
+      const fcmTokens = tokenDocs
+        .map(d => d.data()?.fcmToken as string | undefined)
+        .filter((t): t is string => !!t);
+      if (fcmTokens.length > 0) {
+        // Mapear tipo de notificación a vista de la app
+        const typeToView: Record<string, string> = {
+          notice: 'notices', payment: 'payments', payment_receipt: 'payments',
+          attendance: 'attendance', trivia: 'trivia', profile_edit: 'profile'
+        };
+        const view = typeToView[type] || 'home';
+        fetch('https://us-central1-registrologia.cloudfunctions.net/sendNotification', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tokens: fcmTokens,
+            notification: { title, body },
+            data: { type, view }
+          })
+        }).catch(e => console.warn('FCM push error:', e));
+      }
+    } catch (e) {
+      console.warn('FCM token fetch error:', e);
+    }
   },
 
   /** Obtiene las notificaciones no leídas de un usuario */
@@ -2026,19 +2169,12 @@ export const notificationService = {
   /** Muestra una notificación nativa del navegador */
   showBrowserNotification: (title: string, body: string, type: NotificationType) => {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    const icons: Record<NotificationType, string> = {
-      attendance: '/icons/icon-192.png',
-      trivia: '/icons/icon-192.png',
-      notice: '/icons/icon-192.png',
-      profile_edit: '/icons/icon-192.png',
-      payment: '/icons/icon-192.png'
-    };
     try {
       new Notification(title, {
         body,
-        icon: icons[type] || '/icons/icon-192.png',
+        icon: '/icons/icon-192.png',
         badge: '/icons/icon-192.png',
-        tag: type, // agrupa notificaciones del mismo tipo
+        tag: type,
         renotify: true
       });
     } catch (e) {
