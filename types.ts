@@ -83,7 +83,8 @@ export interface PaymentReceipt {
   userName: string;
   periods: string[];           // Array de YYYY-MM que desea pagar
   transferDate: string;        // ISO fecha/hora de la transferencia
-  receiptImageUrl: string;     // URL de imagen en Firebase Storage
+  receiptImageUrl: string;     // URL primera imagen (backward compat)
+  receiptImageUrls?: string[]; // URLs de todas las imágenes/archivos adjuntos
   amount?: number;             // Monto declarado (opcional)
   receiptType: 'cuota_mensual' | 'concepto_adicional'; // Tipo de pago
   conceptDescription?: string; // Descripción para "concepto_adicional"

@@ -1299,21 +1299,29 @@ export const dataService = {
     });
   },
 
-  submitPaymentReceipt: async (imageFile: File, receipt: Omit<PaymentReceipt, 'id'>): Promise<string> => {
+  submitPaymentReceipt: async (imageFiles: File | File[], receipt: Omit<PaymentReceipt, 'id'>): Promise<string> => {
     const currentAuthUid = auth.currentUser?.uid;
     if (!currentAuthUid) throw new Error('No autenticado. Recarga la app.');
     if (!receipt.groupId) throw new Error('Sin grupo asignado.');
 
+    const files = Array.isArray(imageFiles) ? imageFiles : [imageFiles];
+
     // 1. Create the Firestore doc ref first to get an ID
     const ref = doc(collection(db, "groups", receipt.groupId, "paymentReceipts"));
 
-    // 2. Upload image to Firebase Storage
-    const imgRef = storageRef(storage, `groups/${receipt.groupId}/receipts/${ref.id}.jpg`);
-    await uploadBytes(imgRef, imageFile);
-    const receiptImageUrl = await getDownloadURL(imgRef);
+    // 2. Upload all files to Firebase Storage
+    const uploadedUrls = await Promise.all(files.map(async (file, i) => {
+      const ext = file.type === 'application/pdf' ? 'pdf' : 'jpg';
+      const imgRef = storageRef(storage, `groups/${receipt.groupId}/receipts/${ref.id}_${i}.${ext}`);
+      await uploadBytes(imgRef, file);
+      return getDownloadURL(imgRef);
+    }));
 
-    // 3. Save Firestore document with the Storage URL
-    const raw = { ...receipt, id: ref.id, userId: currentAuthUid, receiptImageUrl };
+    const receiptImageUrl = uploadedUrls[0];
+    const receiptImageUrls = uploadedUrls;
+
+    // 3. Save Firestore document
+    const raw = { ...receipt, id: ref.id, userId: currentAuthUid, receiptImageUrl, receiptImageUrls };
     const cleanData = Object.fromEntries(Object.entries(raw).filter(([, v]) => v !== undefined));
     await setDoc(ref, cleanData);
     return ref.id;
@@ -1472,7 +1480,22 @@ export const dataService = {
         for (const period of sortedPeriods) {
           const ledgerRef = doc(db, "users", receipt.userId, "ledger", period);
           const ledgerDoc = await getDoc(ledgerRef);
-          if (!ledgerDoc.exists()) continue;
+
+          if (!ledgerDoc.exists()) {
+            // Mes sin entrada (futuro o no generado) — crear con cuota del grupo
+            const groupSnap = await getDoc(doc(db, "groups", receipt.groupId));
+            const feeAmount = groupSnap.exists() ? (groupSnap.data().membershipFee || 0) : 0;
+            if (feeAmount <= 0) continue;
+            await setDoc(ledgerRef, {
+              period, amount: feeAmount, paidRegular: feeAmount, paid: feeAmount,
+              paidExtra: 0, regularCovered: true, extraCovered: true,
+              status: 'Pagado',
+              comments: buildComment('', approvalDate),
+              paymentDate: approvalDate,
+              groupId: receipt.groupId
+            });
+            continue;
+          }
 
           const payment = ledgerDoc.data() as Payment;
           const regularAmount = Number(payment.amount) || 0;

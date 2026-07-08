@@ -46,8 +46,8 @@ const Payments: React.FC<Props> = ({ user }) => {
   const [conceptDescription, setConceptDescription] = useState('');
   const [receiptPeriods, setReceiptPeriods] = useState<string[]>([]);
   const [receiptTransferDate, setReceiptTransferDate] = useState('');
-  const [receiptFile, setReceiptFile] = useState<File | null>(null);
-  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
+  const [receiptFiles, setReceiptFiles] = useState<File[]>([]);         // múltiples archivos
+  const [receiptPreviews, setReceiptPreviews] = useState<string[]>([]);  // previews
   const [receiptAmount, setReceiptAmount] = useState('');
   const [submittingReceipt, setSubmittingReceipt] = useState(false);
   const [receiptMsg, setReceiptMsg] = useState<{text: string; type: 'success'|'error'} | null>(null);
@@ -168,13 +168,27 @@ const Payments: React.FC<Props> = ({ user }) => {
     return recs.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))[0];
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setReceiptFile(file);
-    const reader = new FileReader();
-    reader.onloadend = () => setReceiptPreview(reader.result as string);
-    reader.readAsDataURL(file);
+  const handleFilesChange = (e: React.ChangeEvent<HTMLInputElement>, append = false) => {
+    const selected = Array.from(e.target.files || []);
+    if (selected.length === 0) return;
+    const newFiles = append ? [...receiptFiles, ...selected] : selected;
+    setReceiptFiles(newFiles);
+    // Generate previews for image files
+    const previewPromises = newFiles.map(f =>
+      f.type.startsWith('image/') ? new Promise<string>(resolve => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(f);
+      }) : Promise.resolve('')
+    );
+    Promise.all(previewPromises).then(setReceiptPreviews);
+    // Reset input value so the same file can be re-selected
+    e.target.value = '';
+  };
+
+  const removeReceiptFile = (idx: number) => {
+    setReceiptFiles(prev => prev.filter((_, i) => i !== idx));
+    setReceiptPreviews(prev => prev.filter((_, i) => i !== idx));
   };
 
   const handleTogglePeriod = (period: string) => {
@@ -185,8 +199,8 @@ const Payments: React.FC<Props> = ({ user }) => {
 
   const handleSubmitReceipt = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!receiptFile || !receiptTransferDate) {
-      setReceiptMsg({ text: 'Completa todos los campos requeridos.', type: 'error' });
+    if (receiptFiles.length === 0 || !receiptTransferDate) {
+      setReceiptMsg({ text: 'Adjunta al menos un comprobante y la fecha de transferencia.', type: 'error' });
       return;
     }
     if (receiptType === 'cuota_mensual' && receiptPeriods.length === 0) {
@@ -203,7 +217,7 @@ const Payments: React.FC<Props> = ({ user }) => {
     }
     setSubmittingReceipt(true);
     try {
-      await dataService.submitPaymentReceipt(receiptFile, {
+      await dataService.submitPaymentReceipt(receiptFiles, {
         groupId: user.groupId,
         userId: user.uid,
         userName: user.name || user.email,
@@ -219,8 +233,8 @@ const Payments: React.FC<Props> = ({ user }) => {
       setReceiptMsg({ text: '✅ Comprobante enviado. El administrador lo revisará pronto.', type: 'success' });
       setReceiptPeriods([]);
       setReceiptTransferDate('');
-      setReceiptFile(null);
-      setReceiptPreview(null);
+      setReceiptFiles([]);
+      setReceiptPreviews([]);
       setReceiptAmount('');
       setReceiptType('cuota_mensual');
       setConceptDescription('');
@@ -649,27 +663,51 @@ const Payments: React.FC<Props> = ({ user }) => {
                   className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
                 />
                 {receiptType === 'cuota_mensual' && receiptPeriods.length > 1 && receiptAmount && (
-                  <p className="text-xs text-gray-500 mt-1">Se distribuirá ${(Number(receiptAmount) / receiptPeriods.length).toFixed(2)} por cada mes seleccionado.</p>
+                  <p className="text-xs text-gray-500 mt-1">💡 El monto se distribuirá cronológicamente: primero los meses más antiguos.</p>
                 )}
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-gray-400 uppercase mb-2">
-                  Foto o archivo del comprobante <span className="text-red-400">*</span>
+                  Comprobantes <span className="text-red-400">*</span>
+                  <span className="text-gray-500 normal-case font-normal ml-1">(puedes adjuntar varios)</span>
                 </label>
-                <input
-                  type="file" accept="image/*,application/pdf"
-                  onChange={handleFileChange}
-                  className="w-full text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-bold file:bg-indigo-700 file:text-white hover:file:bg-indigo-600 cursor-pointer"
-                  required
-                />
-                {receiptPreview && (
-                  <div className="mt-2">
-                    {receiptFile?.type === 'application/pdf' ? (
-                      <p className="text-xs text-green-400">📄 PDF seleccionado: {receiptFile.name}</p>
-                    ) : (
-                      <img src={receiptPreview} alt="Vista previa" className="max-h-40 rounded border border-logia-700 object-contain" />
-                    )}
+
+                {/* Botones Cámara / Archivos */}
+                <div className="flex gap-2 mb-3">
+                  <label className="flex-1 flex items-center justify-center gap-2 bg-indigo-800 hover:bg-indigo-700 text-white text-sm font-bold py-2 px-3 rounded cursor-pointer">
+                    📷 Cámara
+                    <input type="file" accept="image/*" capture="environment"
+                      className="hidden"
+                      onChange={e => handleFilesChange(e, true)} />
+                  </label>
+                  <label className="flex-1 flex items-center justify-center gap-2 bg-logia-700 hover:bg-logia-600 text-white text-sm font-bold py-2 px-3 rounded cursor-pointer border border-logia-600">
+                    📁 Archivos
+                    <input type="file" accept="image/*,application/pdf" multiple
+                      className="hidden"
+                      onChange={e => handleFilesChange(e, true)} />
+                  </label>
+                </div>
+
+                {/* Lista de archivos seleccionados */}
+                {receiptFiles.length > 0 && (
+                  <div className="space-y-2">
+                    {receiptFiles.map((f, idx) => (
+                      <div key={idx} className="flex items-start gap-2 bg-logia-900 rounded p-2 border border-logia-700">
+                        {receiptPreviews[idx] ? (
+                          <img src={receiptPreviews[idx]} alt={`Comprobante ${idx+1}`}
+                            className="w-16 h-16 object-cover rounded border border-logia-600 flex-shrink-0" />
+                        ) : (
+                          <div className="w-16 h-16 flex items-center justify-center bg-logia-800 rounded border border-logia-600 flex-shrink-0 text-2xl">📄</div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-white truncate">{f.name}</p>
+                          <p className="text-xs text-gray-500">{(f.size / 1024).toFixed(0)} KB</p>
+                        </div>
+                        <button type="button" onClick={() => removeReceiptFile(idx)}
+                          className="text-red-400 hover:text-red-300 text-lg font-bold flex-shrink-0">×</button>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>

@@ -4354,11 +4354,106 @@ const Admin: React.FC<Props> = ({ user }) => {
         {activeTab === 'payment-matrix' && (
             <div className="space-y-6">
                 <div className="bg-logia-800 border border-logia-700 rounded-xl p-6">
-                    <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                         <h3 className="text-xl font-bold text-white">📊 Matriz de Pagos</h3>
-                        <button onClick={loadAllLedgers} className="bg-logia-900 hover:bg-logia-700 text-gray-300 px-3 py-1 rounded text-xs border border-logia-700 flex items-center gap-1">
-                            🔄 Actualizar
-                        </button>
+                        <div className="flex gap-2 flex-wrap">
+                            <button onClick={loadAllLedgers} className="bg-logia-900 hover:bg-logia-700 text-gray-300 px-3 py-1 rounded text-xs border border-logia-700 flex items-center gap-1">
+                                🔄 Actualizar
+                            </button>
+                            <button onClick={() => {
+                                const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+                                const header = ['Miembro', ...months, 'Total Pagado', 'Total Pendiente'].join(',');
+                                const activeUsers = filteredUsers.filter(u => u.active);
+                                const rows = activeUsers.map(u => {
+                                    const userLedger = allUserLedgers[u.uid] || [];
+                                    let totalPaid = 0, totalPending = 0;
+                                    const cells = Array.from({length: 12}, (_, i) => {
+                                        const period = `${matrixYear}-${String(i+1).padStart(2,'0')}`;
+                                        const p = userLedger.find(x => x.period === period);
+                                        if (!p) return 'Sin cuota';
+                                        const paidReg = Number(p.paidRegular ?? p.paid ?? 0);
+                                        const debtReg = Math.max(0, p.amount - paidReg);
+                                        let extraDebt = 0;
+                                        if (p.extraFees?.length) extraDebt = p.extraFees.reduce((s, ef) => s + Math.max(0, ef.amount - ef.paid), 0);
+                                        else if (p.extraAmount) extraDebt = Math.max(0, p.extraAmount - (p.paidExtra || 0));
+                                        totalPaid += paidReg + (p.paidExtra || 0);
+                                        totalPending += debtReg + extraDebt;
+                                        if (p.regularCovered) return extraDebt > 0 ? 'Pagado (extra pendiente)' : 'Pagado';
+                                        if (paidReg > 0) return 'Parcial';
+                                        return 'Pendiente';
+                                    });
+                                    return [`"${u.name}"`, ...cells, totalPaid.toFixed(2), totalPending.toFixed(2)].join(',');
+                                });
+                                const csv = [header, ...rows].join('\n');
+                                const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a'); a.href=url; a.download=`matriz-${matrixYear}.csv`; a.click();
+                                URL.revokeObjectURL(url);
+                            }} className="bg-green-800 hover:bg-green-700 text-white px-3 py-1 rounded text-xs border border-green-700 flex items-center gap-1">
+                                📥 CSV
+                            </button>
+                            <button onClick={() => {
+                                const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+                                const activeUsers = filteredUsers.filter(u => u.active);
+                                const colW = 52, nameW = 175, rowH = 28, headerH = 45, legendH = 35, pad = 12;
+                                const canvasW = nameW + colW * 12 + pad * 2;
+                                const canvasH = headerH + rowH * activeUsers.length + legendH + pad;
+                                const canvas = document.createElement('canvas');
+                                canvas.width = canvasW; canvas.height = canvasH;
+                                const ctx = canvas.getContext('2d')!;
+                                // Background
+                                ctx.fillStyle = '#1e2537'; ctx.fillRect(0, 0, canvasW, canvasH);
+                                // Title
+                                ctx.fillStyle = '#fff'; ctx.font = 'bold 14px sans-serif';
+                                ctx.fillText(`Matriz de Pagos ${matrixYear}`, pad, 20);
+                                ctx.fillStyle = '#6b7280'; ctx.font = '10px sans-serif';
+                                ctx.fillText(`Generado ${new Date().toLocaleDateString('es-MX')}`, pad, 35);
+                                // Column headers
+                                ctx.fillStyle = '#9ca3af'; ctx.font = 'bold 10px sans-serif';
+                                months.forEach((m, i) => ctx.fillText(m, nameW + pad + i*colW + colW/2 - 10, headerH - 6));
+                                // Rows
+                                activeUsers.forEach((u, ri) => {
+                                    const y = headerH + ri * rowH;
+                                    const userLedger = allUserLedgers[u.uid] || [];
+                                    // Alternating row bg
+                                    ctx.fillStyle = ri % 2 === 0 ? '#252b3b' : '#1e2537';
+                                    ctx.fillRect(0, y, canvasW, rowH);
+                                    // Name
+                                    ctx.fillStyle = '#e5e7eb'; ctx.font = '10px sans-serif';
+                                    ctx.fillText(u.name.substring(0,24), pad, y + rowH/2 + 4);
+                                    // Month cells
+                                    months.forEach((_, mi) => {
+                                        const period = `${matrixYear}-${String(mi+1).padStart(2,'0')}`;
+                                        const p = userLedger.find(x => x.period === period);
+                                        const x = nameW + pad + mi * colW;
+                                        const cellPad = 2;
+                                        if (!p) { ctx.fillStyle = '#374151'; }
+                                        else if (p.regularCovered) {
+                                            const hasExtra = (p.extraFees?.length && p.extraFees.some(ef => ef.paid < ef.amount)) || (p.extraAmount && (p.paidExtra||0) < p.extraAmount);
+                                            ctx.fillStyle = hasExtra ? '#ca8a04' : '#16a34a';
+                                        }
+                                        else if ((p.paidRegular ?? 0) > 0) { ctx.fillStyle = '#b45309'; }
+                                        else { ctx.fillStyle = '#7f1d1d'; }
+                                        ctx.fillRect(x + cellPad, y + cellPad, colW - cellPad*2, rowH - cellPad*2);
+                                        ctx.fillStyle = '#fff'; ctx.font = 'bold 10px sans-serif';
+                                        const sym = !p ? '–' : p.regularCovered ? '✓' : (p.paidRegular ?? 0) > 0 ? '½' : '✗';
+                                        ctx.fillText(sym, x + colW/2 - 4, y + rowH/2 + 4);
+                                    });
+                                });
+                                // Legend
+                                const ly = headerH + activeUsers.length * rowH + 8;
+                                const legend = [{c:'#16a34a',l:'Pagado'},{c:'#ca8a04',l:'Pagado+Extra'},{c:'#b45309',l:'Parcial'},{c:'#7f1d1d',l:'Pendiente'},{c:'#374151',l:'Sin cuota'}];
+                                legend.forEach((item, i) => {
+                                    ctx.fillStyle = item.c; ctx.fillRect(pad + i*95, ly, 12, 12);
+                                    ctx.fillStyle = '#9ca3af'; ctx.font = '9px sans-serif';
+                                    ctx.fillText(item.l, pad + i*95 + 15, ly + 10);
+                                });
+                                const a = document.createElement('a'); a.href = canvas.toDataURL('image/png');
+                                a.download = `matriz-${matrixYear}.png`; a.click();
+                            }} className="bg-blue-800 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs border border-blue-700 flex items-center gap-1">
+                                🖼️ Imagen
+                            </button>
+                        </div>
                     </div>
                     <p className="text-gray-400 mb-6 text-sm">
                         Vista rápida de los pagos mensuales. Haz clic en una celda para registrar o editar el pago.
@@ -4401,22 +4496,38 @@ const Admin: React.FC<Props> = ({ user }) => {
                                             const paymentData = userLedger.find(p => p.period === period);
                                             const isPaid = paymentData?.regularCovered || false;
                                             const isPartial = !isPaid && paymentData && (paymentData.paidRegular !== undefined ? paymentData.paidRegular > 0 : false);
-                                            const hasReceipt = !!paymentData?.receiptImageBase64;
                                             const noPeriod = !paymentData;
+                                            // Extraordinary fee status
+                                            const hasExtra = paymentData && (
+                                              (paymentData.extraFees?.length && paymentData.extraFees.length > 0) ||
+                                              (paymentData.extraAmount && paymentData.extraAmount > 0)
+                                            );
+                                            const extraDebt = paymentData ? (() => {
+                                              if (paymentData.extraFees?.length) return paymentData.extraFees.reduce((s, ef) => s + Math.max(0, ef.amount - ef.paid), 0);
+                                              if (paymentData.extraAmount) return Math.max(0, paymentData.extraAmount - (paymentData.paidExtra || 0));
+                                              return 0;
+                                            })() : 0;
+                                            const extraPaid = hasExtra && extraDebt <= 0;
+                                            
+                                            let cellClass = 'bg-logia-900/50 text-gray-600 cursor-default';
+                                            let cellTitle = 'Sin cuota registrada';
+                                            let cellText = '–';
+                                            if (!noPeriod) {
+                                              if (isPaid && extraPaid) { cellClass = 'bg-green-600 text-white cursor-pointer hover:brightness-110'; cellTitle = 'Pagado (regular + extra)'; cellText = '✓'; }
+                                              else if (isPaid && hasExtra && extraDebt > 0) { cellClass = 'bg-teal-700 text-white cursor-pointer hover:brightness-110'; cellTitle = `Cuota pagada, extra pendiente $${extraDebt.toFixed(0)}`; cellText = '✓*'; }
+                                              else if (isPaid) { cellClass = 'bg-green-600 text-white cursor-pointer hover:brightness-110'; cellTitle = 'Pagado'; cellText = '✓'; }
+                                              else if (isPartial) { cellClass = 'bg-yellow-700/60 text-yellow-200 cursor-pointer hover:brightness-110'; cellTitle = 'Parcial'; cellText = '½'; }
+                                              else { cellClass = 'bg-red-900/30 text-gray-400 cursor-pointer hover:brightness-110'; cellTitle = 'Pendiente'; cellText = '✗'; }
+                                            }
                                             
                                             return (
                                                 <td 
                                                     key={idx} 
-                                                    className={`p-2 text-center border border-logia-700 transition-colors ${
-                                                        noPeriod ? 'bg-logia-900/50 text-gray-600 cursor-default' :
-                                                        isPaid ? 'bg-green-600 text-white cursor-pointer hover:brightness-110' : 
-                                                        isPartial ? 'bg-yellow-700/60 text-yellow-200 cursor-pointer hover:brightness-110' :
-                                                        'bg-red-900/30 text-gray-400 cursor-pointer hover:brightness-110'
-                                                    }`}
+                                                    className={`p-2 text-center border border-logia-700 transition-colors ${cellClass}`}
                                                     onClick={() => !noPeriod && handleOpenMatrixModal(u.uid, u.name, period)}
-                                                    title={noPeriod ? 'Sin cuota registrada' : isPaid ? `Pagado${hasReceipt ? ' · Con comprobante' : ''}` : isPartial ? 'Parcial' : 'Pendiente'}
+                                                    title={cellTitle}
                                                 >
-                                                    {noPeriod ? '–' : isPaid ? (hasReceipt ? '✓📄' : '✓') : isPartial ? '½' : '✗'}
+                                                    {cellText}
                                                 </td>
                                             );
                                         })}
@@ -4427,22 +4538,11 @@ const Admin: React.FC<Props> = ({ user }) => {
                     </div>
                     
                     <div className="mt-4 flex flex-wrap gap-4 text-xs">
-                        <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 bg-green-600 rounded"></div>
-                            <span className="text-gray-400">Pagado</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 bg-yellow-700/60 rounded"></div>
-                            <span className="text-gray-400">Parcial</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 bg-red-900/30 rounded border border-logia-700"></div>
-                            <span className="text-gray-400">Pendiente</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 bg-logia-900/50 rounded border border-logia-700"></div>
-                            <span className="text-gray-400">Sin cuota</span>
-                        </div>
+                        <div className="flex items-center gap-2"><div className="w-4 h-4 bg-green-600 rounded"></div><span className="text-gray-400">Pagado</span></div>
+                        <div className="flex items-center gap-2"><div className="w-4 h-4 bg-teal-700 rounded"></div><span className="text-gray-400">Cuota pagada, extra pendiente</span></div>
+                        <div className="flex items-center gap-2"><div className="w-4 h-4 bg-yellow-700/60 rounded"></div><span className="text-gray-400">Parcial</span></div>
+                        <div className="flex items-center gap-2"><div className="w-4 h-4 bg-red-900/30 rounded border border-logia-700"></div><span className="text-gray-400">Pendiente</span></div>
+                        <div className="flex items-center gap-2"><div className="w-4 h-4 bg-logia-900/50 rounded border border-logia-700"></div><span className="text-gray-400">Sin cuota</span></div>
                     </div>
                 </div>
             </div>
@@ -4700,12 +4800,22 @@ const Admin: React.FC<Props> = ({ user }) => {
                               }`}>
                                 {receipt.status === 'pending' ? '⏳ Pendiente' : receipt.status === 'approved' ? '✅ Aprobado' : '❌ Rechazado'}
                               </span>
-                              {receipt.receiptImageUrl && (
-                                <button onClick={() => setViewingReceiptImage(receipt.receiptImageUrl)}
-                                  className="text-xs bg-logia-900 hover:bg-logia-700 text-blue-300 px-3 py-1 rounded border border-blue-600/40">
-                                  🖼️ Ver Foto
-                                </button>
-                              )}
+                              {/* Mostrar todas las fotos/archivos adjuntos */}
+                              {(() => {
+                                const urls: string[] = receipt.receiptImageUrls?.length
+                                  ? receipt.receiptImageUrls
+                                  : receipt.receiptImageUrl ? [receipt.receiptImageUrl] : [];
+                                return urls.length > 0 ? (
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {urls.map((url: string, i: number) => (
+                                      <button key={i} onClick={() => setViewingReceiptImage(url)}
+                                        className="text-xs bg-logia-900 hover:bg-logia-700 text-blue-300 px-2 py-1 rounded border border-blue-600/40">
+                                        🖼️ {urls.length > 1 ? `Foto ${i+1}` : 'Ver Foto'}
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : null;
+                              })()}
                             </div>
                           </div>
 
