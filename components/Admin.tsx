@@ -371,14 +371,20 @@ const Admin: React.FC<Props> = ({ user }) => {
 
   const loadAllLedgers = async () => {
     try {
-        const entries = await Promise.all(
+        const results = await Promise.allSettled(
             users.map(async u => {
                 const paymentsSnap = await getDocs(collection(db, "users", u.uid, "ledger"));
                 const payments = paymentsSnap.docs.map(doc => ({ ...doc.data(), period: doc.id } as Payment));
                 return [u.uid, payments] as [string, Payment[]];
             })
         );
-        const ledgers: Record<string, Payment[]> = Object.fromEntries(entries);
+        const ledgers: Record<string, Payment[]> = {};
+        results.forEach(result => {
+            if (result.status === 'fulfilled') {
+                const [uid, payments] = result.value;
+                ledgers[uid] = payments;
+            }
+        });
         setAllUserLedgers(ledgers);
     } catch (e) {
         console.error("Error loading ledgers", e);
@@ -461,10 +467,15 @@ const Admin: React.FC<Props> = ({ user }) => {
   
   const loadAttendanceHistory = async () => {
       try {
-          // Fetch all users' attendance records in parallel
-          const allAttendanceArrays = await Promise.all(
+          // Fetch attendance for all users in parallel, handling individual failures gracefully
+          const results = await Promise.allSettled(
               users.map(u => dataService.getAttendance(u.uid))
           );
+          const allAttendanceArrays: import('../types').Attendance[][] = results.map((r, i) => {
+              if (r.status === 'fulfilled') return r.value;
+              console.warn(`Failed to load attendance for user ${users[i]?.uid}`, (r as PromiseRejectedResult).reason);
+              return [];
+          });
 
           // Collect all unique dates
           const dates = new Set<string>();

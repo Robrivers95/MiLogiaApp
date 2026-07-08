@@ -409,7 +409,9 @@ const Payments: React.FC<Props> = ({ user }) => {
                           </div>
                         )}
 
-                        {/* Admin-attached receipt (stored directly on payment) */}
+                        {/* Admin-attached receipt (stored directly on payment record).
+                            Only show this if the member's PaymentReceipt entry doesn't already
+                            display the same image (to avoid showing the same comprobante twice). */}
                         {row.receiptImageBase64 && !receipt?.receiptImageBase64 && (
                           <div className="p-3 rounded border border-blue-600/40 bg-blue-900/10">
                             <span className="text-xs font-bold text-blue-300 uppercase block mb-2">🧾 Comprobante Registrado por Admin</span>
