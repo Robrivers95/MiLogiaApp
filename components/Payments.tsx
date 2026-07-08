@@ -95,14 +95,15 @@ const Payments: React.FC<Props> = ({ user }) => {
 
     if (payment.extraFees && payment.extraFees.length > 0) {
       const first = payment.extraFees[0];
-      const firstBalance = first.amount - first.paid;
+      // Fees perdonados: balance = 0, mostrar con indicador especial
+      const firstBalance = first.forgiven ? 0 : Math.max(0, first.amount - first.paid);
       mainRow.extraFee = first;
       mainRow.extraBalance = firstBalance;
       mainRow.totalBalance = regularBalance + firstBalance;
       rows.push(mainRow);
       for (let i = 1; i < payment.extraFees.length; i++) {
         const ef = payment.extraFees[i];
-        const bal = ef.amount - ef.paid;
+        const bal = ef.forgiven ? 0 : Math.max(0, ef.amount - ef.paid);
         rows.push({
           period: payment.period, periodDisplay, regularAmount: 0,
           regularPaid: 0, regularBalance: 0,
@@ -150,7 +151,10 @@ const Payments: React.FC<Props> = ({ user }) => {
       const regularBalance = Math.max(0, p.amount - reg);
       let extraBalance = 0;
       if (p.extraFees && p.extraFees.length > 0) {
-        extraBalance = p.extraFees.reduce((s, ef) => s + Math.max(0, ef.amount - ef.paid), 0);
+        // Ignorar fees perdonados en el cálculo de deuda activa
+        extraBalance = p.extraFees
+          .filter(ef => !ef.forgiven)
+          .reduce((s, ef) => s + Math.max(0, ef.amount - ef.paid), 0);
       } else if (p.extraAmount) {
         extraBalance = Math.max(0, p.extraAmount - (p.paidExtra || 0));
       }
@@ -473,13 +477,23 @@ const Payments: React.FC<Props> = ({ user }) => {
                         </div>
 
                         {row.extraFee && (
-                          <div className="bg-purple-900/20 p-3 rounded border border-purple-600/30">
-                            <span className="text-purple-400 text-xs font-bold block mb-1">Cuota Extra: {row.extraFee.description}</span>
+                          <div className={`p-3 rounded border ${(row.extraFee as any).forgiven ? 'border-gray-600/30 bg-gray-800/30' : 'border-purple-600/30 bg-purple-900/20'}`}>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-purple-400 text-xs font-bold">Cuota Extra: {row.extraFee.description}</span>
+                              {(row.extraFee as any).forgiven && (
+                                <span className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded-full">○ Perdonada</span>
+                              )}
+                            </div>
                             <div className="flex gap-4 text-xs">
                               <span className="text-gray-400">Monto: <span className="text-purple-300 font-bold">${row.extraFee.amount.toFixed(2)}</span></span>
                               <span className="text-gray-400">Pagado: <span className="text-green-400 font-bold">${row.extraFee.paid.toFixed(2)}</span></span>
-                              <span className="text-gray-400">Pendiente: <span className={`font-bold ${row.extraBalance > 0 ? 'text-red-400' : 'text-green-400'}`}>${row.extraBalance.toFixed(2)}</span></span>
+                              {!(row.extraFee as any).forgiven && (
+                                <span className="text-gray-400">Pendiente: <span className={`font-bold ${row.extraBalance > 0 ? 'text-red-400' : 'text-green-400'}`}>${row.extraBalance.toFixed(2)}</span></span>
+                              )}
                             </div>
+                            {(row.extraFee as any).forgiven && (row.extraFee as any).forgivenNote && (
+                              <p className="text-xs text-gray-500 mt-1 italic">Nota: {(row.extraFee as any).forgivenNote}</p>
+                            )}
                           </div>
                         )}
 

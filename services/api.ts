@@ -1602,6 +1602,117 @@ export const dataService = {
     return url;
   },
 
+  /**
+   * Crea una cuota extra individual de forma MASIVA en un período dado para varios miembros.
+   * Si el miembro ya tiene esa cuota (mismo description) en ese período, se omite.
+   */
+  bulkCreateExtraFee: async (
+    groupId: string,
+    period: string,        // YYYY-MM
+    description: string,
+    amount: number,
+    targetUids: string[],  // UIDs de los miembros a aplicar
+    creatorUid: string
+  ): Promise<{ created: number; skipped: number }> => {
+    let created = 0;
+    let skipped = 0;
+    const feeId = `${period}-${description.toLowerCase().replace(/\s+/g, '-').substring(0, 20)}-${Date.now()}`;
+    const feeEntry: IndividualExtraFee = {
+      id: feeId,
+      description,
+      amount,
+      paid: 0,
+      createdAt: new Date().toISOString(),
+      createdBy: creatorUid,
+    };
+    // Get group fee to create ledger entry if needed
+    const groupSnap = await getDoc(doc(db, 'groups', groupId));
+    const membershipFee = groupSnap.exists() ? (groupSnap.data().membershipFee || 0) : 0;
+
+    for (const uid of targetUids) {
+      try {
+        const ledgerRef = doc(db, 'users', uid, 'ledger', period);
+        const ledgerSnap = await getDoc(ledgerRef);
+        if (ledgerSnap.exists()) {
+          const data = ledgerSnap.data() as Payment;
+          const existing = data.extraFees || [];
+          if (existing.some(ef => ef.description === description)) { skipped++; continue; }
+          await updateDoc(ledgerRef, { extraFees: [...existing, feeEntry] });
+        } else {
+          // Create ledger entry for future/missing period
+          await setDoc(ledgerRef, {
+            period, amount: membershipFee, paidRegular: 0, paid: 0, paidExtra: 0,
+            regularCovered: false, extraCovered: false, status: 'Pendiente',
+            comments: '', paymentDate: null, groupId,
+            extraFees: [feeEntry],
+          });
+        }
+        created++;
+      } catch (e) {
+        console.error(`bulkCreateExtraFee uid=${uid}`, e);
+        skipped++;
+      }
+    }
+    return { created, skipped };
+  },
+
+  /**
+   * Perdona/cierra una cuota extra para los miembros que NO pagaron (o pagaron parcialmente).
+   * El registro permanece, pero la deuda ya no se contabiliza.
+   * Retorna cuántos registros fueron perdonados.
+   */
+  forgiveExtraFee: async (
+    description: string,
+    period: string | null,   // null = todos los períodos del año
+    year: number | null,     // usado cuando period = null
+    targetUids: string[],
+    forgiverUid: string,
+    note: string
+  ): Promise<number> => {
+    let count = 0;
+    const now = new Date().toISOString();
+    for (const uid of targetUids) {
+      try {
+        if (period) {
+          const ledgerRef = doc(db, 'users', uid, 'ledger', period);
+          const snap = await getDoc(ledgerRef);
+          if (!snap.exists()) continue;
+          const data = snap.data() as Payment;
+          if (!data.extraFees?.length) continue;
+          const updated = data.extraFees.map(ef =>
+            ef.description === description && !ef.forgiven && ef.paid < ef.amount
+              ? { ...ef, forgiven: true, forgivenAt: now, forgivenBy: forgiverUid, forgivenNote: note }
+              : ef
+          );
+          if (JSON.stringify(updated) !== JSON.stringify(data.extraFees)) {
+            await updateDoc(ledgerRef, { extraFees: updated });
+            count++;
+          }
+        } else {
+          // Todos los períodos del año indicado
+          const snap = await getDocs(collection(db, 'users', uid, 'ledger'));
+          for (const pdoc of snap.docs) {
+            if (year && !pdoc.id.startsWith(String(year))) continue;
+            const data = pdoc.data() as Payment;
+            if (!data.extraFees?.length) continue;
+            const updated = data.extraFees.map(ef =>
+              ef.description === description && !ef.forgiven && ef.paid < ef.amount
+                ? { ...ef, forgiven: true, forgivenAt: now, forgivenBy: forgiverUid, forgivenNote: note }
+                : ef
+            );
+            if (JSON.stringify(updated) !== JSON.stringify(data.extraFees)) {
+              await updateDoc(doc(db, 'users', uid, 'ledger', pdoc.id), { extraFees: updated });
+              count++;
+            }
+          }
+        }
+      } catch (e) {
+        console.error(`forgiveExtraFee uid=${uid}`, e);
+      }
+    }
+    return count;
+  },
+
   // --- DEBT NOTIFICATIONS ---
   // Send in-app + browser notifications to users about pending months owed
   sendDebtNotifications: async (
@@ -1623,8 +1734,17 @@ export const dataService = {
         const pendingPeriods = payments
           .filter(p => {
             if (!p.groupId || p.groupId !== groupId) return false;
-            const debt = (p.amount - (p.paidRegular || 0)) + ((p.extraAmount || 0) - (p.paidExtra || 0));
-            return debt > 0 && p.period <= currentPeriod;
+            const debt = (p.amount - (p.paidRegular || 0));
+            // Extra: solo contar fees NO perdonados
+            let extraDebt = 0;
+            if (p.extraFees?.length) {
+              extraDebt = p.extraFees
+                .filter(ef => !ef.forgiven)
+                .reduce((s, ef) => s + Math.max(0, ef.amount - ef.paid), 0);
+            } else {
+              extraDebt = Math.max(0, (p.extraAmount || 0) - (p.paidExtra || 0));
+            }
+            return (debt > 0 || extraDebt > 0) && p.period <= currentPeriod;
           })
           .map(p => {
             const [yr, mo] = p.period.split('-');

@@ -174,6 +174,21 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [allUserLedgers, setAllUserLedgers] = useState<Record<string, Payment[]>>({});
   const [matrixFilter, setMatrixFilter] = useState<'regular' | 'extra' | 'all'>('regular');
   const [matrixExtraDesc, setMatrixExtraDesc] = useState<string>('');
+  // Cuota extra masiva
+  const [showBulkExtraPanel, setShowBulkExtraPanel] = useState(false);
+  const [bulkExtraDesc, setBulkExtraDesc] = useState('');
+  const [bulkExtraAmount, setBulkExtraAmount] = useState('');
+  const [bulkExtraPeriod, setBulkExtraPeriod] = useState('');
+  const [bulkExtraTargets, setBulkExtraTargets] = useState<'all' | 'select'>('all');
+  const [bulkExtraSelected, setBulkExtraSelected] = useState<string[]>([]);
+  const [creatingBulkExtra, setCreatingBulkExtra] = useState(false);
+  const [bulkExtraMsg, setBulkExtraMsg] = useState<{text: string; type: 'success'|'error'} | null>(null);
+  // Cerrar/perdonar cuota extra
+  const [showForgivePanel, setShowForgivePanel] = useState(false);
+  const [forgiveNote, setForgiveNote] = useState('');
+  const [forgivePeriod, setForgivePeriod] = useState<string>('');
+  const [forgivingFee, setForgivingFee] = useState(false);
+  const [forgiveMsg, setForgiveMsg] = useState<{text: string; type: 'success'|'error'} | null>(null);
 
   // Manual Merge State
   const [tempUsers, setTempUsers] = useState<User[]>([]);
@@ -4512,7 +4527,177 @@ const Admin: React.FC<Props> = ({ user }) => {
                             </div>
                         </div>
                     </div>
-                    
+
+                    {/* ── PANEL: Cuota Extra Masiva ── */}
+                    <div className="border border-logia-700 rounded-lg overflow-hidden mb-4">
+                        <button
+                            onClick={() => setShowBulkExtraPanel(p => !p)}
+                            className="w-full flex justify-between items-center px-4 py-3 bg-logia-900 hover:bg-logia-700 text-left"
+                        >
+                            <span className="text-white font-bold text-sm">⭐ Crear Cuota Extra Masiva</span>
+                            <span className="text-gray-400 text-xs">{showBulkExtraPanel ? '▲ ocultar' : '▼ expandir'}</span>
+                        </button>
+                        {showBulkExtraPanel && (
+                            <div className="p-4 bg-logia-800/60 space-y-3">
+                                <p className="text-gray-400 text-xs">Asigna una cuota extraordinaria a todos (o algunos) miembros en un mes específico. Aparecerá en el filtro de la matriz automáticamente.</p>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    <div>
+                                        <label className="text-xs text-gray-400 uppercase font-bold block mb-1">Descripción *</label>
+                                        <input type="text" value={bulkExtraDesc} onChange={e => setBulkExtraDesc(e.target.value)}
+                                            placeholder="Ej: Cena anual 2026"
+                                            className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-sm" />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-gray-400 uppercase font-bold block mb-1">Monto *</label>
+                                        <input type="number" min="0" step="0.01" value={bulkExtraAmount} onChange={e => setBulkExtraAmount(e.target.value)}
+                                            placeholder="Ej: 500"
+                                            className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-sm" />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-gray-400 uppercase font-bold block mb-1">Período (mes) *</label>
+                                        <input type="month" value={bulkExtraPeriod} onChange={e => setBulkExtraPeriod(e.target.value)}
+                                            className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-sm" />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="text-xs text-gray-400 uppercase font-bold block mb-2">Aplicar a</label>
+                                    <div className="flex gap-2 mb-2">
+                                        <button onClick={() => setBulkExtraTargets('all')}
+                                            className={`px-3 py-1 rounded text-xs font-bold border ${bulkExtraTargets === 'all' ? 'bg-indigo-700 border-indigo-500 text-white' : 'bg-logia-900 border-logia-700 text-gray-300'}`}>
+                                            Todos los miembros activos
+                                        </button>
+                                        <button onClick={() => setBulkExtraTargets('select')}
+                                            className={`px-3 py-1 rounded text-xs font-bold border ${bulkExtraTargets === 'select' ? 'bg-indigo-700 border-indigo-500 text-white' : 'bg-logia-900 border-logia-700 text-gray-300'}`}>
+                                            Seleccionar
+                                        </button>
+                                    </div>
+                                    {bulkExtraTargets === 'select' && (
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 max-h-32 overflow-y-auto bg-logia-900/50 rounded p-2 border border-logia-700">
+                                            {filteredUsers.filter(u => u.active).map(u => (
+                                                <label key={u.uid} className="flex items-center gap-1 text-xs text-white cursor-pointer">
+                                                    <input type="checkbox"
+                                                        checked={bulkExtraSelected.includes(u.uid)}
+                                                        onChange={() => setBulkExtraSelected(prev =>
+                                                            prev.includes(u.uid) ? prev.filter(x => x !== u.uid) : [...prev, u.uid]
+                                                        )}
+                                                        className="accent-indigo-500" />
+                                                    {u.name}
+                                                </label>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {bulkExtraMsg && (
+                                    <div className={`text-xs p-2 rounded ${bulkExtraMsg.type === 'success' ? 'bg-green-900/40 text-green-300 border border-green-700' : 'bg-red-900/40 text-red-300 border border-red-700'}`}>
+                                        {bulkExtraMsg.text}
+                                    </div>
+                                )}
+
+                                <button
+                                    disabled={creatingBulkExtra || !bulkExtraDesc.trim() || !bulkExtraAmount || !bulkExtraPeriod || isReadOnly}
+                                    onClick={async () => {
+                                        if (!bulkExtraDesc.trim() || !bulkExtraAmount || !bulkExtraPeriod) return;
+                                        setCreatingBulkExtra(true); setBulkExtraMsg(null);
+                                        try {
+                                            const targets = bulkExtraTargets === 'all'
+                                                ? filteredUsers.filter(u => u.active).map(u => u.uid)
+                                                : bulkExtraSelected;
+                                            if (targets.length === 0) { setBulkExtraMsg({text:'Sin miembros seleccionados.', type:'error'}); return; }
+                                            const { created, skipped } = await dataService.bulkCreateExtraFee(
+                                                user.groupId, bulkExtraPeriod, bulkExtraDesc.trim(),
+                                                Number(bulkExtraAmount), targets, user.uid
+                                            );
+                                            setBulkExtraMsg({ text: `✅ Cuota creada en ${created} miembro(s). ${skipped > 0 ? `${skipped} ya la tenían.` : ''}`, type: 'success' });
+                                            setBulkExtraDesc(''); setBulkExtraAmount(''); setBulkExtraPeriod('');
+                                            setBulkExtraSelected([]);
+                                            loadAllLedgers();
+                                        } catch(e: any) {
+                                            setBulkExtraMsg({ text: `Error: ${e.message}`, type: 'error' });
+                                        } finally { setCreatingBulkExtra(false); }
+                                    }}
+                                    className="bg-purple-700 hover:bg-purple-600 disabled:opacity-40 text-white font-bold px-4 py-2 rounded text-sm"
+                                >
+                                    {creatingBulkExtra ? 'Creando...' : '⭐ Crear cuota para miembros'}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* ── PANEL: Cerrar/Perdonar cuota extra ── */}
+                    {matrixFilter === 'extra' && matrixExtraDesc && (
+                        <div className="border border-orange-700/50 rounded-lg overflow-hidden mb-4">
+                            <button
+                                onClick={() => setShowForgivePanel(p => !p)}
+                                className="w-full flex justify-between items-center px-4 py-3 bg-orange-900/30 hover:bg-orange-900/50 text-left"
+                            >
+                                <span className="text-orange-300 font-bold text-sm">🔒 Cerrar / Perdonar deuda: "{matrixExtraDesc}"</span>
+                                <span className="text-gray-400 text-xs">{showForgivePanel ? '▲ ocultar' : '▼ expandir'}</span>
+                            </button>
+                            {showForgivePanel && (
+                                <div className="p-4 bg-logia-800/60 space-y-3">
+                                    <div className="bg-yellow-900/30 border border-yellow-700/40 rounded p-3 text-xs text-yellow-200">
+                                        ⚠️ Esto perdona la deuda pendiente a los miembros que <strong>no pagaron</strong> esta cuota. El registro permanece con el monto original y la fecha de perdón, pero deja de contarse como deuda activa.
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="text-xs text-gray-400 uppercase font-bold block mb-1">Período a cerrar</label>
+                                            <div className="flex gap-2">
+                                                <button onClick={() => setForgivePeriod('')}
+                                                    className={`px-3 py-1 rounded text-xs font-bold border ${forgivePeriod === '' ? 'bg-orange-700 border-orange-600 text-white' : 'bg-logia-900 border-logia-700 text-gray-300'}`}>
+                                                    Todo el año {matrixYear}
+                                                </button>
+                                                <input type="month" value={forgivePeriod} onChange={e => setForgivePeriod(e.target.value)}
+                                                    placeholder="Mes específico"
+                                                    className="flex-1 bg-logia-900 border border-logia-700 rounded p-1 text-white text-xs" />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-gray-400 uppercase font-bold block mb-1">Nota (opcional)</label>
+                                            <input type="text" value={forgiveNote} onChange={e => setForgiveNote(e.target.value)}
+                                                placeholder="Ej: Cuota cerrada por acuerdo de asamblea"
+                                                className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-xs" />
+                                        </div>
+                                    </div>
+
+                                    {forgiveMsg && (
+                                        <div className={`text-xs p-2 rounded ${forgiveMsg.type === 'success' ? 'bg-green-900/40 text-green-300 border border-green-700' : 'bg-red-900/40 text-red-300 border border-red-700'}`}>
+                                            {forgiveMsg.text}
+                                        </div>
+                                    )}
+
+                                    <button
+                                        disabled={forgivingFee || isReadOnly}
+                                        onClick={async () => {
+                                            const periodLabel = forgivePeriod ? 'del mes ' + forgivePeriod : 'de todo el año ' + matrixYear;
+                                            if (!window.confirm('\u00bfPerdonar la deuda de "' + matrixExtraDesc + '" ' + periodLabel + ' a todos los miembros que no pagaron?')) return;
+                                            setForgivingFee(true); setForgiveMsg(null);
+                                            try {
+                                                const targets = filteredUsers.filter(u => u.active).map(u => u.uid);
+                                                const count = await dataService.forgiveExtraFee(
+                                                    matrixExtraDesc,
+                                                    forgivePeriod || null,
+                                                    forgivePeriod ? null : matrixYear,
+                                                    targets,
+                                                    user.uid,
+                                                    forgiveNote.trim()
+                                                );
+                                                setForgiveMsg({ text: '\u2705 Deuda perdonada en ' + count + ' registro(s). Ya no aparece como deuda activa.', type: 'success' });
+                                                setForgiveNote(''); setForgivePeriod('');
+                                                loadAllLedgers();
+                                            } catch(e: any) {
+                                                setForgiveMsg({ text: 'Error: ' + (e?.message || e), type: 'error' });
+                                            } finally { setForgivingFee(false); }
+                                        }}
+                                        className="bg-orange-700 hover:bg-orange-600 disabled:opacity-40 text-white font-bold px-4 py-2 rounded text-sm"
+                                    >
+                                        {forgivingFee ? 'Procesando...' : '\uD83D\uDD12 Perdonar deuda de "' + matrixExtraDesc + '"'}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
                     <div className="overflow-x-auto">
                         <table className="w-full text-xs border-collapse">
                             <thead>
@@ -4560,11 +4745,17 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                 if (!paymentData || (!ef && !legacyMatch)) {
                                                     cellTitle = 'Sin esta cuota extra'; cellText = '–';
                                                 } else if (ef) {
-                                                    const covered = ef.paid >= ef.amount;
-                                                    const partial = !covered && ef.paid > 0;
-                                                    if (covered) { cellClass = 'bg-purple-600 text-white cursor-pointer hover:brightness-110'; cellTitle = `Pagado $${ef.amount}`; cellText = '✓'; }
-                                                    else if (partial) { cellClass = 'bg-purple-900/60 text-purple-200 cursor-pointer hover:brightness-110'; cellTitle = `Parcial: $${ef.paid.toFixed(0)} / $${ef.amount}`; cellText = '½'; }
-                                                    else { cellClass = 'bg-red-900/30 text-gray-400 cursor-pointer hover:brightness-110'; cellTitle = `Pendiente: $${ef.amount}`; cellText = '✗'; }
+                                                    if (ef.forgiven) {
+                                                        cellClass = 'bg-gray-700/60 text-gray-400 cursor-pointer hover:brightness-110';
+                                                        cellTitle = `Perdonado — no pagó $${ef.amount}${ef.forgivenNote ? ` · ${ef.forgivenNote}` : ''}`;
+                                                        cellText = '○';
+                                                    } else {
+                                                        const covered = ef.paid >= ef.amount;
+                                                        const partial = !covered && ef.paid > 0;
+                                                        if (covered) { cellClass = 'bg-purple-600 text-white cursor-pointer hover:brightness-110'; cellTitle = `Pagado $${ef.amount}`; cellText = '✓'; }
+                                                        else if (partial) { cellClass = 'bg-purple-900/60 text-purple-200 cursor-pointer hover:brightness-110'; cellTitle = `Parcial: $${ef.paid.toFixed(0)} / $${ef.amount}`; cellText = '½'; }
+                                                        else { cellClass = 'bg-red-900/30 text-gray-400 cursor-pointer hover:brightness-110'; cellTitle = `Pendiente: $${ef.amount}`; cellText = '✗'; }
+                                                    }
                                                 } else if (legacyMatch) {
                                                     const paidExtra = paymentData.paidExtra || 0;
                                                     const covered = paidExtra >= (paymentData.extraAmount || 0);
@@ -4614,6 +4805,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                 <div className="flex items-center gap-2"><div className="w-4 h-4 bg-purple-600 rounded"></div><span className="text-gray-400">Pagado</span></div>
                                 <div className="flex items-center gap-2"><div className="w-4 h-4 bg-purple-900/60 rounded"></div><span className="text-gray-400">Parcial</span></div>
                                 <div className="flex items-center gap-2"><div className="w-4 h-4 bg-red-900/30 rounded border border-logia-700"></div><span className="text-gray-400">Pendiente</span></div>
+                                <div className="flex items-center gap-2"><div className="w-4 h-4 bg-gray-700/60 rounded"></div><span className="text-gray-400">○ Perdonado</span></div>
                                 <div className="flex items-center gap-2"><div className="w-4 h-4 bg-logia-900/50 rounded border border-logia-700"></div><span className="text-gray-400">Sin esta cuota</span></div>
                             </>
                             : matrixFilter === 'all'

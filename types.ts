@@ -117,6 +117,10 @@ export interface IndividualExtraFee {
   paid: number; // Amount paid for this specific extra fee
   createdAt: string; // ISO Date when this was added
   createdBy?: string; // UID of who created it
+  forgiven?: boolean;    // true = deuda perdonada/cerrada (no se cobra más)
+  forgivenAt?: string;   // ISO cuando se perdonó
+  forgivenBy?: string;   // UID del admin que lo perdonó
+  forgivenNote?: string; // Nota opcional del perdón
 }
 
 export interface Payment {
