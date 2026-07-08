@@ -1268,6 +1268,15 @@ export const dataService = {
   // --- PAYMENT RECEIPTS ---
   // Compress image to base64 (client-side, max ~600px wide, quality 0.65)
   compressImageToBase64: async (file: File): Promise<string> => {
+    // PDFs and non-image files: read as base64 directly without canvas compression
+    if (!file.type.startsWith('image/')) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
     return new Promise((resolve, reject) => {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
@@ -1427,7 +1436,8 @@ export const dataService = {
             extraCovered,
             status: computeStatus(newPaidReg, newPaidExtra, regularCovered, extraCovered),
             paymentDate: approvalDate,
-            comments: buildComment(payment.comments, approvalDate)
+            comments: buildComment(payment.comments, approvalDate),
+            receiptImageBase64: receipt.receiptImageBase64
           };
           if (newExtraFees) updateData.extraFees = newExtraFees;
 
@@ -1453,7 +1463,8 @@ export const dataService = {
             extraCovered,
             status: computeStatus(regularAmount, currentPaidExtra, true, extraCovered),
             paymentDate: approvalDate,
-            comments: buildComment(payment.comments, approvalDate)
+            comments: buildComment(payment.comments, approvalDate),
+            receiptImageBase64: receipt.receiptImageBase64
           });
         }
       }

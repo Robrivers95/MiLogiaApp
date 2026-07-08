@@ -136,6 +136,7 @@ export interface Payment {
   groupId?: string; // Logia/Group ID para filtrado
   regularCovered?: boolean; // Si la cuota mensual está cubierta
   extraCovered?: boolean; // Si la cuota extraordinaria está cubierta
+  receiptImageBase64?: string; // Comprobante adjunto por el admin (base64)
 }
 
 export interface PriceHistoryEntry {
