@@ -1269,6 +1269,15 @@ export const dataService = {
   // --- PAYMENT RECEIPTS ---
   // Compress image to base64 (client-side, max ~600px wide, quality 0.65)
   compressImageToBase64: async (file: File): Promise<string> => {
+    // PDFs and non-image files: read as base64 directly without canvas compression
+    if (!file.type.startsWith('image/')) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
     return new Promise((resolve, reject) => {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
@@ -1350,78 +1359,143 @@ export const dataService = {
       reviewedBy: reviewerUid
     });
 
-    // 2. Auto-update ledger for "cuota_mensual" receipts with CHRONOLOGICAL distribution
-    const isCuotaMensual = !receipt.receiptType || receipt.receiptType === 'cuota_mensual';
-    if (isCuotaMensual && receipt.periods.length > 0) {
-      // Sort periods chronologically ascending (oldest first)
-      const sortedPeriods = [...receipt.periods].sort();
-      let remainingAmount = receipt.amount ?? null; // null = marcar todo como pagado
+    // 2. Auto-apply payment to the user's ledger for each period in the receipt
+    try {
+      const sortedPeriods = [...receipt.periods].sort(); // oldest first
+      const approvalDate = new Date().toISOString().split('T')[0];
 
-      for (const period of sortedPeriods) {
-        try {
+      // Helper: get totalExtraAmount from a payment
+      const getTotalExtra = (p: Payment): number =>
+        p.extraFees && p.extraFees.length > 0
+          ? p.extraFees.reduce((s, ef) => s + ef.amount, 0)
+          : Number(p.extraAmount) || 0;
+
+      // Helper: compute payment status from covered flags and paid amounts
+      const computeStatus = (
+        paidReg: number, paidExtra: number,
+        regCovered: boolean, extCovered: boolean
+      ): Payment['status'] =>
+        regCovered && extCovered ? 'Pagado' :
+        (paidReg > 0 || paidExtra > 0) ? 'Parcial' : 'Pendiente';
+
+      // Helper: build updated comment
+      const buildComment = (existing: string, date: string): string =>
+        existing ? `${existing} | Aprobado ${date}` : `Aprobado ${date}`;
+
+      // Helper: derive legacy-compatible paidRegular from a payment record
+      const getLegacyPaidReg = (p: Payment): number => {
+        if (p.paidRegular !== undefined) return Number(p.paidRegular) || 0;
+        const legacyPaid = Number(p.paid) || 0;
+        return Math.min(legacyPaid, Number(p.amount) || 0);
+      };
+
+      if (receipt.amount && Number(receipt.amount) > 0) {
+        // Distribute the declared amount across periods, oldest first (chronological)
+        let remaining = Number(receipt.amount);
+
+        for (const period of sortedPeriods) {
+          if (remaining <= 0) break;
           const ledgerRef = doc(db, "users", receipt.userId, "ledger", period);
-          const ledgerSnap = await getDoc(ledgerRef);
+          const ledgerDoc = await getDoc(ledgerRef);
 
-          if (!ledgerSnap.exists()) {
-            // Mes futuro sin entrada — obtener cuota del grupo y crear entrada
+          if (!ledgerDoc.exists()) {
+            // Mes futuro sin entrada — crear con la cuota del grupo
             const groupSnap = await getDoc(doc(db, "groups", receipt.groupId));
             const feeAmount = groupSnap.exists() ? (groupSnap.data().membershipFee || 0) : 0;
             if (feeAmount <= 0) continue;
-
-            const toApply = remainingAmount === null
-              ? feeAmount
-              : Math.min(remainingAmount, feeAmount);
+            const toApply = Math.min(remaining, feeAmount);
             const covered = toApply >= feeAmount;
             await setDoc(ledgerRef, {
-              period,
-              amount: feeAmount,
-              paidRegular: toApply,
-              paid: toApply,
-              regularCovered: covered,
+              period, amount: feeAmount, paidRegular: toApply, paid: toApply,
+              paidExtra: 0, regularCovered: covered, extraCovered: true,
               status: covered ? 'Pagado' : (toApply > 0 ? 'Parcial' : 'Pendiente'),
-              comments: '',
-              paymentDate: covered ? (receipt.transferDate || new Date().toISOString()) : null,
+              comments: buildComment('', approvalDate),
+              paymentDate: covered ? approvalDate : null,
               groupId: receipt.groupId
             });
-            if (remainingAmount !== null) remainingAmount -= toApply;
-            if (remainingAmount !== null && remainingAmount <= 0) break;
+            remaining -= toApply;
             continue;
           }
 
-          const ledgerData = ledgerSnap.data() as Payment;
-          const feeAmount = ledgerData.amount || 0;
-          const currentPaidRegular = ledgerData.paidRegular ?? Number(ledgerData.paid) ?? 0;
-          const remainingDebt = Math.max(0, feeAmount - currentPaidRegular);
+          const payment = ledgerDoc.data() as Payment;
+          const currentPaidReg = getLegacyPaidReg(payment);
+          const regularDebt = Math.max(0, Number(payment.amount) - currentPaidReg);
 
-          if (remainingDebt <= 0) continue; // Ya está pagado, saltar
+          // Apply to regular fee first
+          const applyToRegular = Math.min(remaining, regularDebt);
+          const newPaidReg = currentPaidReg + applyToRegular;
+          remaining -= applyToRegular;
 
-          const toAdd = remainingAmount === null
-            ? remainingDebt  // sin monto declarado → cubrir completamente
-            : Math.min(remainingAmount, remainingDebt);
+          // Apply remaining to individual extra fees, then legacy extra
+          let newPaidExtra = Number(payment.paidExtra) || 0;
+          let newExtraFees: IndividualExtraFee[] | undefined;
 
-          const newPaidRegular = currentPaidRegular + toAdd;
-          const covered = newPaidRegular >= feeAmount;
-          const newStatus = covered ? 'Pagado' : (newPaidRegular > 0 ? 'Parcial' : 'Pendiente');
+          if (remaining > 0 && payment.extraFees && payment.extraFees.length > 0) {
+            newExtraFees = payment.extraFees.map(ef => ({ ...ef }));
+            for (const ef of newExtraFees) {
+              if (remaining <= 0) break;
+              const efDebt = Math.max(0, ef.amount - ef.paid);
+              const applyToEf = Math.min(remaining, efDebt);
+              ef.paid += applyToEf;
+              newPaidExtra += applyToEf;
+              remaining -= applyToEf;
+            }
+          } else if (remaining > 0 && Number(payment.extraAmount) > 0) {
+            const legacyDebt = Math.max(0, Number(payment.extraAmount) - newPaidExtra);
+            const applyToLegacy = Math.min(remaining, legacyDebt);
+            newPaidExtra += applyToLegacy;
+            remaining -= applyToLegacy;
+          }
 
-          const updates: Record<string, unknown> = {
-            paidRegular: newPaidRegular,
-            paid: newPaidRegular,
-            regularCovered: covered,
-            status: newStatus,
+          const totalExtraAmount = newExtraFees
+            ? newExtraFees.reduce((s, ef) => s + ef.amount, 0)
+            : Number(payment.extraAmount) || 0;
+          const regularCovered = newPaidReg >= Number(payment.amount);
+          const extraCovered = totalExtraAmount <= 0 || newPaidExtra >= totalExtraAmount;
+
+          const updateData: Record<string, unknown> = {
+            paidRegular: newPaidReg,
+            paid: newPaidReg + newPaidExtra,
+            paidExtra: newPaidExtra,
+            regularCovered,
+            extraCovered,
+            status: computeStatus(newPaidReg, newPaidExtra, regularCovered, extraCovered),
+            paymentDate: approvalDate,
+            comments: buildComment(payment.comments, approvalDate),
           };
-          if (covered && !ledgerData.paymentDate) {
-            updates.paymentDate = receipt.transferDate || new Date().toISOString();
-          }
-          await updateDoc(ledgerRef, updates);
+          if (newExtraFees) updateData.extraFees = newExtraFees;
 
-          if (remainingAmount !== null) {
-            remainingAmount -= toAdd;
-            if (remainingAmount <= 0) break; // Sin dinero, detener
-          }
-        } catch (e) {
-          console.error(`Error actualizando ledger para período ${period}:`, e);
+          await updateDoc(ledgerRef, updateData);
+        }
+      } else {
+        // No amount declared: mark each period's regular fee as fully paid
+        for (const period of sortedPeriods) {
+          const ledgerRef = doc(db, "users", receipt.userId, "ledger", period);
+          const ledgerDoc = await getDoc(ledgerRef);
+          if (!ledgerDoc.exists()) continue;
+
+          const payment = ledgerDoc.data() as Payment;
+          const regularAmount = Number(payment.amount) || 0;
+          const currentPaidExtra = Number(payment.paidExtra) || 0;
+          const totalExtraAmount = getTotalExtra(payment);
+          const extraCovered = totalExtraAmount <= 0 || currentPaidExtra >= totalExtraAmount;
+
+          await updateDoc(ledgerRef, {
+            paidRegular: regularAmount,
+            paid: regularAmount + currentPaidExtra,
+            regularCovered: true,
+            extraCovered,
+            status: computeStatus(regularAmount, currentPaidExtra, true, extraCovered),
+            paymentDate: approvalDate,
+            comments: buildComment(payment.comments, approvalDate),
+          });
         }
       }
+    } catch (err) {
+      console.error(
+        `Error auto-applying approved receipt ${receipt.id} (user ${receipt.userId}, periods ${receipt.periods.join(', ')}) to ledger:`,
+        err
+      );
     }
 
     // 3. Notify the member
@@ -1435,7 +1509,7 @@ export const dataService = {
         receipt.groupId,
         'payment_receipt',
         '✅ Comprobante aprobado',
-        `Tu comprobante de pago para ${label} fue aprobado.`
+        `Tu comprobante de pago para ${label} fue aprobado y registrado en tu cuenta.`
       );
     } catch (_) {}
   },

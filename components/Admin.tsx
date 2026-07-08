@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, Payment, IndividualExtraFee, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Trivia, VisitRequest, Group, BankBalance, ExtraFee, PaymentReceipt } from '../types';
 import { dataService, generateTriviaWithAI, authService, notificationService } from '../services/api';
-import { doc, deleteDoc, collection, getDocs } from 'firebase/firestore';
+import { doc, deleteDoc, collection, getDocs, getDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useReadOnly } from '../contexts/ReadOnlyContext';
 
@@ -248,6 +248,18 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [adminPhotoFile, setAdminPhotoFile] = useState<File | null>(null);
   const [uploadingAdminPhoto, setUploadingAdminPhoto] = useState(false);
 
+  // Matrix Payment Modal State
+  const [showMatrixModal, setShowMatrixModal] = useState(false);
+  const [matrixModalUid, setMatrixModalUid] = useState<string>('');
+  const [matrixModalUserName, setMatrixModalUserName] = useState<string>('');
+  const [matrixModalPeriod, setMatrixModalPeriod] = useState<string>('');
+  const [matrixModalPayment, setMatrixModalPayment] = useState<Payment | null>(null);
+  const [matrixModalAmountPaid, setMatrixModalAmountPaid] = useState<string>('');
+  const [matrixModalComments, setMatrixModalComments] = useState<string>('');
+  const [matrixModalFile, setMatrixModalFile] = useState<File | null>(null);
+  const [matrixModalPreview, setMatrixModalPreview] = useState<string | null>(null);
+  const [savingMatrixPayment, setSavingMatrixPayment] = useState(false);
+
   // Debt Notification State
   const [debtNotifTarget, setDebtNotifTarget] = useState<'all' | 'selected'>('all');
   const [debtNotifSelected, setDebtNotifSelected] = useState<string[]>([]);
@@ -431,11 +443,20 @@ const Admin: React.FC<Props> = ({ user }) => {
 
   const loadAllLedgers = async () => {
     try {
+        const results = await Promise.allSettled(
+            users.map(async u => {
+                const paymentsSnap = await getDocs(collection(db, "users", u.uid, "ledger"));
+                const payments = paymentsSnap.docs.map(doc => ({ ...doc.data(), period: doc.id } as Payment));
+                return [u.uid, payments] as [string, Payment[]];
+            })
+        );
         const ledgers: Record<string, Payment[]> = {};
-        for (const u of users) {
-            const paymentsSnap = await getDocs(collection(db, "users", u.uid, "ledger"));
-            ledgers[u.uid] = paymentsSnap.docs.map(doc => ({ ...doc.data(), period: doc.id } as Payment));
-        }
+        results.forEach(result => {
+            if (result.status === 'fulfilled') {
+                const [uid, payments] = result.value;
+                ledgers[uid] = payments;
+            }
+        });
         setAllUserLedgers(ledgers);
     } catch (e) {
         console.error("Error loading ledgers", e);
@@ -517,32 +538,47 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
   
   const loadAttendanceHistory = async () => {
-      const dates = new Set<string>();
-      for(const u of users) {
-          const att = await dataService.getAttendance(u.uid);
-          att.forEach(a => dates.add(a.date));
-      }
-      const allDates = Array.from(dates).sort().reverse();
-      setAttHistory(allDates);
-      
-      // Calculate attendance stats for each user
-      const stats: Record<string, { total: number; present: number; absent: number; percentage: number }> = {};
-      
-      for (const u of users) {
-          const fullAtt = await dataService.getFullAttendance(
-              u.uid, 
-              u.groupId || '', 
-              u.masonicJoinDate || u.masonicRejoinDate
+      try {
+          // Fetch attendance for all users in parallel, handling individual failures gracefully
+          const results = await Promise.allSettled(
+              users.map(u => dataService.getAttendance(u.uid))
           );
-          const present = fullAtt.filter(a => a.attended).length;
-          const total = fullAtt.length;
-          const absent = total - present;
-          const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
-          
-          stats[u.uid] = { total, present, absent, percentage };
+          const allAttendanceArrays: import('../types').Attendance[][] = results.map((r, i) => {
+              if (r.status === 'fulfilled') return r.value;
+              console.warn(`Failed to load attendance for user ${users[i]?.uid}`, (r as PromiseRejectedResult).reason);
+              return [];
+          });
+
+          // Collect all unique dates
+          const dates = new Set<string>();
+          allAttendanceArrays.forEach(attArr => attArr.forEach(a => dates.add(a.date)));
+          const allDates = Array.from(dates).sort().reverse();
+          setAttHistory(allDates);
+
+          // Build per-user attendance lookup from already-fetched data
+          const stats: Record<string, { total: number; present: number; absent: number; percentage: number }> = {};
+          users.forEach((u, idx) => {
+              const userAttendance = allAttendanceArrays[idx];
+              const attendedDates = new Set(userAttendance.map(a => a.date));
+
+              // Determine the user's join date for filtering
+              const joinDate = u.masonicRejoinDate || u.masonicJoinDate;
+
+              // Only count meetings that occurred after the user's join date
+              const relevantDates = joinDate ? allDates.filter(d => d >= joinDate) : allDates;
+
+              const present = relevantDates.filter(d => attendedDates.has(d)).length;
+              const total = relevantDates.length;
+              const absent = total - present;
+              const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
+
+              stats[u.uid] = { total, present, absent, percentage };
+          });
+
+          setAttStats(stats);
+      } catch (e) {
+          console.error('Error cargando historial de asistencia', e);
       }
-      
-      setAttStats(stats);
   };
 
   const loadNotices = async () => {
@@ -2147,44 +2183,79 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
   };
 
-  const handleToggleMatrixPayment = async (uid: string, period: string) => {
+  const handleOpenMatrixModal = async (uid: string, userName: string, period: string) => {
       if (isReadOnly) return;
-      
+      // Load current payment for this period
+      const ledgerRef = doc(db, "users", uid, "ledger", period);
+      const ledgerDoc = await getDoc(ledgerRef);
+      if (!ledgerDoc.exists()) {
+          showMessage("No hay cuota registrada para este período", 'error');
+          return;
+      }
+      const payment = ledgerDoc.data() as Payment;
+      setMatrixModalUid(uid);
+      setMatrixModalUserName(userName);
+      setMatrixModalPeriod(period);
+      setMatrixModalPayment(payment);
+      // Pre-fill amount with amount already paid (or full amount if currently covered)
+      const currentPaid = payment.paidRegular !== undefined ? payment.paidRegular : (Number(payment.paid) || 0);
+      setMatrixModalAmountPaid(currentPaid > 0 ? String(currentPaid) : '');
+      setMatrixModalComments(payment.comments || '');
+      setMatrixModalFile(null);
+      setMatrixModalPreview(null);
+      setShowMatrixModal(true);
+  };
+
+  const handleSaveMatrixPayment = async () => {
+      if (!matrixModalPayment || !matrixModalUid || !matrixModalPeriod) return;
+      if (isReadOnly) return;
+      setSavingMatrixPayment(true);
       try {
-          // Get current payment for this period from ledger
-          const paymentsSnap = await getDocs(collection(db, "users", uid, "ledger"));
-          let payment: Payment | null = null;
-          
-          paymentsSnap.forEach(doc => {
-              if (doc.id === period) {
-                  payment = doc.data() as Payment;
-              }
-          });
-          
-          if (!payment) {
-              showMessage("No hay cuota registrada para este período", 'error');
-              return;
+          const totalAmount = Number(matrixModalPayment.amount) || 0;
+          const inputAmount = matrixModalAmountPaid.trim() === '' ? totalAmount : Number(matrixModalAmountPaid);
+          const paidRegular = Math.min(inputAmount, totalAmount);
+          const regularCovered = paidRegular >= totalAmount;
+
+          const currentPaidExtra = Number(matrixModalPayment.paidExtra) || 0;
+          let totalExtraAmount = 0;
+          if (matrixModalPayment.extraFees && matrixModalPayment.extraFees.length > 0) {
+              totalExtraAmount = matrixModalPayment.extraFees.reduce((s, ef) => s + ef.amount, 0);
+          } else if (matrixModalPayment.extraAmount) {
+              totalExtraAmount = Number(matrixModalPayment.extraAmount);
           }
-          
-          const newCoveredStatus = !payment.regularCovered;
-          const newPaidRegular = newCoveredStatus ? payment.amount : 0;
-          
+          const extraCovered = totalExtraAmount <= 0 || currentPaidExtra >= totalExtraAmount;
+
+          const newStatus: Payment['status'] = regularCovered && extraCovered ? 'Pagado' : paidRegular > 0 ? 'Parcial' : 'Pendiente';
+
+          let receiptImageBase64: string | undefined;
+          if (matrixModalFile) {
+              receiptImageBase64 = await dataService.compressImageToBase64(matrixModalFile);
+          } else {
+              receiptImageBase64 = matrixModalPayment.receiptImageBase64;
+          }
+
           const updatedPayment: Payment = {
-              ...payment,
-              paidRegular: newPaidRegular,
-              regularCovered: newCoveredStatus,
-              // Update legacy 'paid' field for backward compatibility
-              paid: newPaidRegular + (payment.paidExtra || 0)
+              ...matrixModalPayment,
+              paidRegular,
+              paid: paidRegular + currentPaidExtra,
+              regularCovered,
+              extraCovered,
+              status: newStatus,
+              comments: matrixModalComments || matrixModalPayment.comments || '',
+              paymentDate: new Date().toISOString().split('T')[0],
+              ...(receiptImageBase64 !== undefined ? { receiptImageBase64 } : {})
           };
-          
-          await dataService.updatePayment(uid, updatedPayment);
-          
-          showMessage(newCoveredStatus ? "✅ Marcado como pagado" : "⏳ Marcado como pendiente");
-          await loadAllLedgers(); // Reload ledgers to update matrix
-          await loadUsers(); // Reload stats
+
+          await dataService.updatePayment(matrixModalUid, updatedPayment);
+          showMessage(regularCovered ? "✅ Marcado como pagado" : paidRegular > 0 ? "⏳ Pago parcial registrado" : "⏳ Marcado como pendiente");
+          setShowMatrixModal(false);
+          await loadAllLedgers();
+          await loadUsers();
       } catch (e) {
           console.error(e);
           showMessage("Error actualizando pago", 'error');
+      } finally {
+          setSavingMatrixPayment(false);
       }
   };
 
@@ -2654,6 +2725,9 @@ const Admin: React.FC<Props> = ({ user }) => {
                <div className="flex justify-between items-center">
                 <h3 className="text-lg font-bold text-white">Gestión de Miembros</h3>
                 <div className="flex gap-2">
+                    <button onClick={() => { loadUsers(); setUserPaymentsCache({}); setExpandedUsers(new Set()); }} className="px-3 py-1 bg-logia-900 hover:bg-logia-700 rounded text-xs border border-logia-700 text-gray-300">
+                        🔄 Actualizar
+                    </button>
                     <button onClick={handleDownloadCSV} className="px-3 py-1 bg-green-700 rounded text-xs hover:bg-green-600">
                         📥 Exportar CSV
                     </button>
@@ -4280,9 +4354,14 @@ const Admin: React.FC<Props> = ({ user }) => {
         {activeTab === 'payment-matrix' && (
             <div className="space-y-6">
                 <div className="bg-logia-800 border border-logia-700 rounded-xl p-6">
-                    <h3 className="text-xl font-bold text-white mb-4">📊 Matriz de Pagos</h3>
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-xl font-bold text-white">📊 Matriz de Pagos</h3>
+                        <button onClick={loadAllLedgers} className="bg-logia-900 hover:bg-logia-700 text-gray-300 px-3 py-1 rounded text-xs border border-logia-700 flex items-center gap-1">
+                            🔄 Actualizar
+                        </button>
+                    </div>
                     <p className="text-gray-400 mb-6 text-sm">
-                        Vista rápida de los pagos mensuales. Haz clic en una celda para marcar como pagado.
+                        Vista rápida de los pagos mensuales. Haz clic en una celda para registrar o editar el pago.
                     </p>
                     
                     <div className="mb-4">
@@ -4321,17 +4400,23 @@ const Admin: React.FC<Props> = ({ user }) => {
                                             const userLedger = allUserLedgers[u.uid] || [];
                                             const paymentData = userLedger.find(p => p.period === period);
                                             const isPaid = paymentData?.regularCovered || false;
+                                            const isPartial = !isPaid && paymentData && (paymentData.paidRegular !== undefined ? paymentData.paidRegular > 0 : false);
+                                            const hasReceipt = !!paymentData?.receiptImageBase64;
+                                            const noPeriod = !paymentData;
                                             
                                             return (
                                                 <td 
                                                     key={idx} 
-                                                    className={`p-2 text-center border border-logia-700 cursor-pointer transition-colors ${
-                                                        isPaid ? 'bg-green-600 text-white' : 'bg-red-900/30 text-gray-400'
-                                                    } hover:brightness-110`}
-                                                    onClick={() => handleToggleMatrixPayment(u.uid, period)}
-                                                    title={isPaid ? 'Pagado' : 'Pendiente'}
+                                                    className={`p-2 text-center border border-logia-700 transition-colors ${
+                                                        noPeriod ? 'bg-logia-900/50 text-gray-600 cursor-default' :
+                                                        isPaid ? 'bg-green-600 text-white cursor-pointer hover:brightness-110' : 
+                                                        isPartial ? 'bg-yellow-700/60 text-yellow-200 cursor-pointer hover:brightness-110' :
+                                                        'bg-red-900/30 text-gray-400 cursor-pointer hover:brightness-110'
+                                                    }`}
+                                                    onClick={() => !noPeriod && handleOpenMatrixModal(u.uid, u.name, period)}
+                                                    title={noPeriod ? 'Sin cuota registrada' : isPaid ? `Pagado${hasReceipt ? ' · Con comprobante' : ''}` : isPartial ? 'Parcial' : 'Pendiente'}
                                                 >
-                                                    {isPaid ? '✓' : '✗'}
+                                                    {noPeriod ? '–' : isPaid ? (hasReceipt ? '✓📄' : '✓') : isPartial ? '½' : '✗'}
                                                 </td>
                                             );
                                         })}
@@ -4341,14 +4426,22 @@ const Admin: React.FC<Props> = ({ user }) => {
                         </table>
                     </div>
                     
-                    <div className="mt-4 flex gap-4 text-xs">
+                    <div className="mt-4 flex flex-wrap gap-4 text-xs">
                         <div className="flex items-center gap-2">
                             <div className="w-4 h-4 bg-green-600 rounded"></div>
                             <span className="text-gray-400">Pagado</span>
                         </div>
                         <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 bg-yellow-700/60 rounded"></div>
+                            <span className="text-gray-400">Parcial</span>
+                        </div>
+                        <div className="flex items-center gap-2">
                             <div className="w-4 h-4 bg-red-900/30 rounded border border-logia-700"></div>
                             <span className="text-gray-400">Pendiente</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 bg-logia-900/50 rounded border border-logia-700"></div>
+                            <span className="text-gray-400">Sin cuota</span>
                         </div>
                     </div>
                 </div>
@@ -4781,6 +4874,111 @@ const Admin: React.FC<Props> = ({ user }) => {
         )}
 
       </div>
+
+      {/* MATRIX PAYMENT MODAL */}
+      {showMatrixModal && matrixModalPayment && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-logia-800 rounded-xl border border-logia-700 shadow-2xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-bold text-white">💰 Registrar Pago</h3>
+              <button onClick={() => setShowMatrixModal(false)} className="text-gray-400 hover:text-white text-2xl">×</button>
+            </div>
+            <div className="bg-logia-900 rounded p-3 text-sm space-y-1">
+              <p className="text-gray-400">Miembro: <span className="text-white font-bold">{matrixModalUserName}</span></p>
+              <p className="text-gray-400">Período: <span className="text-indigo-300 font-bold">{matrixModalPeriod}</span></p>
+              <p className="text-gray-400">Cuota mensual: <span className="text-white font-bold">${Number(matrixModalPayment.amount).toFixed(2)}</span></p>
+              <p className="text-gray-400">Ya pagado: <span className={`font-bold ${(matrixModalPayment.paidRegular || 0) > 0 ? 'text-green-400' : 'text-gray-500'}`}>${Number(matrixModalPayment.paidRegular !== undefined ? matrixModalPayment.paidRegular : matrixModalPayment.paid || 0).toFixed(2)}</span></p>
+              <p className="text-gray-400">Estado actual: <span className={`font-bold ${matrixModalPayment.regularCovered ? 'text-green-400' : 'text-yellow-300'}`}>{matrixModalPayment.regularCovered ? '✅ Pagado' : '⏳ Pendiente/Parcial'}</span></p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-2">
+                Monto pagado (deja vacío para marcar como pagado completo)
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={matrixModalAmountPaid}
+                onChange={e => setMatrixModalAmountPaid(e.target.value)}
+                placeholder={`Total: $${Number(matrixModalPayment.amount).toFixed(2)}`}
+                className="w-full px-3 py-2 bg-logia-900 border border-logia-700 rounded text-white text-sm focus:ring-2 focus:ring-indigo-500"
+              />
+              {matrixModalAmountPaid && Number(matrixModalAmountPaid) < Number(matrixModalPayment.amount) && (
+                <p className="text-xs text-yellow-400 mt-1">⚠️ Pago parcial – no se marcará como pagado completo.</p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Comentario (opcional)</label>
+              <input
+                type="text"
+                value={matrixModalComments}
+                onChange={e => setMatrixModalComments(e.target.value)}
+                placeholder="Ej: Pagó en efectivo, transferencia SPEI..."
+                className="w-full px-3 py-2 bg-logia-900 border border-logia-700 rounded text-white text-sm focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adjuntar comprobante (opcional)</label>
+              {matrixModalPayment.receiptImageBase64 && !matrixModalFile && (
+                <div className="mb-2">
+                  <p className="text-xs text-green-400 mb-1">📄 Comprobante existente:</p>
+                  <img
+                    src={matrixModalPayment.receiptImageBase64}
+                    alt="Comprobante actual"
+                    className="max-h-24 rounded border border-logia-700 object-contain cursor-pointer"
+                    onClick={() => setViewingReceiptImage(matrixModalPayment!.receiptImageBase64!)}
+                  />
+                </div>
+              )}
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  setMatrixModalFile(file);
+                  if (file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => setMatrixModalPreview(reader.result as string);
+                    reader.readAsDataURL(file);
+                  } else {
+                    setMatrixModalPreview(null);
+                  }
+                }}
+                className="w-full text-sm text-gray-300 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-bold file:bg-indigo-700 file:text-white hover:file:bg-indigo-600 cursor-pointer"
+              />
+              {matrixModalFile && (
+                <div className="mt-2">
+                  {matrixModalPreview ? (
+                    <img src={matrixModalPreview} alt="Vista previa" className="max-h-32 rounded border border-logia-700 object-contain" />
+                  ) : (
+                    <p className="text-xs text-green-400">📄 {matrixModalFile.name}</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setShowMatrixModal(false)}
+                className="flex-1 py-2 bg-logia-900 text-gray-300 rounded font-bold"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveMatrixPayment}
+                disabled={savingMatrixPayment}
+                className="flex-1 py-2 bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 text-white rounded font-bold"
+              >
+                {savingMatrixPayment ? 'Guardando...' : '💾 Guardar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* REJECT RECEIPT MODAL */}
       {showRejectModal && (

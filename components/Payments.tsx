@@ -18,6 +18,7 @@ interface PaymentRow {
   isMainRow: boolean;
   paymentDate?: string | null;
   comments?: string;
+  receiptImageBase64?: string;
 }
 
 const MONTH_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
@@ -88,7 +89,8 @@ const Payments: React.FC<Props> = ({ user }) => {
       totalBalance: regularBalance,
       isMainRow: true,
       paymentDate: payment.paymentDate,
-      comments: payment.comments
+      comments: payment.comments,
+      receiptImageBase64: payment.receiptImageBase64
     };
 
     if (payment.extraFees && payment.extraFees.length > 0) {
@@ -145,7 +147,14 @@ const Payments: React.FC<Props> = ({ user }) => {
   const pendingPeriods = payments
     .filter(p => {
       const reg = p.paidRegular !== undefined ? p.paidRegular : (Number(p.paid) || 0);
-      return (p.amount - reg) > 0;
+      const regularBalance = Math.max(0, p.amount - reg);
+      let extraBalance = 0;
+      if (p.extraFees && p.extraFees.length > 0) {
+        extraBalance = p.extraFees.reduce((s, ef) => s + Math.max(0, ef.amount - ef.paid), 0);
+      } else if (p.extraAmount) {
+        extraBalance = Math.max(0, p.extraAmount - (p.paidExtra || 0));
+      }
+      return regularBalance > 0 || extraBalance > 0;
     })
     .map(p => p.period);
 
@@ -364,7 +373,7 @@ const Payments: React.FC<Props> = ({ user }) => {
               const isExpanded = expandedPeriods.has(row.period);
               const receipt = row.isMainRow ? latestReceiptByPeriod(row.period) : undefined;
               const allPeriodReceipts = row.isMainRow ? receiptsByPeriod(row.period) : [];
-              const hasDetails = row.isMainRow && (row.paymentDate || row.comments || row.extraFee || allPeriodReceipts.length > 0);
+              const hasDetails = row.isMainRow && (row.paymentDate || row.comments || row.extraFee || allPeriodReceipts.length > 0 || receipt);
 
               return (
                 <React.Fragment key={`${row.period}-${idx}`}>
@@ -492,6 +501,30 @@ const Payments: React.FC<Props> = ({ user }) => {
                                 )}
                               </div>
                             ))}
+                          </div>
+                        )}
+
+                        {/* Admin-attached receipt (stored directly on payment record).
+                            Only show this if the member's PaymentReceipt entry doesn't already
+                            display the same image (to avoid showing the same comprobante twice). */}
+                        {row.receiptImageBase64 && !receipt?.receiptImageBase64 && (
+                          <div className="p-3 rounded border border-blue-600/40 bg-blue-900/10">
+                            <span className="text-xs font-bold text-blue-300 uppercase block mb-2">🧾 Comprobante Registrado por Admin</span>
+                            {row.receiptImageBase64.startsWith('data:application/pdf') ? (
+                              <a href={row.receiptImageBase64} target="_blank" rel="noreferrer" className="text-xs text-blue-400 underline">
+                                📄 Ver PDF
+                              </a>
+                            ) : (
+                              <div>
+                                <img
+                                  src={row.receiptImageBase64}
+                                  alt="Comprobante admin"
+                                  className="max-w-full rounded border border-logia-700 max-h-48 object-contain cursor-pointer"
+                                  onClick={() => window.open(row.receiptImageBase64, '_blank')}
+                                />
+                                <p className="text-xs text-gray-500 mt-1">Toca la imagen para verla completa</p>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -622,17 +655,21 @@ const Payments: React.FC<Props> = ({ user }) => {
 
               <div>
                 <label className="block text-xs font-bold text-gray-400 uppercase mb-2">
-                  Foto del comprobante <span className="text-red-400">*</span>
+                  Foto o archivo del comprobante <span className="text-red-400">*</span>
                 </label>
                 <input
-                  type="file" accept="image/*" capture="environment"
+                  type="file" accept="image/*,application/pdf"
                   onChange={handleFileChange}
                   className="w-full text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-bold file:bg-indigo-700 file:text-white hover:file:bg-indigo-600 cursor-pointer"
                   required
                 />
                 {receiptPreview && (
                   <div className="mt-2">
-                    <img src={receiptPreview} alt="Vista previa" className="max-h-40 rounded border border-logia-700 object-contain" />
+                    {receiptFile?.type === 'application/pdf' ? (
+                      <p className="text-xs text-green-400">📄 PDF seleccionado: {receiptFile.name}</p>
+                    ) : (
+                      <img src={receiptPreview} alt="Vista previa" className="max-h-40 rounded border border-logia-700 object-contain" />
+                    )}
                   </div>
                 )}
               </div>
