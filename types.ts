@@ -53,6 +53,7 @@ export interface User {
   // Masonic Dates (Admin only edit)
   masonicJoinDate?: string; // YYYY-MM-DD
   masonicRejoinDate?: string; // YYYY-MM-DD (Used for billing calculation)
+  leaveDate?: string; // YYYY-MM-DD: fecha de baja; conserva historial y detiene cargos/notificaciones
   
   // Masonic Status
   degree?: MasonicDegree;
