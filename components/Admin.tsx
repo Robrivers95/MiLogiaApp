@@ -119,6 +119,8 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDesc, setNewTaskDesc] = useState('');
   const [newTaskAssignee, setNewTaskAssignee] = useState('');
+  const [newTaskMode, setNewTaskMode] = useState<'individual' | 'team'>('individual');
+  const [newTaskAssignees, setNewTaskAssignees] = useState<Set<string>>(new Set());
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
   const [showDeleteTaskModal, setShowDeleteTaskModal] = useState(false);
@@ -1846,9 +1848,25 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   // TASKS HANDLERS
+  const resetTaskForm = () => {
+      setNewTaskTitle('');
+      setNewTaskDesc('');
+      setNewTaskAssignee('');
+      setNewTaskAssignees(new Set());
+      setNewTaskMode('individual');
+      setEditingTask(null);
+  };
+
   const handleSaveTask = async () => {
-      if (isReadOnly || !newTaskTitle) {
-          showMessage("El título es obligatorio", 'error');
+      if (isReadOnly || !newTaskTitle.trim()) {
+          showMessage('El título es obligatorio', 'error');
+          return;
+      }
+      const selectedIds = editingTask
+          ? (newTaskAssignee ? [newTaskAssignee] : [])
+          : Array.from(newTaskAssignees);
+      if (!editingTask && selectedIds.length === 0) {
+          showMessage('Selecciona al menos un miembro', 'error');
           return;
       }
       try {
@@ -1856,108 +1874,63 @@ const Admin: React.FC<Props> = ({ user }) => {
           if (editingTask) {
               const assignedUser = newTaskAssignee ? users.find(u => u.uid === newTaskAssignee) : undefined;
               await dataService.updateTask(user.groupId, editingTask.id, {
-                  title: newTaskTitle,
-                  description: newTaskDesc,
+                  title: newTaskTitle.trim(), description: newTaskDesc.trim(),
                   assignedTo: newTaskAssignee || undefined,
                   assignedToName: assignedUser?.name || undefined
               });
-              showMessage("Tarea actualizada");
-          } else {
-              const assignedUser = newTaskAssignee ? users.find(u => u.uid === newTaskAssignee) : undefined;
+              showMessage('Tarea actualizada');
+          } else if (newTaskMode === 'team') {
+              const selectedUsers = users.filter(u => selectedIds.includes(u.uid));
               await dataService.createTask({
-                  groupId: user.groupId,
-                  title: newTaskTitle,
-                  description: newTaskDesc,
-                  assignedTo: newTaskAssignee || undefined,
-                  assignedToName: assignedUser?.name || undefined,
-                  completed: false,
-                  createdAt: new Date().toISOString(),
-                  createdBy: user.uid,
-                  createdByName: user.name
+                  groupId: user.groupId, title: newTaskTitle.trim(), description: newTaskDesc.trim(),
+                  assignmentMode: 'team', assignedToMany: selectedIds,
+                  assignedToNames: selectedUsers.map(u => u.name), completed: false,
+                  createdAt: new Date().toISOString(), createdBy: user.uid, createdByName: user.name
               });
-              showMessage("Tarea creada");
-              
-              // Enviar notificación al usuario asignado
-              if (newTaskAssignee && assignedUser) {
-                  try {
-                      const userTokenRef = await getDocs(collection(db, 'users'));
-                      const userData = userTokenRef.docs.find(d => d.id === newTaskAssignee)?.data();
-                      
-                      if (userData?.fcmToken) {
-                          await fetch('https://us-central1-registrologia.cloudfunctions.net/sendNotification', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                  tokens: [userData.fcmToken],
-                                  notification: {
-                                      title: '✅ Nueva Tarea Asignada',
-                                      body: newTaskTitle,
-                                      icon: '/icon-192.png'
-                                  }
-                              })
-                          });
-                      }
-                  } catch (e) {
-                      console.log('No se pudo enviar notificación:', e);
-                  }
-              }
+              showMessage('Tarea de equipo creada para ' + selectedIds.length + ' miembros');
+          } else {
+              const batchId = 'task_batch_' + Date.now();
+              await Promise.all(selectedIds.map(uid => {
+                  const target = users.find(u => u.uid === uid);
+                  return dataService.createTask({
+                      groupId: user.groupId, title: newTaskTitle.trim(), description: newTaskDesc.trim(),
+                      assignmentMode: 'individual', assignedTo: uid, assignedToName: target?.name,
+                      batchId, completed: false, createdAt: new Date().toISOString(),
+                      createdBy: user.uid, createdByName: user.name
+                  });
+              }));
+              showMessage(selectedIds.length + ' tareas individuales creadas');
           }
-          setNewTaskTitle('');
-          setNewTaskDesc('');
-          setNewTaskAssignee('');
-          setEditingTask(null);
+          if (!editingTask && selectedIds.length > 0) {
+              try {
+                  await notificationService.createNotification(selectedIds, user.groupId, 'task', '✅ Nueva tarea asignada', newTaskTitle.trim());
+              } catch (_) {}
+          }
+          resetTaskForm();
           await loadTasks();
       } catch (e) {
           console.error(e);
-          showMessage("Error guardando tarea", 'error');
-      } finally {
-          setIsSubmitting(false);
-      }
+          showMessage('Error guardando tarea', 'error');
+      } finally { setIsSubmitting(false); }
   };
 
   const handleToggleTask = async (taskId: string, currentCompleted: boolean) => {
       if (isReadOnly) return;
-      try {
-          await dataService.toggleTaskComplete(user.groupId, taskId, !currentCompleted, user.uid);
-          await loadTasks();
-      } catch (e) {
-          console.error(e);
-          showMessage("Error actualizando tarea", 'error');
-      }
+      try { await dataService.toggleTaskComplete(user.groupId, taskId, !currentCompleted, user.uid); await loadTasks(); }
+      catch (e) { console.error(e); showMessage('Error actualizando tarea', 'error'); }
   };
 
   const handleEditTask = (task: Task) => {
-      setEditingTask(task);
-      setNewTaskTitle(task.title);
-      setNewTaskDesc(task.description || '');
+      setEditingTask(task); setNewTaskTitle(task.title); setNewTaskDesc(task.description || '');
       setNewTaskAssignee(task.assignedTo || '');
   };
-
-  const handleDeleteTask = (id: string) => {
-      setDeletingTaskId(id);
-      setShowDeleteTaskModal(true);
-  };
-
+  const handleDeleteTask = (id: string) => { setDeletingTaskId(id); setShowDeleteTaskModal(true); };
   const handleExecuteDeleteTask = async () => {
       if (isReadOnly || !deletingTaskId) return;
-      try {
-          await dataService.deleteTask(user.groupId, deletingTaskId);
-          showMessage("Tarea eliminada");
-          setShowDeleteTaskModal(false);
-          setDeletingTaskId(null);
-          await loadTasks();
-      } catch (e) {
-          console.error(e);
-          showMessage("Error eliminando tarea", 'error');
-      }
+      try { await dataService.deleteTask(user.groupId, deletingTaskId); showMessage('Tarea eliminada'); setShowDeleteTaskModal(false); setDeletingTaskId(null); await loadTasks(); }
+      catch (e) { console.error(e); showMessage('Error eliminando tarea', 'error'); }
   };
-
-  const handleCancelEditTask = () => {
-      setEditingTask(null);
-      setNewTaskTitle('');
-      setNewTaskDesc('');
-      setNewTaskAssignee('');
-  };
+  const handleCancelEditTask = resetTaskForm;
 
   // TRIVIA HANDLERS
   const handleDeleteTrivia = (triviaId: string) => {
@@ -3723,125 +3696,34 @@ const Admin: React.FC<Props> = ({ user }) => {
         )}
 
         {activeTab === 'tasks' && (
-             <div className="space-y-6">
-                <h3 className="text-lg font-bold text-white">Gestión de Tareas</h3>
-                
-                <div className="bg-logia-800 rounded-xl p-6 border border-logia-700 shadow-lg">
-                    <h4 className="text-md font-bold text-white mb-4">{editingTask ? 'Editar Tarea' : 'Crear Nueva Tarea'}</h4>
-                    
-                    <div className="space-y-3">
-                        <input 
-                            type="text" 
-                            placeholder="Título de la Tarea *" 
-                            value={newTaskTitle}
-                            onChange={e => setNewTaskTitle(e.target.value)}
-                            disabled={isReadOnly}
-                            className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white font-bold"
-                        />
-                        <textarea 
-                            placeholder="Descripción (opcional)..." 
-                            value={newTaskDesc}
-                            onChange={e => setNewTaskDesc(e.target.value)}
-                            disabled={isReadOnly}
-                            rows={3}
-                            className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
-                        />
-
-                        <div>
-                            <label className="text-xs uppercase text-gray-400 mb-1 block font-bold">Asignar a</label>
-                            <select 
-                                value={newTaskAssignee}
-                                onChange={e => setNewTaskAssignee(e.target.value)}
-                                disabled={isReadOnly}
-                                className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
-                            >
-                                <option value="">Sin asignar</option>
-                                {users.filter(u => u.active && u.role !== 'viewer').map(u => (
-                                    <option key={u.uid} value={u.uid}>{u.name}</option>
-                                ))}
-                            </select>
-                        </div>
-                        
-                        <div className="flex gap-3">
-                            <button 
-                                onClick={handleSaveTask}
-                                disabled={isReadOnly || isSubmitting}
-                                className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded disabled:opacity-50"
-                            >
-                                {isSubmitting ? 'Guardando...' : (editingTask ? 'Actualizar Tarea' : 'Crear Tarea')}
-                            </button>
-                            {editingTask && (
-                                <button 
-                                    onClick={handleCancelEditTask}
-                                    className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 rounded"
-                                >
-                                    Cancelar
-                                </button>
-                            )}
-                        </div>
-                    </div>
+          <div className="space-y-6">
+            <h3 className="text-lg font-bold text-white">Gestión de Tareas</h3>
+            <div className="bg-logia-800 rounded-xl p-5 border border-logia-700 shadow-lg space-y-4">
+              <h4 className="font-bold text-white">{editingTask ? 'Editar tarea' : 'Asignar tarea'}</h4>
+              <input type="text" placeholder="Título de la tarea *" value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} disabled={isReadOnly} className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white font-bold" />
+              <textarea placeholder="Descripción (opcional)" value={newTaskDesc} onChange={e => setNewTaskDesc(e.target.value)} disabled={isReadOnly} rows={3} className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white" />
+              {!editingTask ? <>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => setNewTaskMode('individual')} className={'p-3 rounded border text-sm font-bold ' + (newTaskMode === 'individual' ? 'bg-indigo-700 border-indigo-500 text-white' : 'bg-logia-900 border-logia-700 text-gray-300')}>👤 Individual masiva</button>
+                  <button onClick={() => setNewTaskMode('team')} className={'p-3 rounded border text-sm font-bold ' + (newTaskMode === 'team' ? 'bg-purple-700 border-purple-500 text-white' : 'bg-logia-900 border-logia-700 text-gray-300')}>👥 Tarea de equipo</button>
                 </div>
-
-                <div className="bg-logia-800 rounded-xl border border-logia-700 shadow-lg overflow-hidden">
-                    <div className="p-4 border-b border-logia-700">
-                        <h4 className="font-bold text-white">Lista de Tareas ({tasks.filter(t => !t.completed).length} pendientes / {tasks.filter(t => t.completed).length} completadas)</h4>
-                    </div>
-                    <div className="p-4 space-y-2">
-                        {tasks.length === 0 ? (
-                            <p className="text-gray-400 text-center py-4">No hay tareas creadas</p>
-                        ) : (
-                            tasks.map(task => (
-                                <div key={task.id} className={`${task.completed ? 'bg-logia-900/50 border-logia-700/50' : 'bg-logia-900 border-logia-700'} p-4 rounded border flex items-start gap-3`}>
-                                    <input 
-                                        type="checkbox" 
-                                        checked={task.completed}
-                                        onChange={() => handleToggleTask(task.id, task.completed)}
-                                        disabled={isReadOnly}
-                                        className="mt-1 w-5 h-5 cursor-pointer"
-                                    />
-                                    <div className="flex-1">
-                                        <h5 className={`font-bold ${task.completed ? 'text-gray-500 line-through' : 'text-white'} text-base`}>{task.title}</h5>
-                                        {task.description && <p className={`text-sm mt-1 ${task.completed ? 'text-gray-600' : 'text-gray-400'}`}>{task.description}</p>}
-                                        <div className="flex flex-wrap gap-2 mt-2 text-xs">
-                                            {task.assignedToName && (
-                                                <span className="bg-blue-900/40 text-blue-300 px-2 py-1 rounded border border-blue-500/30">
-                                                    👤 {task.assignedToName}
-                                                </span>
-                                            )}
-                                            {task.completed && task.completedAt && (
-                                                <span className="bg-green-900/40 text-green-300 px-2 py-1 rounded border border-green-500/30">
-                                                    ✅ {new Date(task.completedAt).toLocaleDateString('es-MX')}
-                                                </span>
-                                            )}
-                                            <span className="text-gray-500">
-                                                Creada: {new Date(task.createdAt).toLocaleDateString('es-MX')} por {task.createdByName || 'Admin'}
-                                            </span>
-                                        </div>
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <button 
-                                            onClick={() => handleEditTask(task)}
-                                            disabled={isReadOnly}
-                                            className="text-gray-400 hover:text-white p-2 bg-logia-800 rounded border border-logia-700"
-                                            title="Editar"
-                                        >
-                                            ✏️
-                                        </button>
-                                        <button 
-                                            onClick={() => handleDeleteTask(task.id)}
-                                            disabled={isReadOnly}
-                                            className="text-white p-2 bg-red-600 rounded border border-red-700 hover:bg-red-500"
-                                            title="Eliminar"
-                                        >
-                                            🗑️
-                                        </button>
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
+                <p className="text-xs text-gray-400">{newTaskMode === 'individual' ? 'Se creará una tarea independiente para cada miembro seleccionado.' : 'Se creará una sola tarea compartida por todo el equipo seleccionado.'}</p>
+                <div className="flex gap-2">
+                  <button onClick={() => setNewTaskAssignees(new Set(users.filter(u => u.active && u.role !== 'viewer').map(u => u.uid)))} className="text-xs bg-logia-900 border border-logia-700 px-3 py-2 rounded text-gray-300">Seleccionar todos</button>
+                  <button onClick={() => setNewTaskAssignees(new Set())} className="text-xs bg-logia-900 border border-logia-700 px-3 py-2 rounded text-gray-300">Limpiar</button>
                 </div>
+                <div className="max-h-64 overflow-y-auto bg-logia-900 rounded border border-logia-700 p-2 space-y-1">
+                  {users.filter(u => u.active && u.role !== 'viewer').map(u => <label key={u.uid} className="flex items-center gap-3 p-2 hover:bg-logia-800 rounded cursor-pointer"><input type="checkbox" checked={newTaskAssignees.has(u.uid)} onChange={e => { const next = new Set(newTaskAssignees); e.target.checked ? next.add(u.uid) : next.delete(u.uid); setNewTaskAssignees(next); }} className="w-5 h-5 accent-indigo-500" /><span className="text-gray-300">{u.name}</span></label>)}
+                </div>
+                <p className="text-xs text-indigo-300">{newTaskAssignees.size} miembro(s) seleccionado(s)</p>
+              </> : <select value={newTaskAssignee} onChange={e => setNewTaskAssignee(e.target.value)} className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"><option value="">Sin asignar</option>{users.filter(u => u.active && u.role !== 'viewer').map(u => <option key={u.uid} value={u.uid}>{u.name}</option>)}</select>}
+              <div className="flex gap-3"><button onClick={handleSaveTask} disabled={isReadOnly || isSubmitting} className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded disabled:opacity-50">{isSubmitting ? 'Guardando...' : editingTask ? 'Actualizar tarea' : newTaskMode === 'team' ? 'Crear tarea de equipo' : 'Crear ' + newTaskAssignees.size + ' tarea(s)'}</button>{editingTask && <button onClick={handleCancelEditTask} className="flex-1 bg-gray-700 text-white font-bold py-3 rounded">Cancelar</button>}</div>
             </div>
+            <div className="bg-logia-800 rounded-xl border border-logia-700 shadow-lg overflow-hidden">
+              <div className="p-4 border-b border-logia-700"><h4 className="font-bold text-white">Lista de Tareas ({tasks.filter(t => !t.completed).length} pendientes / {tasks.filter(t => t.completed).length} completadas)</h4></div>
+              <div className="p-4 space-y-2">{tasks.length === 0 ? <p className="text-gray-400 text-center py-4">No hay tareas creadas</p> : tasks.map(task => <div key={task.id} className={(task.completed ? 'bg-logia-900/50' : 'bg-logia-900') + ' border border-logia-700 p-4 rounded flex items-start gap-3'}><input type="checkbox" checked={task.completed} onChange={() => handleToggleTask(task.id, task.completed)} disabled={isReadOnly} className="mt-1 w-5 h-5" /><div className="flex-1"><div className="flex flex-wrap items-center gap-2"><h5 className={'font-bold ' + (task.completed ? 'text-gray-500 line-through' : 'text-white')}>{task.title}</h5>{task.assignmentMode === 'team' && <span className="text-[10px] bg-purple-900/50 text-purple-300 border border-purple-600/40 rounded px-2 py-1">👥 Equipo</span>}</div>{task.description && <p className="text-sm text-gray-400 mt-1">{task.description}</p>}<p className="text-xs text-blue-300 mt-2">{task.assignmentMode === 'team' ? 'Equipo: ' + (task.assignedToNames || []).join(', ') : task.assignedToName ? '👤 ' + task.assignedToName : 'Sin asignar'}</p></div><div className="flex gap-2"><button onClick={() => handleEditTask(task)} disabled={isReadOnly || task.assignmentMode === 'team'} className="p-2 bg-logia-800 rounded border border-logia-700 disabled:opacity-30">✏️</button><button onClick={() => handleDeleteTask(task.id)} disabled={isReadOnly} className="p-2 bg-red-600 rounded">🗑️</button></div></div>)}</div>
+            </div>
+          </div>
         )}
 
         {activeTab === 'treasury' && (

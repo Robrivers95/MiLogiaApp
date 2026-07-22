@@ -100,8 +100,12 @@ export interface Task {
   groupId: string;
   title: string;
   description?: string;
-  assignedTo?: string; // User UID
+  assignedTo?: string; // User UID (tarea individual legacy)
   assignedToName?: string; // User name for display
+  assignmentMode?: 'individual' | 'team';
+  assignedToMany?: string[]; // UIDs seleccionados para una tarea de equipo
+  assignedToNames?: string[]; // Nombres para mostrar
+  batchId?: string; // Agrupa tareas individuales creadas en una sola orden
   completed: boolean;
   completedAt?: string; // ISO
   completedBy?: string; // User UID
@@ -270,7 +274,7 @@ export interface ExtraFee {
 }
 
 // In-app + browser notifications vía Firestore
-export type NotificationType = 'attendance' | 'trivia' | 'notice' | 'profile_edit' | 'payment' | 'payment_receipt';
+export type NotificationType = 'attendance' | 'trivia' | 'notice' | 'profile_edit' | 'payment' | 'payment_receipt' | 'task';
 
 export interface AppNotification {
   id: string;

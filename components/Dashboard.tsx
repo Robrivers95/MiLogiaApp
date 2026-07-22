@@ -15,8 +15,11 @@ const Dashboard: React.FC<Props> = ({ user }) => {
     const loadMyTasks = async () => {
       try {
         const allTasks = await dataService.getTasks(user.groupId);
-        // Filter tasks assigned to current user and not completed
-        const filtered = allTasks.filter(t => t.assignedTo === user.uid && !t.completed);
+        // Individual: one document per member. Team: one shared document visible to every selected member.
+        const filtered = allTasks.filter(t => !t.completed && (
+          t.assignedTo === user.uid ||
+          (t.assignmentMode === 'team' && Array.isArray(t.assignedToMany) && t.assignedToMany.includes(user.uid))
+        ));
         setMyTasks(filtered);
       } catch (e) {
         console.error("Error cargando tareas", e);
@@ -87,7 +90,10 @@ const Dashboard: React.FC<Props> = ({ user }) => {
           <div className="space-y-2">
             {myTasks.map(task => (
               <div key={task.id} className="bg-logia-900 p-3 rounded border border-logia-700">
-                <h4 className="font-bold text-white text-sm">{task.title}</h4>
+                <div className="flex items-center justify-between gap-2">
+                   <h4 className="font-bold text-white text-sm">{task.title}</h4>
+                   {task.assignmentMode === 'team' && <span className="text-[10px] bg-purple-900/50 text-purple-300 border border-purple-600/40 rounded px-2 py-1">👥 Equipo</span>}
+                 </div>
                 {task.description && (
                   <p className="text-gray-400 text-xs mt-1">{task.description}</p>
                 )}
