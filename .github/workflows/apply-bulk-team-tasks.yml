@@ -5,6 +5,7 @@ on:
     branches: [bulk-and-team-tasks]
     paths:
       - scripts/apply-bulk-team-tasks.mjs
+      - .github/workflows/apply-bulk-team-tasks.yml
 
 permissions:
   contents: write
