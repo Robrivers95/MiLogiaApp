@@ -71,7 +71,7 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
       {suspended && <div className="bg-red-900/80 border-b border-red-700 px-4 py-3 text-center sticky top-[60px] z-20"><p className="text-red-100 text-sm font-bold">⚠️ La fecha de pago expiró, comunícate con el administrador{' '}<a href="https://wa.me/528611013113" target="_blank" rel="noopener noreferrer" className="underline text-white">+52 8611013113</a></p><p className="text-red-300 text-xs mt-1">Modo solo lectura — No se pueden realizar cambios</p></div>}
 
       <main className="w-full max-w-3xl mx-auto min-h-[calc(100vh-140px)]">{children}</main>
-      <div className="fixed bottom-20 left-2 text-[10px] text-gray-600 font-mono bg-logia-900/80 px-2 py-1 rounded border border-logia-700/50 z-10">v3.8.0</div>
+      <div className="fixed bottom-20 left-2 text-[10px] text-gray-600 font-mono bg-logia-900/80 px-2 py-1 rounded border border-logia-700/50 z-10">v3.9.0</div>
 
       <nav className="fixed bottom-0 left-0 w-full bg-logia-800 border-t border-logia-700 pb-safe z-30 overflow-x-auto">
         <div className="max-w-3xl mx-auto flex justify-between items-center h-16 min-w-[350px]">
