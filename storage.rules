@@ -1,0 +1,45 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isPdf() {
+      return request.resource != null &&
+             request.resource.contentType == 'application/pdf';
+    }
+
+    // Biblioteca de Alejandría uploads. Existing files elsewhere are left untouched.
+    match /library/{groupId}/{userId}/{fileName} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isPdf() &&
+                       request.resource.size < 25 * 1024 * 1024;
+      allow update: if false;
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Preserve access to likely legacy library folders without moving old PDFs.
+    match /biblioteca/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /bibliotecaAlejandria/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /documents/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Existing receipt and notice uploads must retain their current behavior.
+    match /{allPaths=**} {
+      allow read, write: if isSignedIn();
+    }
+  }
+}
