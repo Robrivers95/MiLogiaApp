@@ -1,169 +1,166 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Helper function to check if user is authenticated
     function isSignedIn() {
       return request.auth != null;
     }
-    
-    // Helper function to check if user is admin or master
+
     function isAdminOrMaster() {
-      return isSignedIn() && 
+      return isSignedIn() &&
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
              (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master');
     }
-    
-    // Helper function to check if a group is active (not suspended)
+
     function isGroupActive(groupId) {
       return !exists(/databases/$(database)/documents/groups/$(groupId)) ||
              !('active' in get(/databases/$(database)/documents/groups/$(groupId)).data) ||
              get(/databases/$(database)/documents/groups/$(groupId)).data.active == true;
     }
 
-    // Helper: check if current user's group is active
     function isUserGroupActive() {
-      return isGroupActive(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId);
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             isGroupActive(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId);
     }
 
-    // Helper: is master role
     function isMaster() {
-      return isSignedIn() && 
+      return isSignedIn() &&
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master';
     }
-    
-    // Users collection
+
+    function canWriteLibrary() {
+      return isSignedIn() && (isMaster() || isUserGroupActive());
+    }
+
     match /users/{userId} {
-      // Any authenticated user can read user profiles
       allow read: if isSignedIn();
-      // Users can create their own profile (during registration)
       allow create: if isSignedIn() && request.auth.uid == userId;
-      // Admin/Master can create users (v3.0.0: for manual user creation)
       allow create: if isAdminOrMaster();
-      // Users can update their own profile
       allow update: if isSignedIn() && request.auth.uid == userId;
-      // Admin/Master can update any user
       allow update: if isAdminOrMaster();
-      // Admin/Master can delete users
       allow delete: if isAdminOrMaster();
-      
-      // Subcollections
+
       match /ledger/{ledgerId} {
-        // Any authenticated user can read ledger (viewer needs this)
         allow read: if isSignedIn();
-        allow write: if isSignedIn() && 
+        allow write: if isSignedIn() &&
                         (request.auth.uid == userId || isAdminOrMaster()) &&
                         (isMaster() || isUserGroupActive());
       }
-      
+
       match /attendance/{attendanceId} {
-        // Any authenticated user can read attendance (viewer needs this)
         allow read: if isSignedIn();
-        allow write: if isSignedIn() && 
+        allow write: if isSignedIn() &&
                         (request.auth.uid == userId || isAdminOrMaster()) &&
                         (isMaster() || isUserGroupActive());
       }
-      
+
       match /triviaAnswers/{answerId} {
-        // Any authenticated user can read trivia answers
         allow read: if isSignedIn();
-        // Write blocked if group suspended (except master)
         allow write: if isSignedIn() && request.auth.uid == userId && (isMaster() || isUserGroupActive());
         allow write: if isMaster();
       }
 
       match /notifications/{notifId} {
-        // User can read their own notifications
         allow read: if isSignedIn() && request.auth.uid == userId;
-        // Any signed-in user can create notifications for others (admin notifying members)
         allow create: if isSignedIn();
-        // User can update their own (mark read), admin can also update
         allow update: if isSignedIn() && (request.auth.uid == userId || isAdminOrMaster());
         allow delete: if isSignedIn() && (request.auth.uid == userId || isAdminOrMaster());
       }
     }
-    
-    // Groups collection
+
     match /groups/{groupId} {
-      // Anyone can read groups (REQUIRED for registration - users not yet authenticated)
       allow read: if true;
-      // Only admin/master can create/update/delete groups
       allow write: if isAdminOrMaster();
-      
-      // Subcollections
+
       match /treasury/{entryId} {
-        // Any authenticated user can read treasury
         allow read: if isSignedIn();
         allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
       }
-      
+
       match /notices/{noticeId} {
-        // Any authenticated user can read notices
         allow read: if isSignedIn();
         allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
       }
-      
+
       match /paymentReceipts/{receiptId} {
-        // Admin can read all receipts; members can read their own
-        allow read: if isSignedIn() && 
+        allow read: if isSignedIn() &&
                        (isAdminOrMaster() || resource.data.userId == request.auth.uid);
-        // Any signed-in user can submit a receipt for their own userId
-        allow create: if isSignedIn() && 
+        allow create: if isSignedIn() &&
                          request.resource.data.userId == request.auth.uid;
-        // Only admin/master can approve/reject
         allow update: if isAdminOrMaster();
         allow delete: if isAdminOrMaster();
       }
-      
+
       match /tasks/{taskId} {
-        // Any authenticated user can read tasks
         allow read: if isSignedIn();
         allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
       }
     }
-    
-    // Trivias collection
+
     match /trivias/{triviaId} {
-      // Anyone authenticated can read trivias
       allow read: if isSignedIn();
-      // Only admin/master can write, blocked if group suspended (except master)
       allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
     }
-    
-    // Visit Requests collection
+
     match /visitRequests/{requestId} {
-      // Anyone authenticated can read visit requests (to see their own)
       allow read: if isSignedIn();
-      // Admin/Master can create visit requests, blocked if group suspended
-      allow create: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
-      allow update: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
-      allow delete: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
+      allow create, update, delete: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
     }
 
-    // Bank Balances collection
     match /bankBalances/{balanceId} {
-      // Any authenticated user can read bank balances
       allow read: if isSignedIn();
-      // Blocked if group suspended (except master)
       allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
     }
 
-    // Extra Fees collection
     match /extraFees/{feeId} {
-      // Any authenticated user can read extra fees
       allow read: if isSignedIn();
-      // Blocked if group suspended (except master)
       allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
     }
 
-    // App Configuration collection (for app icons, etc.)
     match /appConfig/{configId} {
-      // Anyone can read app configuration (for icons)
       allow read: if true;
-      // Only Master can write app configuration
       allow write: if isMaster();
+    }
+
+    // Biblioteca de Alejandría. The aliases are intentionally retained so old PDFs,
+    // likes and comments can reappear without migrating or deleting production data.
+    match /libraryPosts/{postId} {
+      allow read: if isSignedIn();
+      allow create: if canWriteLibrary() && request.resource.data.authorId == request.auth.uid;
+      allow update: if canWriteLibrary();
+      allow delete: if isAdminOrMaster() || (isSignedIn() && resource.data.authorId == request.auth.uid);
+    }
+
+    match /biblioteca/{postId} {
+      allow read: if isSignedIn();
+      allow update: if canWriteLibrary();
+      allow create, delete: if isAdminOrMaster();
+    }
+
+    match /bibliotecaAlejandria/{postId} {
+      allow read: if isSignedIn();
+      allow update: if canWriteLibrary();
+      allow create, delete: if isAdminOrMaster();
+    }
+
+    match /library/{postId} {
+      allow read: if isSignedIn();
+      allow update: if canWriteLibrary();
+      allow create, delete: if isAdminOrMaster();
+    }
+
+    match /publications/{postId} {
+      allow read: if isSignedIn();
+      allow update: if canWriteLibrary();
+      allow create, delete: if isAdminOrMaster();
+    }
+
+    match /documents/{postId} {
+      allow read: if isSignedIn();
+      allow update: if canWriteLibrary();
+      allow create, delete: if isAdminOrMaster();
     }
   }
 }
