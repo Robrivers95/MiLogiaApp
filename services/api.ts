@@ -314,6 +314,15 @@ export const authService = {
   }
 };
 
+const isBillableForPeriod = (u: User, period: string) => {
+  if (!u.active) return false;
+  const periodStart = period + '-01';
+  const periodEnd = period + '-31';
+  if (u.masonicRejoinDate && u.masonicRejoinDate > periodEnd) return false;
+  if (u.leaveDate && u.leaveDate < periodStart) return false;
+  return true;
+};
+
 export const dataService = {
   getAllGroups: async (): Promise<Group[]> => {
     try {
@@ -2078,7 +2087,7 @@ export const dataService = {
     createdByName: string
   ): Promise<string> => {
     const users = await dataService.getUsers(groupId);
-    const activeUsers = users.filter(u => u.active);
+    const activeUsers = users.filter(u => isBillableForPeriod(u, period));
     const appliedToUsers = activeUsers.map(u => u.uid);
     
     // 1. Crear registro en extraFees
@@ -2131,7 +2140,7 @@ export const dataService = {
     createdByName: string
   ): Promise<string> => {
     const users = await dataService.getUsers(groupId);
-    const activeUsers = users.filter(u => u.active);
+    const activeUsers = users.filter(u => isBillableForPeriod(u, period));
     const appliedToUsers = activeUsers.map(u => u.uid);
     
     // 1. Create record in extraFees collection
@@ -2316,9 +2325,15 @@ export const notificationService = {
     title: string,
     body: string
   ) => {
-    // 1. In-app notifications in Firestore
+    // 1. Excluir usuarios inactivos o dados de baja.
+    const userDocs = await Promise.all(uids.map(uid => getDoc(doc(db, 'users', uid))));
+    const eligibleUids = uids.filter((uid, index) => {
+      const data = userDocs[index]?.data() as User | undefined;
+      return !!data && data.active !== false && !data.leaveDate;
+    });
+    if (eligibleUids.length === 0) return;
     const batch = writeBatch(db);
-    for (const uid of uids) {
+    for (const uid of eligibleUids) {
       const ref = doc(collection(db, 'users', uid, 'notifications'));
       const notif: AppNotification = {
         id: ref.id,
@@ -2336,7 +2351,7 @@ export const notificationService = {
 
     // 2. FCM push via Cloud Function (best effort — doesn't fail the whole operation)
     try {
-      const tokenDocs = await Promise.all(uids.map(uid => getDoc(doc(db, 'users', uid))));
+      const tokenDocs = await Promise.all(eligibleUids.map(uid => getDoc(doc(db, 'users', uid))));
       const fcmTokens = tokenDocs
         .map(d => d.data()?.fcmToken as string | undefined)
         .filter((t): t is string => !!t);

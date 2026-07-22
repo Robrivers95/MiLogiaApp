@@ -948,19 +948,20 @@ const Admin: React.FC<Props> = ({ user }) => {
 
   const handleToggleActive = async (uid: string, current: boolean) => {
     if (isReadOnly) return;
-    
-    // Find the user to check if they need groupId assignment
     const targetUser = users.find(u => u.uid === uid);
-    
-    // If activating a user without groupId, assign them to this group
-    if (!current && targetUser && !targetUser.groupId) {
-      await dataService.assignUserToGroup(uid, user.groupId);
-      console.log("Assigned user to groupId:", user.groupId);
+    if (!current && targetUser && !targetUser.groupId) await dataService.assignUserToGroup(uid, user.groupId);
+    if (current) {
+      const leaveDate = window.prompt('Fecha de baja (YYYY-MM-DD). El historial contable se conservará:', targetUser?.leaveDate || new Date().toISOString().slice(0, 10));
+      if (!leaveDate) return;
+      await dataService.updateUser(uid, { active: false, leaveDate });
+      showMessage('Usuario dado de baja; conserva historial y ya no recibe cargos ni notificaciones.');
+    } else {
+      const rejoinDate = window.prompt('Fecha de reingreso (YYYY-MM-DD). Las cuotas correrán desde esta fecha:', targetUser?.masonicRejoinDate || new Date().toISOString().slice(0, 10));
+      if (!rejoinDate) return;
+      await dataService.updateUser(uid, { active: true, masonicRejoinDate: rejoinDate, leaveDate: undefined });
+      showMessage('Usuario reactivado desde la fecha de reingreso.');
     }
-    
-    await dataService.updateUserStatus(uid, !current);
-    loadUsers();
-    showMessage(current ? 'Usuario desactivado' : 'Usuario aceptado y activado');
+    await loadUsers();
   };
   
   const handleChangeRole = async (uid: string, newRole: Role) => {
@@ -3310,7 +3311,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                             <tr key={u.uid} className={`hover:bg-logia-700/30 ${u.active ? '' : 'opacity-50'}`}>
                                                 <td className="p-3 text-white">
                                                     {u.name}
-                                                    {!u.active && <span className="ml-2 text-xs text-gray-500">(Inactivo)</span>}
+                                                    {!u.active && <span className="ml-2 text-xs text-gray-500">(Inactivo{u.leaveDate ? ' · Baja ' + u.leaveDate : ''})</span>}
                                                 </td>
                                                 <td className="text-center p-3 text-gray-300">{stats.total}</td>
                                                 <td className="text-center p-3">
@@ -5206,7 +5207,7 @@ const Admin: React.FC<Props> = ({ user }) => {
 
                 {debtNotifTarget === 'selected' && (
                   <div className="bg-logia-900 rounded-lg p-3 max-h-64 overflow-y-auto space-y-1">
-                    {users.filter(u => u.active && u.role === 'member').map(u => (
+                    {users.filter(u => u.active && u.role !== 'viewer').map(u => (
                       <label key={u.uid} className="flex items-center gap-3 cursor-pointer hover:bg-logia-800 rounded px-2 py-1">
                         <input type="checkbox"
                           checked={debtNotifSelected.includes(u.uid)}
@@ -5216,10 +5217,19 @@ const Admin: React.FC<Props> = ({ user }) => {
                           }}
                           className="w-4 h-4"
                         />
-                        <span className="text-sm text-gray-200">{u.name || u.email}</span>
+                        <span className="text-sm text-gray-200 flex-1">{u.name || u.email}</span>
+                        <span
+                          className={Number(userStats[u.uid]?.totalDebt || 0) > 0
+                            ? 'text-[10px] px-2 py-1 rounded bg-yellow-900/40 text-yellow-300'
+                            : 'text-[10px] px-2 py-1 rounded bg-green-900/40 text-green-300'}
+                        >
+                          {Number(userStats[u.uid]?.totalDebt || 0) > 0
+                            ? `Debe $${Number(userStats[u.uid]?.totalDebt || 0).toFixed(2)}`
+                            : 'Sin deuda'}
+                        </span>
                       </label>
                     ))}
-                    {users.filter(u => u.active && u.role === 'member').length === 0 && (
+                    {users.filter(u => u.active && u.role !== 'viewer').length === 0 && (
                       <p className="text-gray-500 text-sm text-center py-4">No hay miembros activos.</p>
                     )}
                   </div>
