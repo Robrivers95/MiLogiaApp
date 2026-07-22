@@ -32,9 +32,9 @@ dashboard = replaceOrFail(dashboard,
 dashboard = dashboard.replace(
 `                <h4 className="font-bold text-white text-sm">{task.title}</h4>`,
 `                <div className="flex items-center justify-between gap-2">
-                  <h4 className="font-bold text-white text-sm">{task.title}</h4>
-                  {task.assignmentMode === 'team' && <span className="text-[10px] bg-purple-900/50 text-purple-300 border border-purple-600/40 rounded px-2 py-1">👥 Equipo</span>}
-                </div>`);
+                   <h4 className="font-bold text-white text-sm">{task.title}</h4>
+                   {task.assignmentMode === 'team' && <span className="text-[10px] bg-purple-900/50 text-purple-300 border border-purple-600/40 rounded px-2 py-1">👥 Equipo</span>}
+                 </div>`);
 fs.writeFileSync('components/Dashboard.tsx', dashboard);
 
 let admin = fs.readFileSync('components/Admin.tsx', 'utf8');
@@ -89,9 +89,9 @@ const handlers = `  // TASKS HANDLERS
                   assignedToNames: selectedUsers.map(u => u.name), completed: false,
                   createdAt: new Date().toISOString(), createdBy: user.uid, createdByName: user.name
               });
-              showMessage(`Tarea de equipo creada para ${selectedIds.length} miembros`);
+              showMessage('Tarea de equipo creada para ' + selectedIds.length + ' miembros');
           } else {
-              const batchId = `task_batch_${Date.now()}`;
+              const batchId = 'task_batch_' + Date.now();
               await Promise.all(selectedIds.map(uid => {
                   const target = users.find(u => u.uid === uid);
                   return dataService.createTask({
@@ -101,7 +101,7 @@ const handlers = `  // TASKS HANDLERS
                       createdBy: user.uid, createdByName: user.name
                   });
               }));
-              showMessage(`${selectedIds.length} tareas individuales creadas`);
+              showMessage(selectedIds.length + ' tareas individuales creadas');
           }
           if (!editingTask && selectedIds.length > 0) {
               try {
@@ -149,8 +149,8 @@ const ui = `        {activeTab === 'tasks' && (
               <textarea placeholder="Descripción (opcional)" value={newTaskDesc} onChange={e => setNewTaskDesc(e.target.value)} disabled={isReadOnly} rows={3} className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white" />
               {!editingTask ? <>
                 <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => setNewTaskMode('individual')} className={`p-3 rounded border text-sm font-bold ${newTaskMode === 'individual' ? 'bg-indigo-700 border-indigo-500 text-white' : 'bg-logia-900 border-logia-700 text-gray-300'}`}>👤 Individual masiva</button>
-                  <button onClick={() => setNewTaskMode('team')} className={`p-3 rounded border text-sm font-bold ${newTaskMode === 'team' ? 'bg-purple-700 border-purple-500 text-white' : 'bg-logia-900 border-logia-700 text-gray-300'}`}>👥 Tarea de equipo</button>
+                  <button onClick={() => setNewTaskMode('individual')} className={'p-3 rounded border text-sm font-bold ' + (newTaskMode === 'individual' ? 'bg-indigo-700 border-indigo-500 text-white' : 'bg-logia-900 border-logia-700 text-gray-300')}>👤 Individual masiva</button>
+                  <button onClick={() => setNewTaskMode('team')} className={'p-3 rounded border text-sm font-bold ' + (newTaskMode === 'team' ? 'bg-purple-700 border-purple-500 text-white' : 'bg-logia-900 border-logia-700 text-gray-300')}>👥 Tarea de equipo</button>
                 </div>
                 <p className="text-xs text-gray-400">{newTaskMode === 'individual' ? 'Se creará una tarea independiente para cada miembro seleccionado.' : 'Se creará una sola tarea compartida por todo el equipo seleccionado.'}</p>
                 <div className="flex gap-2">
@@ -162,11 +162,11 @@ const ui = `        {activeTab === 'tasks' && (
                 </div>
                 <p className="text-xs text-indigo-300">{newTaskAssignees.size} miembro(s) seleccionado(s)</p>
               </> : <select value={newTaskAssignee} onChange={e => setNewTaskAssignee(e.target.value)} className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"><option value="">Sin asignar</option>{users.filter(u => u.active && u.role !== 'viewer').map(u => <option key={u.uid} value={u.uid}>{u.name}</option>)}</select>}
-              <div className="flex gap-3"><button onClick={handleSaveTask} disabled={isReadOnly || isSubmitting} className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded disabled:opacity-50">{isSubmitting ? 'Guardando...' : editingTask ? 'Actualizar tarea' : newTaskMode === 'team' ? 'Crear tarea de equipo' : `Crear ${newTaskAssignees.size} tarea(s)`}</button>{editingTask && <button onClick={handleCancelEditTask} className="flex-1 bg-gray-700 text-white font-bold py-3 rounded">Cancelar</button>}</div>
+              <div className="flex gap-3"><button onClick={handleSaveTask} disabled={isReadOnly || isSubmitting} className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded disabled:opacity-50">{isSubmitting ? 'Guardando...' : editingTask ? 'Actualizar tarea' : newTaskMode === 'team' ? 'Crear tarea de equipo' : 'Crear ' + newTaskAssignees.size + ' tarea(s)'}</button>{editingTask && <button onClick={handleCancelEditTask} className="flex-1 bg-gray-700 text-white font-bold py-3 rounded">Cancelar</button>}</div>
             </div>
             <div className="bg-logia-800 rounded-xl border border-logia-700 shadow-lg overflow-hidden">
               <div className="p-4 border-b border-logia-700"><h4 className="font-bold text-white">Lista de Tareas ({tasks.filter(t => !t.completed).length} pendientes / {tasks.filter(t => t.completed).length} completadas)</h4></div>
-              <div className="p-4 space-y-2">{tasks.length === 0 ? <p className="text-gray-400 text-center py-4">No hay tareas creadas</p> : tasks.map(task => <div key={task.id} className={`${task.completed ? 'bg-logia-900/50' : 'bg-logia-900'} border border-logia-700 p-4 rounded flex items-start gap-3`}><input type="checkbox" checked={task.completed} onChange={() => handleToggleTask(task.id, task.completed)} disabled={isReadOnly} className="mt-1 w-5 h-5" /><div className="flex-1"><div className="flex flex-wrap items-center gap-2"><h5 className={`font-bold ${task.completed ? 'text-gray-500 line-through' : 'text-white'}`}>{task.title}</h5>{task.assignmentMode === 'team' && <span className="text-[10px] bg-purple-900/50 text-purple-300 border border-purple-600/40 rounded px-2 py-1">👥 Equipo</span>}</div>{task.description && <p className="text-sm text-gray-400 mt-1">{task.description}</p>}<p className="text-xs text-blue-300 mt-2">{task.assignmentMode === 'team' ? `Equipo: ${(task.assignedToNames || []).join(', ')}` : task.assignedToName ? `👤 ${task.assignedToName}` : 'Sin asignar'}</p></div><div className="flex gap-2"><button onClick={() => handleEditTask(task)} disabled={isReadOnly || task.assignmentMode === 'team'} className="p-2 bg-logia-800 rounded border border-logia-700 disabled:opacity-30">✏️</button><button onClick={() => handleDeleteTask(task.id)} disabled={isReadOnly} className="p-2 bg-red-600 rounded">🗑️</button></div></div>)}</div>
+              <div className="p-4 space-y-2">{tasks.length === 0 ? <p className="text-gray-400 text-center py-4">No hay tareas creadas</p> : tasks.map(task => <div key={task.id} className={(task.completed ? 'bg-logia-900/50' : 'bg-logia-900') + ' border border-logia-700 p-4 rounded flex items-start gap-3'}><input type="checkbox" checked={task.completed} onChange={() => handleToggleTask(task.id, task.completed)} disabled={isReadOnly} className="mt-1 w-5 h-5" /><div className="flex-1"><div className="flex flex-wrap items-center gap-2"><h5 className={'font-bold ' + (task.completed ? 'text-gray-500 line-through' : 'text-white')}>{task.title}</h5>{task.assignmentMode === 'team' && <span className="text-[10px] bg-purple-900/50 text-purple-300 border border-purple-600/40 rounded px-2 py-1">👥 Equipo</span>}</div>{task.description && <p className="text-sm text-gray-400 mt-1">{task.description}</p>}<p className="text-xs text-blue-300 mt-2">{task.assignmentMode === 'team' ? 'Equipo: ' + (task.assignedToNames || []).join(', ') : task.assignedToName ? '👤 ' + task.assignedToName : 'Sin asignar'}</p></div><div className="flex gap-2"><button onClick={() => handleEditTask(task)} disabled={isReadOnly || task.assignmentMode === 'team'} className="p-2 bg-logia-800 rounded border border-logia-700 disabled:opacity-30">✏️</button><button onClick={() => handleDeleteTask(task.id)} disabled={isReadOnly} className="p-2 bg-red-600 rounded">🗑️</button></div></div>)}</div>
             </div>
           </div>
         )}
