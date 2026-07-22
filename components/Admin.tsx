@@ -5217,7 +5217,16 @@ const Admin: React.FC<Props> = ({ user }) => {
                           }}
                           className="w-4 h-4"
                         />
-                        <span className="text-sm text-gray-200 flex-1">{u.name || u.email}</span><span className={Number(userStats[u.uid]?.totalDebt || 0) > 0 ? 'text-[10px] px-2 py-1 rounded bg-yellow-900/40 text-yellow-300' : 'text-[10px] px-2 py-1 rounded bg-green-900/40 text-green-300'}>{Number(userStats[u.uid]?.totalDebt || 0) > 0 ? '
+                        <span className="text-sm text-gray-200 flex-1">{u.name || u.email}</span>
+                        <span
+                          className={Number(userStats[u.uid]?.totalDebt || 0) > 0
+                            ? 'text-[10px] px-2 py-1 rounded bg-yellow-900/40 text-yellow-300'
+                            : 'text-[10px] px-2 py-1 rounded bg-green-900/40 text-green-300'}
+                        >
+                          {Number(userStats[u.uid]?.totalDebt || 0) > 0
+                            ? `Debe $${Number(userStats[u.uid]?.totalDebt || 0).toFixed(2)}`
+                            : 'Sin deuda'}
+                        </span>
                       </label>
                     ))}
                     {users.filter(u => u.active && u.role !== 'viewer').length === 0 && (
