@@ -292,7 +292,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   const isReadOnly = user.role === 'viewer' || suspended;
   
   // Calculate pending users
-  const pendingUsers = users.filter(u => !u.active);
+  const pendingUsers = users.filter(u => !u.active && !u.leaveDate);
 
   useEffect(() => {
     if (user.groupId) {
@@ -2849,7 +2849,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                          <td className="p-3">
                                              <div className="font-bold text-white flex items-center gap-2">
                                                  {u.name}
-                                                 {!u.active && <span className="text-[10px] bg-red-600 text-white px-1.5 rounded">PENDIENTE</span>}
+                                                 {!u.active && <span className="text-[10px] bg-gray-700 text-gray-200 px-1.5 rounded">{u.leaveDate ? `INACTIVO · ${u.leaveDate}` : 'PENDIENTE'}</span>}
                                              </div>
                                              <div className="text-xs text-gray-500">{u.email}</div>
                                          </td>
@@ -2890,10 +2890,15 @@ const Admin: React.FC<Props> = ({ user }) => {
                                          </td>
                                          <td className="p-3 flex justify-center gap-2">
                                              {!u.active ? (
-                                                 <button onClick={() => handleToggleActive(u.uid, u.active)} title="Reactivar / Aceptar" className="px-3 py-1.5 bg-green-600 rounded hover:bg-green-500 text-white font-bold text-xs">
-                                                     ✅ ACTIVAR
-                                                 </button>
-                                             ) : (
+                                                  <>
+                                                    <button onClick={() => handleToggleActive(u.uid, u.active)} title="Reactivar miembro" className="px-3 py-1.5 bg-green-600 rounded hover:bg-green-500 text-white font-bold text-xs">
+                                                        ✅ REACTIVAR
+                                                    </button>
+                                                    <button onClick={() => setEditingUserProfile(u)} title="Editar fechas y perfil" className="p-1.5 bg-blue-600 rounded hover:bg-blue-500 text-white">
+                                                        ✏️
+                                                    </button>
+                                                  </>
+                                              ) : (
                                                  <>
                                                     <button onClick={() => handleToggleActive(u.uid, u.active)} title="Desactivar / Dar de Baja" className="p-1.5 bg-logia-900 border border-logia-700 rounded hover:bg-red-900/30 text-gray-400">
                                                         🚫
@@ -5608,16 +5613,29 @@ const Admin: React.FC<Props> = ({ user }) => {
              <h3 className="text-xl font-bold text-white mb-6">Editar Perfil: {editingUserProfile.name}</h3>
              
              <div className="space-y-4">
-                 <div className="grid grid-cols-2 gap-4">
-                     <div>
-                         <label className="text-xs text-gray-400 uppercase">Iniciación Masónica</label>
-                         <input type="date" value={editingUserProfile.masonicJoinDate || ''} onChange={e => setEditingUserProfile({...editingUserProfile, masonicJoinDate: e.target.value})} className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-sm" />
-                     </div>
-                     <div>
-                         <label className="text-xs text-gray-400 uppercase">Último Reingreso (Cobro)</label>
-                         <input type="date" value={editingUserProfile.masonicRejoinDate || ''} onChange={e => setEditingUserProfile({...editingUserProfile, masonicRejoinDate: e.target.value})} className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-sm" />
-                     </div>
-                 </div>
+                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div>
+                          <label className="text-xs text-gray-400 uppercase">Iniciación Masónica</label>
+                          <input type="date" value={editingUserProfile.masonicJoinDate || ''} onChange={e => setEditingUserProfile({...editingUserProfile, masonicJoinDate: e.target.value})} className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-sm" />
+                      </div>
+                      <div>
+                          <label className="text-xs text-gray-400 uppercase">Fecha de baja</label>
+                          <input type="date" value={editingUserProfile.leaveDate || ''} onChange={e => setEditingUserProfile({...editingUserProfile, leaveDate: e.target.value || undefined})} className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-sm" />
+                      </div>
+                      <div>
+                          <label className="text-xs text-gray-400 uppercase">Último Reingreso (Cobro)</label>
+                          <input type="date" value={editingUserProfile.masonicRejoinDate || ''} onChange={e => setEditingUserProfile({...editingUserProfile, masonicRejoinDate: e.target.value})} className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-sm" />
+                      </div>
+                  </div>
+                  <div className="bg-logia-900 border border-logia-700 rounded p-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-bold text-white">Estado del miembro</p>
+                      <p className="text-xs text-gray-500">Los inactivos conservan todo su historial y no aparecen como solicitudes.</p>
+                    </div>
+                    <button type="button" onClick={() => setEditingUserProfile({...editingUserProfile, active: !editingUserProfile.active})} className={editingUserProfile.active ? 'px-3 py-2 rounded bg-green-700 text-white text-xs font-bold' : 'px-3 py-2 rounded bg-gray-700 text-white text-xs font-bold'}>
+                      {editingUserProfile.active ? 'ACTIVO' : 'INACTIVO'}
+                    </button>
+                  </div>
                  {/* ...rest of fields... */}
                  <div className="grid grid-cols-2 gap-4">
                      <div>
