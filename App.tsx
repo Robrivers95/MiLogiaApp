@@ -15,6 +15,7 @@ import Notices from './components/Notices';
 import MasterDashboard from './components/MasterDashboard';
 import PendingApproval from './components/PendingApproval';
 import Library from './components/Library';
+import AdminAIAssistant from './components/AdminAIAssistant';
 import { ReadOnlyProvider } from './contexts/ReadOnlyContext';
 
 const App: React.FC = () => {
@@ -146,6 +147,7 @@ const App: React.FC = () => {
           <div className="p-8 text-center text-red-400">Acceso denegado. Solo Admin.</div>
         )}
       </Layout>
+      <AdminAIAssistant user={activeUserContext} onNavigate={setView} />
     </ReadOnlyProvider>
   );
 };
