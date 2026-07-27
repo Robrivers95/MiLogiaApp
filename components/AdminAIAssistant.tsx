@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { User } from '../types';
 import { adminAIService } from '../services/adminAI';
+import { auth } from '../services/firebase';
 
 interface Props {
   user: User;
@@ -17,10 +18,20 @@ type AssistantCommand = {
   writeAction?: boolean;
 };
 
-type PendingAction =
-  | { type: 'broadcast-matrix'; year: number }
-  | { type: 'suggested-command'; commandId: string }
-  | null;
+type AIIntent = {
+  action: string;
+  confidence: number;
+  parameters?: {
+    memberName?: string;
+    year?: number;
+    months?: number;
+    paymentType?: 'regular' | 'extra';
+  };
+  alternatives?: Array<{ action: string; confidence: number }>;
+  clarification?: string;
+};
+
+type PendingAction = { type: 'broadcast-matrix'; year: number } | null;
 
 const COMMANDS: AssistantCommand[] = [
   { id: 'dashboard', title: 'Abrir el resumen administrativo', examples: ['abre el panel de administrador', 'llévame al resumen'], keywords: ['panel', 'resumen', 'inicio administrativo', 'administracion'], adminTab: 'dashboard' },
@@ -44,6 +55,9 @@ const COMMANDS: AssistantCommand[] = [
   { id: 'register-payment', title: 'Preparar el registro de una cuota', examples: ['registra tres meses para Juan'], keywords: ['registrar pago', 'registra cuota', 'pago de meses', 'abonar cuota'], adminTab: 'payment-matrix', buttonLabels: ['Matriz de pagos', 'Matriz'], writeAction: true },
 ];
 
+const COMMAND_BY_ID = new Map(COMMANDS.map(command => [command.id, command]));
+const INTENT_ENDPOINT = 'https://us-central1-registrologia.cloudfunctions.net/interpretAdminIntent';
+
 const normalize = (value: string) => value
   .toLocaleLowerCase('es-MX')
   .normalize('NFD')
@@ -53,14 +67,12 @@ const normalize = (value: string) => value
   .trim();
 
 const STOP_WORDS = new Set(['abre', 'abrir', 'quiero', 'muestrame', 'dime', 'por', 'favor', 'el', 'la', 'los', 'las', 'de', 'del', 'para', 'una', 'un', 'que', 'cual', 'cuales']);
-
 const tokens = (value: string) => normalize(value).split(' ').filter(word => word.length > 2 && !STOP_WORDS.has(word));
 
 const scoreCommand = (input: string, command: AssistantCommand) => {
   const normalizedInput = normalize(input);
   const inputTokens = new Set(tokens(input));
   let score = 0;
-
   for (const phrase of [...command.keywords, ...command.examples]) {
     const normalizedPhrase = normalize(phrase);
     if (normalizedInput.includes(normalizedPhrase)) score += 10;
@@ -92,11 +104,6 @@ const extractMemberName = (instruction: string) => {
   return '';
 };
 
-const isDebtQuestion = (text: string) => {
-  const value = normalize(text);
-  return ['debe', 'adeuda', 'deuda', 'adeudo', 'pendiente', 'saldo'].some(term => value.includes(term)) && Boolean(extractMemberName(text));
-};
-
 const clickExactAdminControl = (labels: string[]) => {
   const forbidden = ['volver al panel', 'cerrar sesion', 'salir', 'eliminar', 'suspender', 'activar'];
   const expected = labels.map(normalize);
@@ -125,8 +132,8 @@ const AdminAIAssistant: React.FC<Props> = ({ user, onNavigate }) => {
 
   if (!allowed) return null;
 
-  const queryMemberPending = async (instruction: string) => {
-    const memberName = extractMemberName(instruction);
+  const queryMemberPending = async (memberNameOrInstruction: string) => {
+    const memberName = extractMemberName(memberNameOrInstruction) || memberNameOrInstruction.trim();
     if (!memberName) {
       setMessage('Dime el nombre del miembro. Por ejemplo: “¿Cuánto debe Luis Luna?”');
       return;
@@ -149,18 +156,18 @@ const AdminAIAssistant: React.FC<Props> = ({ user, onNavigate }) => {
     }
   };
 
-  const executeCommand = async (command: AssistantCommand, originalText: string) => {
+  const executeCommand = async (command: AssistantCommand, originalText: string, parameters?: AIIntent['parameters']) => {
     setSuggestions([]);
     setPendingAction(null);
 
     if (command.id === 'member-pending') {
-      await queryMemberPending(originalText);
+      await queryMemberPending(parameters?.memberName || originalText);
       return;
     }
 
     if (command.id === 'broadcast-matrix') {
       const yearMatch = normalize(originalText).match(/20\d{2}/);
-      const year = yearMatch ? Number(yearMatch[0]) : new Date().getFullYear();
+      const year = parameters?.year || (yearMatch ? Number(yearMatch[0]) : new Date().getFullYear());
       setPendingAction({ type: 'broadcast-matrix', year });
       setMessage(`Entendí que quieres enviar la matriz de pagos de ${year} al buzón de todos. Confirma para continuar.`);
       return;
@@ -177,6 +184,7 @@ const AdminAIAssistant: React.FC<Props> = ({ user, onNavigate }) => {
       if (command.id === 'register-payment') {
         sessionStorage.setItem('logia_ai_payment_draft', JSON.stringify({
           instruction: originalText,
+          interpretedParameters: parameters || {},
           createdAt: new Date().toISOString(),
           createdBy: user.uid,
           status: 'pending_confirmation',
@@ -192,49 +200,79 @@ const AdminAIAssistant: React.FC<Props> = ({ user, onNavigate }) => {
     }, 450);
   };
 
-  const execute = async (text: string) => {
-    setPendingAction(null);
-    setSuggestions([]);
-    if (!normalize(text)) return;
-
-    if (isDebtQuestion(text)) {
-      await queryMemberPending(text);
-      return;
+  const interpretWithGemini = async (instruction: string): Promise<AIIntent> => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) throw new Error('La sesión no está disponible');
+    const idToken = await currentUser.getIdToken();
+    const response = await fetch(INTENT_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({ instruction, groupId: user.groupId }),
+    });
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => ({}));
+      throw new Error(errorPayload?.details || errorPayload?.error || `HTTP ${response.status}`);
     }
+    return response.json();
+  };
 
+  const executeLocalFallback = async (text: string) => {
     const ranked = rankCommands(text);
     const best = ranked[0];
     const second = ranked[1];
-
     if (best && best.score >= 8 && best.score >= second.score + 3) {
       await executeCommand(best.command, text);
       return;
     }
-
     const top = ranked.filter(item => item.score > 0).slice(0, 3).map(item => item.command);
-    if (top.length === 1 && best.score >= 4) {
-      setSuggestions(top);
-      setMessage(`La función más cercana es “${top[0].title}”. ¿Quieres que haga esa?`);
-      return;
-    }
+    setSuggestions(top);
+    setMessage(top.length
+      ? 'No pude usar Gemini. Estas son las funciones locales más cercanas:'
+      : 'No pude usar Gemini ni identificar una función relacionada.');
+  };
 
-    if (top.length > 0) {
-      setSuggestions(top);
-      setMessage('No tengo suficiente certeza para ejecutar algo. Estas son las funciones existentes más cercanas:');
-      return;
-    }
+  const execute = async (text: string) => {
+    setPendingAction(null);
+    setSuggestions([]);
+    if (!normalize(text)) return;
+    setWorking(true);
+    setMessage('Interpretando tu instrucción…');
+    try {
+      const intent = await interpretWithGemini(text);
+      const command = COMMAND_BY_ID.get(intent.action);
+      if (command && intent.confidence >= 0.82) {
+        setWorking(false);
+        await executeCommand(command, text, intent.parameters);
+        return;
+      }
 
-    setMessage('No encontré una función suficientemente relacionada. Abre “¿Qué puede hacer la IA por mí?” para ver todas las acciones disponibles.');
+      const alternatives = (intent.alternatives || [])
+        .map(item => COMMAND_BY_ID.get(item.action))
+        .filter((command): command is AssistantCommand => Boolean(command))
+        .slice(0, 3);
+      if (alternatives.length) {
+        setSuggestions(alternatives);
+        setMessage(intent.clarification || 'No tengo suficiente certeza. Elige la función que querías realizar:');
+      } else {
+        setMessage(intent.clarification || 'No encontré una función permitida suficientemente cercana.');
+      }
+    } catch (error: any) {
+      console.warn('Gemini intent fallback:', error);
+      await executeLocalFallback(text);
+    } finally {
+      setWorking(false);
+    }
   };
 
   const confirmPendingAction = async () => {
     if (!pendingAction) return;
     setWorking(true);
     try {
-      if (pendingAction.type === 'broadcast-matrix') {
-        const result = await adminAIService.broadcastPaymentMatrix(user, pendingAction.year);
-        setMessage(`Listo. Envié la matriz de pagos de ${pendingAction.year} al buzón de ${result.recipients} usuarios activos.`);
-      }
+      const result = await adminAIService.broadcastPaymentMatrix(user, pendingAction.year);
+      setMessage(`Listo. Envié la matriz de pagos de ${pendingAction.year} al buzón de ${result.recipients} usuarios activos.`);
       setPendingAction(null);
     } catch (error: any) {
       setMessage(`No pude completar la acción: ${error?.message || 'error desconocido'}.`);
@@ -275,14 +313,14 @@ const AdminAIAssistant: React.FC<Props> = ({ user, onNavigate }) => {
       {open && (
         <div className="fixed bottom-40 right-4 z-50 w-[min(92vw,430px)] rounded-2xl border border-amber-500/40 bg-logia-900 text-white shadow-2xl overflow-hidden">
           <div className="p-4 border-b border-white/10 flex items-center justify-between gap-3">
-            <div><p className="font-bold">Asistente administrativo</p><p className="text-xs text-white/60">Admin y Master · confirma cuando exista duda</p></div>
+            <div><p className="font-bold">Asistente administrativo con Gemini</p><p className="text-xs text-white/60">Admin y Master · acciones controladas por la app</p></div>
             <button type="button" onClick={() => setShowHelp(true)} className="text-sm underline">¿Qué puede hacer la IA por mí?</button>
           </div>
           <div className="p-4 space-y-3">
-            <textarea value={transcript} onChange={event => setTranscript(event.target.value)} placeholder="Ejemplo: ¿cuánto debe Luis Luna?" className="w-full min-h-20 rounded-xl bg-black/20 border border-white/15 p-3 text-sm" />
+            <textarea value={transcript} onChange={event => setTranscript(event.target.value)} placeholder="Ejemplo: dime cuánto debe Luis Luna" className="w-full min-h-20 rounded-xl bg-black/20 border border-white/15 p-3 text-sm" />
             <div className="grid grid-cols-2 gap-2">
               <button type="button" onClick={startListening} disabled={working} className="rounded-xl bg-amber-500 text-logia-950 font-bold py-3 disabled:opacity-50">{listening ? 'Escuchando…' : '🎙️ Hablar'}</button>
-              <button type="button" onClick={() => void execute(transcript)} disabled={!transcript.trim() || working} className="rounded-xl bg-white/10 py-3 disabled:opacity-40">{working ? 'Procesando…' : 'Ejecutar'}</button>
+              <button type="button" onClick={() => void execute(transcript)} disabled={!transcript.trim() || working} className="rounded-xl bg-white/10 py-3 disabled:opacity-40">{working ? 'Interpretando…' : 'Ejecutar'}</button>
             </div>
             {message && <p className="text-sm rounded-xl bg-white/5 p-3 whitespace-pre-line">{message}</p>}
             {suggestions.length > 0 && (
@@ -294,13 +332,13 @@ const AdminAIAssistant: React.FC<Props> = ({ user, onNavigate }) => {
                 ))}
               </div>
             )}
-            {pendingAction?.type === 'broadcast-matrix' && (
+            {pendingAction && (
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => setPendingAction(null)} className="rounded-xl bg-white/10 py-2">Cancelar</button>
                 <button type="button" onClick={() => void confirmPendingAction()} disabled={working} className="rounded-xl bg-red-600 py-2 font-bold disabled:opacity-50">Confirmar envío</button>
               </div>
             )}
-            <p className="text-[11px] text-white/50">Cuando la intención es clara, ejecuta la función. Cuando hay duda, propone hasta tres opciones. Nunca pulsa controles de salida, eliminación o suspensión.</p>
+            <p className="text-[11px] text-white/50">Gemini solo clasifica la intención y extrae parámetros. No tiene acceso directo a Firestore ni puede inventar funciones.</p>
           </div>
         </div>
       )}
@@ -308,7 +346,7 @@ const AdminAIAssistant: React.FC<Props> = ({ user, onNavigate }) => {
       {showHelp && (
         <div className="fixed inset-0 z-[60] bg-black/70 p-4 flex items-center justify-center" onClick={() => setShowHelp(false)}>
           <div className="max-w-2xl w-full max-h-[85vh] overflow-y-auto rounded-2xl bg-logia-900 text-white border border-amber-500/40 p-5" onClick={event => event.stopPropagation()}>
-            <div className="flex justify-between gap-4 mb-4"><div><h2 className="text-xl font-bold">¿Qué puede hacer la IA por mí?</h2><p className="text-sm text-white/60">Funciones disponibles</p></div><button type="button" onClick={() => setShowHelp(false)} aria-label="Cerrar">✕</button></div>
+            <div className="flex justify-between gap-4 mb-4"><div><h2 className="text-xl font-bold">¿Qué puede hacer la IA por mí?</h2><p className="text-sm text-white/60">Funciones permitidas</p></div><button type="button" onClick={() => setShowHelp(false)} aria-label="Cerrar">✕</button></div>
             <div className="space-y-3">
               {helpCommands.map(command => <div key={command.id} className="rounded-xl bg-white/5 p-3"><p className="font-semibold">{command.title}</p><p className="text-sm text-white/60">Ejemplo: “{command.examples[0]}”</p></div>)}
             </div>
