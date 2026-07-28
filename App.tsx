@@ -17,6 +17,7 @@ import PendingApproval from './components/PendingApproval';
 import Library from './components/Library';
 import AdminAIAssistant from './components/AdminAIAssistant';
 import PaymentEvidenceCenter from './components/PaymentEvidenceCenter';
+import AdminMemberReceipts from './components/AdminMemberReceipts';
 import { ReadOnlyProvider } from './contexts/ReadOnlyContext';
 
 const App: React.FC = () => {
@@ -122,6 +123,7 @@ const App: React.FC = () => {
         {view === 'admin' && !isAdminOrViewer && <div className="p-8 text-center text-red-400">Acceso denegado. Solo Admin.</div>}
       </Layout>
       <PaymentEvidenceCenter user={activeUserContext} currentView={view} />
+      <AdminMemberReceipts user={activeUserContext} currentView={view} />
       <AdminAIAssistant user={activeUserContext} onNavigate={setView} />
     </ReadOnlyProvider>
   );
