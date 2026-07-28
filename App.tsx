@@ -121,7 +121,7 @@ const App: React.FC = () => {
         {view === 'admin' && isAdminOrViewer && <Admin user={activeUserContext} />}
         {view === 'admin' && !isAdminOrViewer && <div className="p-8 text-center text-red-400">Acceso denegado. Solo Admin.</div>}
       </Layout>
-      <PaymentEvidenceCenter user={activeUserContext} />
+      <PaymentEvidenceCenter user={activeUserContext} currentView={view} />
       <AdminAIAssistant user={activeUserContext} onNavigate={setView} />
     </ReadOnlyProvider>
   );
