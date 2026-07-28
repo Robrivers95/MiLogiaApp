@@ -4,7 +4,7 @@ import { db, storage } from '../services/firebase';
 import { collection, doc, getDocs, setDoc, updateDoc } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 
-interface Props { user: User; }
+interface Props { user: User; currentView: string; }
 
 type EvidenceItem = { url: string; label: string; source: 'member' | 'admin' | 'legacy'; createdAt?: string };
 type ConceptRow = ExtraFee & { discovered?: boolean };
@@ -12,9 +12,10 @@ type ConceptRow = ExtraFee & { discovered?: boolean };
 const safeKey = (value: string) => value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const conceptKey = (period: string, description: string, amount: number) => `${period}__${safeKey(description)}__${Number(amount).toFixed(2)}`;
 
-const PaymentEvidenceCenter: React.FC<Props> = ({ user }) => {
+const PaymentEvidenceCenter: React.FC<Props> = ({ user, currentView }) => {
   const canEdit = user.role === 'admin' || user.role === 'master';
   const canInspectAll = canEdit || user.role === 'viewer';
+  const visibleInCurrentArea = currentView === 'admin' || currentView === 'payments';
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
@@ -121,47 +122,45 @@ const PaymentEvidenceCenter: React.FC<Props> = ({ user }) => {
     try {
       const allUsersSnap = await getDocs(collection(db, 'users'));
       const groupUsers = allUsersSnap.docs.map(d => ({ ...(d.data() as User), uid: d.id })).filter(item => item.groupId === user.groupId);
-      const found = new Map<string, { period: string; description: string; amount: number; uids: string[]; feeIds: Record<string, string> }>();
+      const found = new Map<string, { period: string; description: string; amount: number; uids: string[] }>();
       for (const member of groupUsers) {
         const ledger = await getDocs(collection(db, 'users', member.uid, 'ledger'));
         for (const ledgerDoc of ledger.docs) {
           const payment = ledgerDoc.data() as Payment;
           for (const fee of payment.extraFees || []) {
             const key = fee.conceptId || conceptKey(ledgerDoc.id, fee.description, fee.amount);
-            const row = found.get(key) || { period: ledgerDoc.id, description: fee.description, amount: fee.amount, uids: [], feeIds: {} };
+            const row = found.get(key) || { period: ledgerDoc.id, description: fee.description, amount: fee.amount, uids: [] };
             if (!row.uids.includes(member.uid)) row.uids.push(member.uid);
-            row.feeIds[member.uid] = fee.id;
             found.set(key, row);
           }
           if ((!payment.extraFees || payment.extraFees.length === 0) && payment.extraAmount && payment.extraAmount !== 0) {
             const description = payment.extraDescription || 'Cuota extraordinaria';
             const key = conceptKey(ledgerDoc.id, description, payment.extraAmount);
-            const row = found.get(key) || { period: ledgerDoc.id, description, amount: payment.extraAmount, uids: [], feeIds: {} };
+            const row = found.get(key) || { period: ledgerDoc.id, description, amount: payment.extraAmount, uids: [] };
             if (!row.uids.includes(member.uid)) row.uids.push(member.uid);
             found.set(key, row);
           }
         }
       }
       for (const [key, row] of found) {
-        const conceptRef = doc(db, 'extraFees', key);
-        await setDoc(conceptRef, {
+        await setDoc(doc(db, 'extraFees', key), {
           groupId: user.groupId, period: row.period, amount: row.amount, description: row.description,
           type: row.uids.length > 1 ? 'mass' : 'individual', appliedToUsers: row.uids,
           createdBy: user.uid, createdByName: user.name, createdAt: new Date().toISOString()
         }, { merge: true });
         for (const memberUid of row.uids) {
-          const paymentRef = doc(db, 'users', memberUid, 'ledger', row.period);
-          const snap = await getDocs(collection(db, 'users', memberUid, 'ledger'));
-          const currentDoc = snap.docs.find(item => item.id === row.period);
+          const ledger = await getDocs(collection(db, 'users', memberUid, 'ledger'));
+          const currentDoc = ledger.docs.find(item => item.id === row.period);
           if (!currentDoc) continue;
           const current = currentDoc.data() as Payment;
-          const normalized = current.extraFees?.length ? current.extraFees.map(fee => conceptKey(row.period, fee.description, fee.amount) === key ? { ...fee, conceptId: key } : fee) : [{ id: `extra_${Date.now()}_${memberUid}`, conceptId: key, description: row.description, amount: row.amount, paid: current.paidExtra || 0, createdAt: new Date().toISOString(), createdBy: user.uid }];
-          await setDoc(paymentRef, { extraFees: normalized }, { merge: true });
+          const normalized = current.extraFees?.length
+            ? current.extraFees.map(fee => conceptKey(row.period, fee.description, fee.amount) === key ? { ...fee, conceptId: key } : fee)
+            : [{ id: `extra_${Date.now()}_${memberUid}`, conceptId: key, description: row.description, amount: row.amount, paid: current.paidExtra || 0, createdAt: new Date().toISOString(), createdBy: user.uid, receiptUrls: [] }];
+          await setDoc(doc(db, 'users', memberUid, 'ledger', row.period), { extraFees: normalized }, { merge: true });
         }
       }
       setMessage(`Se sincronizaron ${found.size} conceptos con Gestión de pagos.`);
-      await loadConcepts();
-      await loadMember(selectedUid);
+      await Promise.all([loadConcepts(), loadMember(selectedUid)]);
     } finally { setLoading(false); }
   };
 
@@ -199,11 +198,16 @@ const PaymentEvidenceCenter: React.FC<Props> = ({ user }) => {
     ))}</div>
   ) : <p className="text-xs text-white/40 mt-2">Sin comprobantes adjuntos.</p>;
 
+  if (!visibleInCurrentArea) return null;
+
+  const isAdminArea = currentView === 'admin';
+  const triggerLabel = isAdminArea ? '📎 Gestión de cuotas y comprobantes' : '📎 Ver comprobantes de mis pagos';
+
   return <>
-    <button type="button" onClick={() => setOpen(true)} className="fixed bottom-24 left-5 z-40 rounded-full bg-sky-600 text-white shadow-xl px-4 py-3 font-bold" title="Cuotas y comprobantes">📎</button>
+    <button type="button" onClick={() => setOpen(true)} className="fixed bottom-24 left-4 z-40 rounded-xl bg-sky-600 hover:bg-sky-500 text-white shadow-xl px-4 py-3 font-bold text-sm" title={triggerLabel}>{triggerLabel}</button>
     {open && <div className="fixed inset-0 z-[70] bg-black/75 p-3 overflow-y-auto">
       <div className="max-w-5xl mx-auto bg-logia-900 text-white border border-white/10 rounded-2xl p-4 space-y-4">
-        <div className="flex justify-between gap-3"><div><h2 className="text-xl font-bold">Cuotas y comprobantes</h2><p className="text-xs text-white/55">Comprobantes múltiples separados por periodo y concepto.</p></div><button onClick={() => setOpen(false)}>✕</button></div>
+        <div className="flex justify-between gap-3"><div><h2 className="text-xl font-bold">{isAdminArea ? 'Gestión de cuotas y comprobantes' : 'Comprobantes de mis pagos'}</h2><p className="text-xs text-white/55">Las fotografías se muestran separadas por cuota normal y por cada concepto extraordinario.</p></div><button onClick={() => setOpen(false)}>✕</button></div>
         {message && <p className="rounded-lg bg-white/5 p-3 text-sm">{message}</p>}
         {canInspectAll && <div className="flex flex-wrap gap-2 items-end">
           <label className="text-sm flex-1 min-w-64">Miembro<select value={selectedUid} onChange={e => setSelectedUid(e.target.value)} className="block w-full mt-1 bg-black/30 rounded-lg p-2">{users.map(item => <option key={item.uid} value={item.uid}>{item.name}</option>)}</select></label>
@@ -218,8 +222,8 @@ const PaymentEvidenceCenter: React.FC<Props> = ({ user }) => {
           return <div key={payment.period} className="rounded-xl border border-white/10 p-3 bg-white/[0.03]">
             <h3 className="font-bold">{payment.period} · Cuota normal</h3>
             {renderGallery(regular)}
-            {canEdit && <div className="flex gap-2 mt-2"><input type="file" accept="image/*" multiple onChange={e => setFilesByTarget(prev => ({ ...prev, [`regular-${payment.period}`]: Array.from(e.target.files || []) }))} /><button onClick={() => void addRegularEvidence(payment)} className="rounded bg-sky-700 px-3 py-1 text-sm">Adjuntar imágenes</button></div>}
-            {(payment.extraFees || []).map(fee => { const key = `extra-${payment.period}-${fee.id}`; return <div key={fee.id} className="mt-4 ml-3 border-l-2 border-amber-500/50 pl-3"><h4 className="font-semibold text-amber-300">Extra: {fee.description} · ${fee.amount.toFixed(2)}</h4>{renderGallery(extraEvidence(payment, fee))}{canEdit && <div className="flex gap-2 mt-2"><input type="file" accept="image/*" multiple onChange={e => setFilesByTarget(prev => ({ ...prev, [key]: Array.from(e.target.files || []) }))} /><button onClick={() => void addExtraEvidence(payment, fee)} className="rounded bg-amber-700 px-3 py-1 text-sm">Adjuntar al concepto</button></div>}</div> })}
+            {canEdit && <div className="flex flex-wrap gap-2 mt-2"><input type="file" accept="image/*" multiple onChange={e => setFilesByTarget(prev => ({ ...prev, [`regular-${payment.period}`]: Array.from(e.target.files || []) }))} /><button onClick={() => void addRegularEvidence(payment)} className="rounded bg-sky-700 px-3 py-1 text-sm">Adjuntar imágenes</button></div>}
+            {(payment.extraFees || []).map(fee => { const key = `extra-${payment.period}-${fee.id}`; return <div key={fee.id} className="mt-4 ml-3 border-l-2 border-amber-500/50 pl-3"><h4 className="font-semibold text-amber-300">Extra: {fee.description} · ${fee.amount.toFixed(2)}</h4>{renderGallery(extraEvidence(payment, fee))}{canEdit && <div className="flex flex-wrap gap-2 mt-2"><input type="file" accept="image/*" multiple onChange={e => setFilesByTarget(prev => ({ ...prev, [key]: Array.from(e.target.files || []) }))} /><button onClick={() => void addExtraEvidence(payment, fee)} className="rounded bg-amber-700 px-3 py-1 text-sm">Adjuntar al concepto</button></div>}</div> })}
           </div>})}</div>}
       </div>
     </div>}
