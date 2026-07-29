@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, Group } from './types';
 import { dataService } from './services/api';
+import { installFinancialStatsFix } from './services/installFinancialStatsFix';
 import { isConfigured, auth } from './services/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import Auth from './components/Auth';
@@ -16,9 +17,12 @@ import MasterDashboard from './components/MasterDashboard';
 import PendingApproval from './components/PendingApproval';
 import Library from './components/Library';
 import AdminAIAssistant from './components/AdminAIAssistant';
-import PaymentEvidenceCenter from './components/PaymentEvidenceCenter';
 import AdminMemberReceipts from './components/AdminMemberReceipts';
 import { ReadOnlyProvider } from './contexts/ReadOnlyContext';
+
+// Compatibilidad para cuotas extraordinarias creadas desde la matriz.
+// Se instala antes de renderizar Administración para que sus resúmenes usen extraFees[].
+installFinancialStatsFix();
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -122,7 +126,6 @@ const App: React.FC = () => {
         {view === 'admin' && isAdminOrViewer && <Admin user={activeUserContext} />}
         {view === 'admin' && !isAdminOrViewer && <div className="p-8 text-center text-red-400">Acceso denegado. Solo Admin.</div>}
       </Layout>
-      <PaymentEvidenceCenter user={activeUserContext} currentView={view} />
       <AdminMemberReceipts user={activeUserContext} currentView={view} />
       <AdminAIAssistant user={activeUserContext} onNavigate={setView} />
     </ReadOnlyProvider>
