@@ -19,6 +19,11 @@ patch('components/Admin.tsx', source => {
   return source;
 });
 
+patch('components/AdminAIAssistant.tsx', source => source
+  .replace("String(error.message).includes('10 consultas')", "String(error.message).includes('consultas de IA por hoy')")
+  .replace('Máximo 10 consultas de IA al día', 'Máximo 30 consultas de IA al día')
+);
+
 patch('functions/src/index.ts', source => {
   source = source.replace(
     "'manual-merge', 'receipts', 'debt-notify', 'member-pending',\n  'broadcast-matrix', 'register-payment'",
