@@ -19,6 +19,8 @@ import Library from './components/Library';
 import AdminAIAssistant from './components/AdminAIAssistant';
 import AdminMemberReceipts from './components/AdminMemberReceipts';
 import CompactExtraFeeAssignment from './components/CompactExtraFeeAssignment';
+import MatrixMobileTools from './components/MatrixMobileTools';
+import ReceiptTargetManager from './components/ReceiptTargetManager';
 import { ReadOnlyProvider } from './contexts/ReadOnlyContext';
 
 installFinancialStatsFix();
@@ -127,6 +129,8 @@ const App: React.FC = () => {
       </Layout>
       <AdminMemberReceipts user={activeUserContext} currentView={view} />
       <CompactExtraFeeAssignment user={activeUserContext} currentView={view} />
+      <MatrixMobileTools user={activeUserContext} currentView={view} />
+      <ReceiptTargetManager user={activeUserContext} currentView={view} />
       <AdminAIAssistant user={activeUserContext} onNavigate={setView} />
     </ReadOnlyProvider>
   );
