@@ -25,13 +25,12 @@ const ensureApprovedFutureMonthlyPeriods = async (uid: string): Promise<void> =>
 
   const receiptsSnap = await getDocs(query(
     collection(db, 'groups', user.groupId, 'paymentReceipts'),
-    where('userId', '==', uid),
-    where('status', '==', 'approved')
+    where('userId', '==', uid)
   ));
 
   for (const receiptDoc of receiptsSnap.docs) {
     const receipt = { id: receiptDoc.id, ...receiptDoc.data() } as PaymentReceipt;
-    if (receipt.receiptType !== 'cuota_mensual' || !Array.isArray(receipt.periods) || receipt.periods.length === 0) continue;
+    if (receipt.status !== 'approved' || receipt.receiptType !== 'cuota_mensual' || !Array.isArray(receipt.periods) || receipt.periods.length === 0) continue;
 
     const sortedPeriods = [...new Set(receipt.periods)].sort();
     let remaining = receipt.amount && Number(receipt.amount) > 0 ? Number(receipt.amount) : Number.POSITIVE_INFINITY;
