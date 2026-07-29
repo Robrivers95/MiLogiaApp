@@ -1,4 +1,3 @@
-
 export type Role = 'master' | 'admin' | 'member' | 'viewer';
 
 export type MasonicDegree = 'aprendiz' | 'companero' | 'maestro';
@@ -40,30 +39,24 @@ export interface User {
   role: Role;
   active: boolean;
   groupId: string;
-  joinDate: string; // App Join Date (ISO)
-  
-  // Extended Profile
+  joinDate: string;
   profession?: string;
   job?: string;
-  workAddress?: string; // New field
+  workAddress?: string;
   city?: string;
   state?: string;
   country?: string;
-  
-  // Masonic Dates (Admin only edit)
-  masonicJoinDate?: string; // YYYY-MM-DD
-  masonicRejoinDate?: string; // YYYY-MM-DD (Used for billing calculation)
-  leaveDate?: string; // YYYY-MM-DD: fecha de baja; conserva historial y detiene cargos/notificaciones
-  
-  // Masonic Status
+  masonicJoinDate?: string;
+  masonicRejoinDate?: string;
+  leaveDate?: string;
   degree?: MasonicDegree;
   numericDegree?: number;
   lodgeRole?: LodgeRole;
-  
   profileEditable: boolean;
   rpg?: RpgCharacter;
   totalPoints?: number;
-  lastLogin?: string; 
+  lastLogin?: string;
+  phoneNumber?: string;
 }
 
 export interface Notice {
@@ -71,9 +64,9 @@ export interface Notice {
   groupId: string;
   title: string;
   description: string;
-  imageUrl?: string;       // Base64 image
-  sendPushOnCreate?: boolean; // Whether to send push notification
-  date: string; // ISO
+  imageUrl?: string;
+  sendPushOnCreate?: boolean;
+  date: string;
   createdBy: string;
 }
 
@@ -82,17 +75,18 @@ export interface PaymentReceipt {
   groupId: string;
   userId: string;
   userName: string;
-  periods: string[];           // Array de YYYY-MM que desea pagar
-  transferDate: string;        // ISO fecha/hora de la transferencia
-  receiptImageUrl: string;     // URL primera imagen (backward compat)
-  receiptImageUrls?: string[]; // URLs de todas las imágenes/archivos adjuntos
-  amount?: number;             // Monto declarado (opcional)
-  receiptType: 'cuota_mensual' | 'concepto_adicional'; // Tipo de pago
-  conceptDescription?: string; // Descripción para "concepto_adicional"
+  periods: string[];
+  transferDate: string;
+  receiptImageUrl: string;
+  receiptImageUrls?: string[];
+  amount?: number;
+  receiptType: 'cuota_mensual' | 'concepto_adicional';
+  conceptDescription?: string;
+  conceptId?: string;
   status: 'pending' | 'approved' | 'rejected';
-  submittedAt: string;         // ISO
-  reviewedAt?: string;         // ISO
-  reviewedBy?: string;         // UID del admin
+  submittedAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
   reviewComments?: string;
 }
 
@@ -101,189 +95,69 @@ export interface Task {
   groupId: string;
   title: string;
   description?: string;
-  assignedTo?: string; // User UID (tarea individual legacy)
-  assignedToName?: string; // User name for display
+  assignedTo?: string;
+  assignedToName?: string;
   assignmentMode?: 'individual' | 'team';
-  assignedToMany?: string[]; // UIDs seleccionados para una tarea de equipo
-  assignedToNames?: string[]; // Nombres para mostrar
-  batchId?: string; // Agrupa tareas individuales creadas en una sola orden
+  assignedToMany?: string[];
+  assignedToNames?: string[];
+  batchId?: string;
   completed: boolean;
-  completedAt?: string; // ISO
-  completedBy?: string; // User UID
-  createdAt: string; // ISO
+  completedAt?: string;
+  completedBy?: string;
+  createdAt: string;
   createdBy: string;
   createdByName?: string;
 }
 
 export interface IndividualExtraFee {
-  id: string; // Unique identifier for this extra fee item
-  description: string; // Description (e.g., "Cena anual", "Evento especial")
-  amount: number; // Amount for this specific extra fee
-  paid: number; // Amount paid for this specific extra fee
-  createdAt: string; // ISO Date when this was added
-  createdBy?: string; // UID of who created it
-  forgiven?: boolean;    // true = deuda perdonada/cerrada (no se cobra más)
-  forgivenAt?: string;   // ISO cuando se perdonó
-  forgivenBy?: string;   // UID del admin que lo perdonó
-  forgivenNote?: string; // Nota opcional del perdón
+  id: string;
+  conceptId?: string;
+  description: string;
+  amount: number;
+  paid: number;
+  createdAt: string;
+  createdBy?: string;
+  receiptUrls?: string[];
+  forgiven?: boolean;
+  forgivenAt?: string;
+  forgivenBy?: string;
+  forgivenNote?: string;
 }
 
 export interface Payment {
-  period: string; // YYYY-MM
-  amount: number; // Base Amount (cuota mensual)
-  
-  // LEGACY: Single extra fee (mantener para compatibilidad)
-  extraAmount?: number; // Extra Fee (cuota extraordinaria)
-  extraDescription?: string; // Reason for extra fee
-  
-  // v3.1.0: Multiple individual extra fees
-  extraFees?: IndividualExtraFee[]; // Array of individual extra fees
-  
-  paid: number; // DEPRECATED: Total paid (mantener por compatibilidad)
-  paidRegular?: number; // Paid for regular monthly fee
-  paidExtra?: number; // Paid for extra fee (suma de todos los extra fees individuales)
-  status: 'Pendiente' | 'Parcial' | 'Pagado';
-  comments: string;
-  paymentDate?: string | null; // ISO Date
-  groupId?: string; // Logia/Group ID para filtrado
-  regularCovered?: boolean; // Si la cuota mensual está cubierta
-  extraCovered?: boolean; // Si la cuota extraordinaria está cubierta
-  adminReceiptUrl?: string; // URL de comprobante subido por el admin (Storage)
-  receiptImageBase64?: string; // Comprobante adjunto por el admin (base64)
-}
-
-export interface PriceHistoryEntry {
-  startDate: string; // YYYY-MM
-  amount: number;
-}
-
-export interface Attendance {
-  date: string; // YYYY-MM-DD
-  attended: boolean;
-  notes?: string;
-}
-
-export interface TriviaOption {
-  text: string;
-}
-
-export interface Trivia {
-  id: string;
-  groupId: string;
-  week: string; // YYYY-Www
-  question: string;
-  options: string[];
-  correctIndex: number;
-  createdAt: number;
-}
-
-export interface TriviaAnswer {
-  uid: string;
-  triviaId: string;
-  answerIndex: number;
-  correct: boolean;
-  points: number;
-  answeredAt: string;
-}
-
-export interface Group {
-  id: string;
-  name: string;
-  description: string;
-  createdAt?: number;
-  priceHistory?: PriceHistoryEntry[];
-  active?: boolean;
-  suspendedAt?: string;
-}
-
-export interface Fee {
-  groupId: string;
   period: string;
   amount: number;
+  extraAmount?: number;
+  extraDescription?: string;
+  extraFees?: IndividualExtraFee[];
+  paid: number;
+  paidRegular?: number;
+  paidExtra?: number;
+  status: 'Pendiente' | 'Parcial' | 'Pagado';
+  comments: string;
+  paymentDate?: string | null;
+  groupId?: string;
+  regularCovered?: boolean;
+  extraCovered?: boolean;
+  regularReceiptUrls?: string[];
+  adminReceiptUrl?: string;
+  receiptImageBase64?: string;
 }
 
-// --- TREASURY ---
+export interface PriceHistoryEntry { startDate: string; amount: number; }
+export interface Attendance { date: string; attended: boolean; notes?: string; }
+export interface TriviaOption { text: string; }
+export interface Trivia { id: string; groupId: string; week: string; question: string; options: string[]; correctIndex: number; createdAt: number; }
+export interface TriviaAnswer { uid: string; triviaId: string; answerIndex: number; correct: boolean; points: number; answeredAt: string; }
+export interface Group { id: string; name: string; description: string; createdAt?: number; priceHistory?: PriceHistoryEntry[]; active?: boolean; suspendedAt?: string; }
+export interface Fee { groupId: string; period: string; amount: number; }
 export type TransactionType = 'income' | 'expense';
-export type FundSource = 'tesoro_general' | 'beneficencia' | 'cuotas'; 
-
-export interface TreasuryAllocation {
-  source: FundSource;
-  amount: number;
-}
-
-export interface TreasuryEntry {
-  id: string;
-  groupId: string;
-  date: string; // YYYY-MM-DD
-  type: TransactionType;
-  category: 'saco_beneficencia' | 'cuota_extra' | 'evento' | 'donacion' | 'gasto_operativo' | 'gasto_social' | 'compra_material' | 'otro';
-  description: string;
-  amount: number;
-  allocations: TreasuryAllocation[]; // Multi-source split
-  createdBy: string;
-  createdAt: number;
-}
-
-export interface VisitRequest {
-  id: string;
-  fromGroupId: string; // Logia que solicita la visita
-  fromGroupName: string;
-  toGroupId: string; // Logia que recibe la solicitud
-  toGroupName: string;
-  requestedBy: string; // uid del admin que solicita
-  requestedByName: string;
-  visitDate: string; // YYYY-MM-DD
-  numberOfVisitors: number;
-  message: string; // Mensaje inicial
-  status: 'pending' | 'accepted' | 'rejected' | 'completed';
-  createdAt: number;
-  messages: VisitMessage[]; // Chat dentro de la solicitud
-}
-
-export interface VisitMessage {
-  id: string;
-  senderId: string;
-  senderName: string;
-  text: string;
-  timestamp: number;
-}
-
-export interface BankBalance {
-  id: string;
-  groupId: string;
-  type: 'bank' | 'cash'; // Banco o Efectivo
-  name: string; // Nombre del banco o "Efectivo"
-  amount: number;
-  lastUpdated: string; // ISO date
-  comment?: string;
-  updatedBy: string; // uid del admin que actualizó
-}
-
-export interface ExtraFee {
-  id: string;
-  groupId: string;
-  period: string; // YYYY-MM
-  amount: number;
-  description: string;
-  type: 'mass' | 'individual'; // Masiva o individual
-  targetUserId?: string; // Solo si es individual
-  targetUserName?: string; // Solo si es individual
-  createdBy: string;
-  createdByName: string;
-  createdAt: string; // ISO date
-  appliedToUsers: string[]; // Lista de UIDs a los que se aplicó
-}
-
-// In-app + browser notifications vía Firestore
+export type FundSource = 'tesoro_general' | 'beneficencia' | 'cuotas';
+export interface TreasuryAllocation { source: FundSource; amount: number; }
+export interface TreasuryEntry { id: string; groupId: string; date: string; type: TransactionType; category: 'saco_beneficencia' | 'cuota_extra' | 'evento' | 'donacion' | 'gasto_operativo' | 'gasto_social' | 'compra_material' | 'otro'; description: string; amount: number; allocations: TreasuryAllocation[]; createdBy: string; createdAt: number; }
+export interface VisitRequest { id: string; fromGroupId: string; fromGroupName: string; toGroupId: string; toGroupName: string; requestedBy: string; requestedByName: string; visitDate: string; numberOfVisitors: number; message: string; status: 'pending' | 'accepted' | 'rejected' | 'completed'; createdAt: number; messages: VisitMessage[]; }
+export interface VisitMessage { id: string; senderId: string; senderName: string; text: string; timestamp: number; }
+export interface BankBalance { id: string; groupId: string; type: 'bank' | 'cash'; name: string; amount: number; lastUpdated: string; comment?: string; updatedBy: string; }
+export interface ExtraFee { id: string; groupId: string; period: string; amount: number; description: string; type: 'mass' | 'individual'; targetUserId?: string; targetUserName?: string; createdBy: string; createdByName: string; createdAt: string; appliedToUsers: string[]; }
 export type NotificationType = 'attendance' | 'trivia' | 'notice' | 'profile_edit' | 'payment' | 'payment_receipt' | 'task';
-
-export interface AppNotification {
-  id: string;
-  uid: string;         // destinatario
-  groupId: string;
-  type: NotificationType;
-  title: string;
-  body: string;
-  read: boolean;
-  createdAt: number;   // timestamp ms
-}
+export interface AppNotification { id: string; uid: string; groupId: string; type: NotificationType; title: string; body: string; read: boolean; createdAt: number; }

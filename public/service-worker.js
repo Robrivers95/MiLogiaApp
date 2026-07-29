@@ -1,149 +1,66 @@
-const CACHE_NAME = 'mi-logia-v3.6.0';
-const urlsToCache = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/icons/icon.svg',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png'
-];
+const CACHE_NAME = 'mi-logia-v3.6.1';
+const urlsToCache = ['/', '/index.html', '/manifest.json', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png'];
 
-// Install event
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('Opened cache');
-        return cache.addAll(urlsToCache);
-      })
-      .catch((err) => {
-        console.log('Cache install error:', err);
-      })
-  );
+self.addEventListener('install', event => {
+  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache)).catch(err => console.log('Cache install error:', err)));
   self.skipWaiting();
 });
 
-// Fetch event - Network first, fallback to cache
-self.addEventListener('fetch', (event) => {
-  // Skip non-GET requests and POST/PUT/DELETE
-  if (event.request.method !== 'GET') {
-    return;
-  }
-  
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        // Clone the response
-        const responseToCache = response.clone();
-        
-        caches.open(CACHE_NAME)
-          .then((cache) => {
-            cache.put(event.request, responseToCache);
-          })
-          .catch((err) => {
-            console.log('Cache put error:', err);
-          });
-        
-        return response;
-      })
-      .catch(() => {
-        return caches.match(event.request);
-      })
-  );
+self.addEventListener('fetch', event => {
+  if (event.request.method !== 'GET') return;
+  event.respondWith(fetch(event.request).then(response => {
+    const responseToCache = response.clone();
+    caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseToCache)).catch(err => console.log('Cache put error:', err));
+    return response;
+  }).catch(() => caches.match(event.request)));
 });
 
-// Activate event - Clean up old caches
-self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            console.log('Deleting old cache:', cacheName);
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
-  );
+self.addEventListener('activate', event => {
+  event.waitUntil(caches.keys().then(names => Promise.all(names.map(name => name !== CACHE_NAME ? caches.delete(name) : undefined))));
   return self.clients.claim();
 });
 
-// Push notification event - Recibir notificaciones push
-self.addEventListener('push', (event) => {
-  console.log('Push notification recibida:', event);
-  
-  let notificationData = {
-    title: 'MiLogia',
-    body: 'Nueva notificación',
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
-    data: {}
-  };
-  
+self.addEventListener('push', event => {
+  let notificationData = { title: 'Mi Logia', body: 'Nueva notificación', icon: '/icons/icon-192.png', badge: '/icons/icon-192.png', data: {} };
   if (event.data) {
     try {
-      const data = event.data.json();
+      const payload = event.data.json();
       notificationData = {
-        title: data.notification?.title || data.title || notificationData.title,
-        body: data.notification?.body || data.body || notificationData.body,
-        icon: data.notification?.icon || data.icon || notificationData.icon,
-        badge: data.notification?.badge || notificationData.badge,
-        data: data.data || {}
+        title: payload.notification?.title || payload.title || notificationData.title,
+        body: payload.notification?.body || payload.body || notificationData.body,
+        icon: payload.notification?.icon || payload.icon || notificationData.icon,
+        badge: payload.notification?.badge || notificationData.badge,
+        data: payload.data || {},
       };
-    } catch (e) {
+    } catch (_) {
       notificationData.body = event.data.text();
     }
   }
-  
-  event.waitUntil(
-    self.registration.showNotification(notificationData.title, {
-      body: notificationData.body,
-      icon: notificationData.icon,
-      badge: notificationData.badge,
-      vibrate: [200, 100, 200],
-      data: notificationData.data,
-      actions: [
-        { action: 'open', title: 'Abrir' },
-        { action: 'close', title: 'Cerrar' }
-      ]
-    })
-  );
+  event.waitUntil(self.registration.showNotification(notificationData.title, {
+    body: notificationData.body,
+    icon: notificationData.icon,
+    badge: notificationData.badge,
+    vibrate: [200, 100, 200],
+    data: notificationData.data,
+    actions: [{ action: 'open', title: 'Abrir' }, { action: 'close', title: 'Cerrar' }],
+  }));
 });
 
-// Notification click event - Manejar clics en notificaciones
-self.addEventListener('notificationclick', (event) => {
-  console.log('Notificación clickeada:', event);
-  
+self.addEventListener('notificationclick', event => {
   event.notification.close();
-  
-  if (event.action === 'close') {
-    return;
-  }
+  if (event.action === 'close') return;
 
-  // Extraer la vista destino del data de la notificación
   const notifData = event.notification.data || {};
-  const view = notifData.view || '';
-  const targetUrl = view ? `/?view=${view}` : '/';
-  
-  // Abrir o enfocar la app
-  event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true })
-      .then((clientList) => {
-        // Si hay una ventana abierta, enviar mensaje de navegación y enfocarla
-        for (let i = 0; i < clientList.length; i++) {
-          const client = clientList[i];
-          if (client.url.includes(self.location.origin) && 'focus' in client) {
-            if (view) {
-              client.postMessage({ type: 'NAVIGATE', view });
-            }
-            return client.focus();
-          }
-        }
-        // Si no hay ventana abierta, abrir una nueva con la URL de destino
-        if (clients.openWindow) {
-          return clients.openWindow(targetUrl);
-        }
-      })
-  );
+  const view = notifData.view || 'home';
+  const targetUrl = `/?view=${encodeURIComponent(view)}`;
+
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+    for (const client of clientList) {
+      if (client.url.includes(self.location.origin) && 'focus' in client) {
+        client.postMessage({ type: 'NAVIGATE', view });
+        return client.focus();
+      }
+    }
+    return self.clients.openWindow ? self.clients.openWindow(targetUrl) : undefined;
+  }));
 });
