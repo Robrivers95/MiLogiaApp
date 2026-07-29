@@ -18,10 +18,9 @@ import PendingApproval from './components/PendingApproval';
 import Library from './components/Library';
 import AdminAIAssistant from './components/AdminAIAssistant';
 import AdminMemberReceipts from './components/AdminMemberReceipts';
+import CompactExtraFeeAssignment from './components/CompactExtraFeeAssignment';
 import { ReadOnlyProvider } from './contexts/ReadOnlyContext';
 
-// Compatibilidad para cuotas extraordinarias creadas desde la matriz.
-// Se instala antes de renderizar Administración para que sus resúmenes usen extraFees[].
 installFinancialStatsFix();
 
 const App: React.FC = () => {
@@ -127,6 +126,7 @@ const App: React.FC = () => {
         {view === 'admin' && !isAdminOrViewer && <div className="p-8 text-center text-red-400">Acceso denegado. Solo Admin.</div>}
       </Layout>
       <AdminMemberReceipts user={activeUserContext} currentView={view} />
+      <CompactExtraFeeAssignment user={activeUserContext} currentView={view} />
       <AdminAIAssistant user={activeUserContext} onNavigate={setView} />
     </ReadOnlyProvider>
   );
