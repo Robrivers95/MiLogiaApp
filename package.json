@@ -3,8 +3,8 @@
   "version": "4.0.1",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/apply-payment-targeting.js && node scripts/apply-matrix-and-required-amount.js && node scripts/apply-ai-chat-upgrades.js && node scripts/apply-future-payment-periods.js && node scripts/apply-financial-summary-consistency.js && vite",
-    "prebuild": "node scripts/apply-payment-targeting.js && node scripts/apply-matrix-and-required-amount.js && node scripts/apply-ai-chat-upgrades.js && node scripts/apply-future-payment-periods.js && node scripts/apply-financial-summary-consistency.js && node scripts/download-icons.js",
+    "dev": "node scripts/apply-payment-targeting.js && node scripts/apply-matrix-and-required-amount.js && node scripts/apply-ai-chat-upgrades.js && node scripts/apply-future-payment-periods.js && node scripts/apply-financial-summary-consistency.js && node scripts/apply-admin-canonical-member-debt.js && vite",
+    "prebuild": "node scripts/apply-payment-targeting.js && node scripts/apply-matrix-and-required-amount.js && node scripts/apply-ai-chat-upgrades.js && node scripts/apply-future-payment-periods.js && node scripts/apply-financial-summary-consistency.js && node scripts/apply-admin-canonical-member-debt.js && node scripts/download-icons.js",
     "build": "vite build",
     "preview": "vite preview"
   },
