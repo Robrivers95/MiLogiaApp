@@ -260,7 +260,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [viewingReceiptImage, setViewingReceiptImage] = useState<string | null>(null);
   const [receiptFilter, setReceiptFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
   const [expandedReceiptIds, setExpandedReceiptIds] = useState<Set<string>>(new Set());
-  // Edit receipt before approving
+  // Edit payment receipt (pending, rejected, or approved extra-fee correction)
   const [editingReceiptId, setEditingReceiptId] = useState<string | null>(null);
   const [editReceiptPeriods, setEditReceiptPeriods] = useState<string[]>([]);
   const [editReceiptAmount, setEditReceiptAmount] = useState<string>('');
@@ -434,9 +434,16 @@ const Admin: React.FC<Props> = ({ user }) => {
         conceptDescription: editReceiptType === 'concepto_adicional' ? editReceiptConcept : undefined,
       });
       cancelEditingReceipt();
-      loadPaymentReceipts();
-    } catch (e) {
+      await Promise.all([loadPaymentReceipts(), loadAllLedgers(), loadUsers()]);
+      showMessage(
+        receipt.status === 'approved'
+          ? '✅ Comprobante aprobado corregido. El monto aplicado y el saldo fueron recalculados.'
+          : '✅ Comprobante actualizado.',
+        'success'
+      );
+    } catch (e: any) {
       console.error("Error saving receipt edit", e);
+      showMessage(`Error al editar comprobante: ${e?.message || e}`, 'error');
     } finally {
       setSavingReceiptEdit(false);
     }
@@ -5336,17 +5343,24 @@ const Admin: React.FC<Props> = ({ user }) => {
                           {editingReceiptId === receipt.id && (
                             <div className="mt-3 bg-logia-900 rounded-lg p-3 border border-yellow-600/40 space-y-3">
                               <p className="text-yellow-300 font-bold text-sm">✏️ Editando comprobante</p>
+                              {receipt.status === 'approved' && (
+                                <div className="bg-blue-900/30 border border-blue-700/50 rounded p-2 text-xs text-blue-200">
+                                  🔒 Ya está aprobado. El destino contable (tipo, concepto y período) queda bloqueado. Si corriges el monto de una cuota extra, se recalculará automáticamente el saldo y todos los montos aplicados de esa cuota.
+                                </div>
+                              )}
                               <div>
                                 <label className="text-xs text-gray-400 block mb-1">Tipo</label>
                                 <div className="flex gap-3">
                                   <label className="flex items-center gap-1 text-sm text-white">
                                     <input type="radio" checked={editReceiptType === 'cuota_mensual'}
-                                      onChange={() => setEditReceiptType('cuota_mensual')} className="accent-yellow-400" />
+                                      disabled={receipt.status === 'approved'}
+                                      onChange={() => setEditReceiptType('cuota_mensual')} className="accent-yellow-400 disabled:opacity-50" />
                                     Cuota Mensual
                                   </label>
                                   <label className="flex items-center gap-1 text-sm text-white">
                                     <input type="radio" checked={editReceiptType === 'concepto_adicional'}
-                                      onChange={() => setEditReceiptType('concepto_adicional')} className="accent-yellow-400" />
+                                      disabled={receipt.status === 'approved'}
+                                      onChange={() => setEditReceiptType('concepto_adicional')} className="accent-yellow-400 disabled:opacity-50" />
                                     Concepto Adicional
                                   </label>
                                 </div>
@@ -5355,19 +5369,25 @@ const Admin: React.FC<Props> = ({ user }) => {
                                 <div>
                                   <label className="text-xs text-gray-400 block mb-1">Descripción del concepto</label>
                                   <input type="text" value={editReceiptConcept} onChange={e => setEditReceiptConcept(e.target.value)}
-                                    className="w-full bg-logia-800 text-white px-3 py-1 rounded border border-logia-700 text-sm" />
+                                    disabled={receipt.status === 'approved'}
+                                    className="w-full bg-logia-800 text-white px-3 py-1 rounded border border-logia-700 text-sm disabled:opacity-60" />
                                 </div>
                               )}
                               <div>
                                 <label className="text-xs text-gray-400 block mb-1">Períodos (separados por coma, ej: 2025-01, 2025-02)</label>
                                 <input type="text" value={editReceiptPeriods.join(', ')}
+                                  disabled={receipt.status === 'approved'}
                                   onChange={e => setEditReceiptPeriods(e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
-                                  className="w-full bg-logia-800 text-white px-3 py-1 rounded border border-logia-700 text-sm" />
+                                  className="w-full bg-logia-800 text-white px-3 py-1 rounded border border-logia-700 text-sm disabled:opacity-60" />
                               </div>
                               <div>
                                 <label className="text-xs text-gray-400 block mb-1">Monto declarado ($)</label>
-                                <input type="number" value={editReceiptAmount} onChange={e => setEditReceiptAmount(e.target.value)}
-                                  className="w-full bg-logia-800 text-white px-3 py-1 rounded border border-logia-700 text-sm" />
+                                <input type="number" min="0" step="0.01" value={editReceiptAmount} onChange={e => setEditReceiptAmount(e.target.value)}
+                                  disabled={receipt.status === 'approved' && receipt.receiptType !== 'concepto_adicional'}
+                                  className="w-full bg-logia-800 text-white px-3 py-1 rounded border border-logia-700 text-sm disabled:opacity-60" />
+                                {receipt.status === 'approved' && receipt.receiptType === 'cuota_mensual' && (
+                                  <p className="text-[11px] text-gray-500 mt-1">Para corregir un monto mensual ya aprobado usa Gestión de Pagos; aquí se evita redistribuir meses históricos accidentalmente.</p>
+                                )}
                               </div>
                               <div className="flex gap-2">
                                 <button onClick={() => saveReceiptEdit(receipt)} disabled={savingReceiptEdit}
@@ -5385,14 +5405,16 @@ const Admin: React.FC<Props> = ({ user }) => {
                           {receipt.reviewComments && (
                             <p className="text-xs text-gray-400 italic bg-logia-900 p-2 rounded">Comentario: {receipt.reviewComments}</p>
                           )}
+                          {!isReadOnly && editingReceiptId !== receipt.id && (
+                            <div className="flex gap-2 pt-1 flex-wrap">
+                              <button onClick={() => startEditingReceipt(receipt)}
+                                className="bg-yellow-700 hover:bg-yellow-600 text-white text-xs px-4 py-2 rounded font-bold">
+                                ✏️ Editar registro
+                              </button>
+                            </div>
+                          )}
                           {receipt.status === 'pending' && !isReadOnly && (
                             <div className="flex gap-2 pt-1 flex-wrap">
-                              {editingReceiptId !== receipt.id && (
-                                <button onClick={() => startEditingReceipt(receipt)}
-                                  className="bg-yellow-700 hover:bg-yellow-600 text-white text-xs px-4 py-2 rounded font-bold">
-                                  ✏️ Editar
-                                </button>
-                              )}
                               <button onClick={async () => {
                                 const approvalLabel = receipt.receiptType === 'concepto_adicional'
                                   ? `${receipt.conceptDescription || 'Cuota extra'} · $${Number(receipt.amount || 0).toFixed(2)}`
