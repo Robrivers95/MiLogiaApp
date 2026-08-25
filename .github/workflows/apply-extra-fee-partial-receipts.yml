@@ -1,0 +1,36 @@
+name: Apply extra fee partial receipt fix
+
+on:
+  push:
+    branches: [fix-extra-fee-partial-receipts]
+    paths:
+      - scripts/apply-extra-fee-partial-receipts.py
+      - .github/workflows/apply-extra-fee-partial-receipts.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-extra-fee-partial-receipts
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Apply source changes
+        run: python3 scripts/apply-extra-fee-partial-receipts.py
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Commit validated changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add types.ts components/Payments.tsx components/Admin.tsx services/api.ts
+          git diff --cached --quiet || git commit -m "fix: support cumulative partial extra fee receipts"
+          git push origin fix-extra-fee-partial-receipts
