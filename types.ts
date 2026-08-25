@@ -89,6 +89,9 @@ export interface PaymentReceipt {
   amount?: number;             // Monto declarado (opcional)
   receiptType: 'cuota_mensual' | 'concepto_adicional'; // Tipo de pago
   conceptDescription?: string; // Descripción para "concepto_adicional"
+  extraFeeId?: string;          // ID exacto de la cuota extra seleccionada
+  extraFeePeriod?: string;      // YYYY-MM del ledger donde vive la cuota extra
+  appliedAmount?: number;       // Monto realmente aplicado al saldo al aprobar
   status: 'pending' | 'approved' | 'rejected';
   submittedAt: string;         // ISO
   reviewedAt?: string;         // ISO

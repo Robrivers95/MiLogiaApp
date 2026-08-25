@@ -176,6 +176,8 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [allUserLedgers, setAllUserLedgers] = useState<Record<string, Payment[]>>({});
   const [matrixFilter, setMatrixFilter] = useState<'regular' | 'extra' | 'all'>('regular');
   const [matrixExtraDesc, setMatrixExtraDesc] = useState<string>('');
+  const [showMatrixReceiptsModal, setShowMatrixReceiptsModal] = useState(false);
+  const [reconcilingMatrixConcept, setReconcilingMatrixConcept] = useState(false);
   // Cuota extra masiva
   const [showBulkExtraPanel, setShowBulkExtraPanel] = useState(false);
   const [bulkExtraDesc, setBulkExtraDesc] = useState('');
@@ -338,6 +340,7 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
       if (activeTab === 'payment-matrix') {
           loadAllLedgers();
+          loadPaymentReceipts();
       }
       if (activeTab === 'manual-merge') {
           loadTempUsers();
@@ -1106,6 +1109,140 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
   };
   
+  const normalizeConcept = (value?: string) => (value || '').trim().toLocaleLowerCase('es-MX');
+
+  const getMatrixFilteredReceipts = (): PaymentReceipt[] => {
+      if (matrixFilter !== 'extra' || !matrixExtraDesc) return [];
+      return (paymentReceipts as PaymentReceipt[])
+          .filter(receipt => {
+              if (receipt.receiptType !== 'concepto_adicional') return false;
+              if (normalizeConcept(receipt.conceptDescription) !== normalizeConcept(matrixExtraDesc)) return false;
+              const receiptPeriod = receipt.extraFeePeriod || receipt.periods?.[0] || '';
+              return !receiptPeriod || receiptPeriod.startsWith(String(matrixYear));
+          })
+          .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+  };
+
+  const handleDownloadMatrixCSV = () => {
+      const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+      const activeUsers = filteredUsers.filter(u => u.active);
+      const csvEscape = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+      const filterLabel = matrixFilter === 'regular'
+          ? 'Cuota mensual'
+          : matrixFilter === 'extra'
+              ? matrixExtraDesc || 'Cuota extra'
+              : 'General';
+
+      const headers = [
+          'Miembro', 'Concepto filtrado',
+          ...months.flatMap(month => [`${month} Estado`, `${month} Cuota`, `${month} Pagado`, `${month} Pendiente`]),
+          'Total Cuota', 'Total Pagado', 'Total Pendiente'
+      ];
+
+      const rows = activeUsers.map(member => {
+          const ledger = allUserLedgers[member.uid] || [];
+          let totalBilled = 0;
+          let totalPaid = 0;
+          let totalPending = 0;
+          const monthCells: Array<string | number> = [];
+
+          for (let i = 0; i < 12; i++) {
+              const period = `${matrixYear}-${String(i + 1).padStart(2, '0')}`;
+              const payment = ledger.find(p => p.period === period);
+              let billed = 0;
+              let paid = 0;
+              let pending = 0;
+              let status = 'Sin cuota';
+
+              if (matrixFilter === 'regular') {
+                  if (payment) {
+                      billed = Number(payment.amount) || 0;
+                      paid = Number(payment.paidRegular !== undefined ? payment.paidRegular : payment.paid) || 0;
+                      pending = Math.max(0, billed - paid);
+                      status = pending <= 0 ? 'Pagado' : paid > 0 ? 'Parcial' : 'Pendiente';
+                  }
+              } else if (matrixFilter === 'extra' && matrixExtraDesc) {
+                  const fee = payment?.extraFees?.find(f => normalizeConcept(f.description) === normalizeConcept(matrixExtraDesc));
+                  const legacyMatch = !payment?.extraFees?.length && Number(payment?.extraAmount) > 0 &&
+                      normalizeConcept(payment?.extraDescription || 'Cuota Extra') === normalizeConcept(matrixExtraDesc);
+                  if (fee) {
+                      billed = Number(fee.amount) || 0;
+                      paid = Number(fee.paid) || 0;
+                      pending = fee.forgiven ? 0 : Math.max(0, billed - paid);
+                      status = fee.forgiven ? 'Perdonado' : pending <= 0 ? 'Pagado' : paid > 0 ? 'Parcial' : 'Pendiente';
+                  } else if (payment && legacyMatch) {
+                      billed = Number(payment.extraAmount) || 0;
+                      paid = Number(payment.paidExtra) || 0;
+                      pending = Math.max(0, billed - paid);
+                      status = pending <= 0 ? 'Pagado' : paid > 0 ? 'Parcial' : 'Pendiente';
+                  }
+              } else if (payment) {
+                  const regularBilled = Number(payment.amount) || 0;
+                  const regularPaid = Number(payment.paidRegular !== undefined ? payment.paidRegular : payment.paid) || 0;
+                  const fees = payment.extraFees || [];
+                  const extraBilled = fees.length
+                      ? fees.reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0)
+                      : (Number(payment.extraAmount) || 0);
+                  const extraPaid = fees.length
+                      ? fees.reduce((sum, fee) => sum + (Number(fee.paid) || 0), 0)
+                      : (Number(payment.paidExtra) || 0);
+                  const extraPending = fees.length
+                      ? fees.reduce((sum, fee) => sum + (fee.forgiven ? 0 : Math.max(0, (Number(fee.amount) || 0) - (Number(fee.paid) || 0))), 0)
+                      : Math.max(0, extraBilled - extraPaid);
+                  billed = regularBilled + extraBilled;
+                  paid = regularPaid + extraPaid;
+                  pending = Math.max(0, regularBilled - regularPaid) + extraPending;
+                  status = pending <= 0 ? 'Pagado' : paid > 0 ? 'Parcial' : 'Pendiente';
+              }
+
+              totalBilled += billed;
+              totalPaid += paid;
+              totalPending += pending;
+              monthCells.push(status, billed.toFixed(2), paid.toFixed(2), pending.toFixed(2));
+          }
+
+          return [
+              csvEscape(member.name),
+              csvEscape(filterLabel),
+              ...monthCells.map(csvEscape),
+              totalBilled.toFixed(2), totalPaid.toFixed(2), totalPending.toFixed(2)
+          ].join(',');
+      });
+
+      const csv = [headers.map(csvEscape).join(','), ...rows].join('\n');
+      const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const safeConcept = filterLabel.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ_-]+/g, '-').replace(/^-+|-+$/g, '');
+      a.href = url;
+      a.download = `matriz-${matrixYear}-${safeConcept || 'general'}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showMessage(`CSV exportado: ${filterLabel}`, 'success');
+  };
+
+  const handleReconcileMatrixConcept = async () => {
+      if (matrixFilter !== 'extra' || !matrixExtraDesc || isReadOnly) return;
+      if (!window.confirm(
+          `¿Recalcular los pagos de "${matrixExtraDesc}" en ${matrixYear} usando la suma de sus comprobantes APROBADOS?\n\n` +
+          'Esto sirve para corregir registros antiguos que fueron marcados como 100% pagados por error.'
+      )) return;
+      setReconcilingMatrixConcept(true);
+      try {
+          const result = await dataService.reconcileExtraFeeFromReceipts(user.groupId, matrixExtraDesc, matrixYear);
+          await Promise.all([loadAllLedgers(), loadUsers(), loadPaymentReceipts()]);
+          showMessage(
+              `✅ Reconciliación terminada: ${result.updated} registro(s) corregidos` +
+              (result.skippedAmbiguous ? `; ${result.skippedAmbiguous} omitido(s) por período ambiguo.` : '.'),
+              'success'
+          );
+      } catch (e: any) {
+          showMessage(`Error al reconciliar: ${e?.message || e}`, 'error');
+      } finally {
+          setReconcilingMatrixConcept(false);
+      }
+  };
+
   const handleSendEmail = (u: User) => { /* ... */ };
   const handleAddAllocation = () => {
       if (allocAmount <= 0) return;
@@ -4267,38 +4404,27 @@ const Admin: React.FC<Props> = ({ user }) => {
                             <button onClick={loadAllLedgers} className="bg-logia-900 hover:bg-logia-700 text-gray-300 px-3 py-1 rounded text-xs border border-logia-700 flex items-center gap-1">
                                 🔄 Actualizar
                             </button>
-                            <button onClick={() => {
-                                const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-                                const header = ['Miembro', ...months, 'Total Pagado', 'Total Pendiente'].join(',');
-                                const activeUsers = filteredUsers.filter(u => u.active);
-                                const rows = activeUsers.map(u => {
-                                    const userLedger = allUserLedgers[u.uid] || [];
-                                    let totalPaid = 0, totalPending = 0;
-                                    const cells = Array.from({length: 12}, (_, i) => {
-                                        const period = `${matrixYear}-${String(i+1).padStart(2,'0')}`;
-                                        const p = userLedger.find(x => x.period === period);
-                                        if (!p) return 'Sin cuota';
-                                        const paidReg = Number(p.paidRegular ?? p.paid ?? 0);
-                                        const debtReg = Math.max(0, p.amount - paidReg);
-                                        let extraDebt = 0;
-                                        if (p.extraFees?.length) extraDebt = p.extraFees.reduce((s, ef) => s + Math.max(0, ef.amount - ef.paid), 0);
-                                        else if (p.extraAmount) extraDebt = Math.max(0, p.extraAmount - (p.paidExtra || 0));
-                                        totalPaid += paidReg + (p.paidExtra || 0);
-                                        totalPending += debtReg + extraDebt;
-                                        if (p.regularCovered) return extraDebt > 0 ? 'Pagado (extra pendiente)' : 'Pagado';
-                                        if (paidReg > 0) return 'Parcial';
-                                        return 'Pendiente';
-                                    });
-                                    return [`"${u.name}"`, ...cells, totalPaid.toFixed(2), totalPending.toFixed(2)].join(',');
-                                });
-                                const csv = [header, ...rows].join('\n');
-                                const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement('a'); a.href=url; a.download=`matriz-${matrixYear}.csv`; a.click();
-                                URL.revokeObjectURL(url);
-                            }} className="bg-green-800 hover:bg-green-700 text-white px-3 py-1 rounded text-xs border border-green-700 flex items-center gap-1">
-                                📥 CSV
+                            <button onClick={handleDownloadMatrixCSV} className="bg-green-800 hover:bg-green-700 text-white px-3 py-1 rounded text-xs border border-green-700 flex items-center gap-1">
+                                📥 CSV filtrado
                             </button>
+                            {matrixFilter === 'extra' && matrixExtraDesc && (
+                                <>
+                                    <button
+                                        onClick={async () => { await loadPaymentReceipts(); setShowMatrixReceiptsModal(true); }}
+                                        className="bg-purple-800 hover:bg-purple-700 text-white px-3 py-1 rounded text-xs border border-purple-700 flex items-center gap-1"
+                                    >
+                                        🧾 Comprobantes ({getMatrixFilteredReceipts().length})
+                                    </button>
+                                    <button
+                                        onClick={handleReconcileMatrixConcept}
+                                        disabled={reconcilingMatrixConcept || isReadOnly}
+                                        title="Corrige pagos históricos usando los montos reales de comprobantes aprobados"
+                                        className="bg-orange-800 hover:bg-orange-700 disabled:opacity-40 text-white px-3 py-1 rounded text-xs border border-orange-700 flex items-center gap-1"
+                                    >
+                                        {reconcilingMatrixConcept ? '⏳ Recalculando...' : '♻️ Reconciliar'}
+                                    </button>
+                                </>
+                            )}
                             <button onClick={() => {
                                 const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
                                 const activeUsers = filteredUsers.filter(u => u.active);
@@ -5063,7 +5189,8 @@ const Admin: React.FC<Props> = ({ user }) => {
                                 ? <p className="text-sm text-gray-300 mt-1">Concepto: <span className="font-bold text-purple-300">{receipt.conceptDescription || '—'}</span></p>
                                 : <p className="text-sm text-gray-300 mt-1">Períodos: <span className="font-bold text-white">{(receipt.periods || []).join(', ')}</span></p>
                               }
-                              {receipt.amount && <p className="text-sm text-gray-300">Monto declarado: <span className="font-bold text-yellow-300">${receipt.amount}</span></p>}
+                              {receipt.amount && <p className="text-sm text-gray-300">Monto declarado: <span className="font-bold text-yellow-300">${Number(receipt.amount).toFixed(2)}</span></p>}
+                              {receipt.appliedAmount !== undefined && <p className="text-sm text-gray-300">Monto aplicado: <span className="font-bold text-green-300">${Number(receipt.appliedAmount).toFixed(2)}</span></p>}
                             </div>
                             <div className="flex flex-col gap-2 items-end">
                               <span className={`text-xs px-2 py-1 rounded-full font-bold ${
@@ -5159,7 +5286,10 @@ const Admin: React.FC<Props> = ({ user }) => {
                                 </button>
                               )}
                               <button onClick={async () => {
-                                if (!window.confirm(`¿Aprobar comprobante de ${receipt.userName} (${(receipt.periods || []).join(', ')})?`)) return;
+                                const approvalLabel = receipt.receiptType === 'concepto_adicional'
+                                  ? `${receipt.conceptDescription || 'Cuota extra'} · $${Number(receipt.amount || 0).toFixed(2)}`
+                                  : (receipt.periods || []).join(', ');
+                                if (!window.confirm(`¿Aprobar comprobante de ${receipt.userName} (${approvalLabel})?`)) return;
                                 try {
                                   await dataService.approvePaymentReceipt(receipt, user.uid);
                                   showMessage('Comprobante aprobado ✅ El saldo del miembro se actualizó.', 'success');
@@ -5167,7 +5297,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                   // Refresh ledger & member data so Matriz de pagos and Gestión de Miembros reflect the change
                                   loadAllLedgers();
                                   loadUsers();
-                                } catch(e) { showMessage('Error al aprobar', 'error'); }
+                                } catch(e: any) { showMessage(`Error al aprobar: ${e?.message || e}`, 'error'); }
                               }} className="bg-green-700 hover:bg-green-600 text-white text-xs px-4 py-2 rounded font-bold">
                                 ✅ Aprobar
                               </button>
@@ -5271,6 +5401,64 @@ const Admin: React.FC<Props> = ({ user }) => {
         )}
 
       </div>
+
+      {/* FILTERED EXTRA-FEE RECEIPTS MODAL */}
+      {showMatrixReceiptsModal && matrixFilter === 'extra' && matrixExtraDesc && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[110] p-4" onClick={() => setShowMatrixReceiptsModal(false)}>
+          <div className="bg-logia-800 w-full max-w-3xl rounded-xl border border-purple-600/40 shadow-2xl max-h-[88vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="p-4 border-b border-logia-700 bg-logia-900 flex justify-between items-center gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-white">🧾 Comprobantes: {matrixExtraDesc}</h3>
+                <p className="text-xs text-gray-400">Año {matrixYear} · solo el concepto actualmente filtrado</p>
+              </div>
+              <button onClick={() => setShowMatrixReceiptsModal(false)} className="text-gray-400 hover:text-white text-2xl">×</button>
+            </div>
+            <div className="p-4 overflow-y-auto space-y-3">
+              {getMatrixFilteredReceipts().length === 0 ? (
+                <p className="text-center text-gray-500 py-8">No hay comprobantes registrados para este concepto.</p>
+              ) : getMatrixFilteredReceipts().map(receipt => {
+                const urls = receipt.receiptImageUrls?.length
+                  ? receipt.receiptImageUrls
+                  : receipt.receiptImageUrl ? [receipt.receiptImageUrl] : [];
+                return (
+                  <div key={receipt.id} className={`rounded-lg border p-4 ${receipt.status === 'approved' ? 'border-green-700/50 bg-green-900/10' : receipt.status === 'pending' ? 'border-yellow-700/50 bg-yellow-900/10' : 'border-red-700/50 bg-red-900/10'}`}>
+                    <div className="flex flex-wrap justify-between gap-3">
+                      <div>
+                        <p className="font-bold text-white">{receipt.userName}</p>
+                        <p className="text-xs text-gray-400">Período: {receipt.extraFeePeriod || (receipt.periods || []).join(', ') || 'Sin período (legacy)'}</p>
+                        <p className="text-xs text-gray-400">Transferencia: {new Date(receipt.transferDate).toLocaleString('es-MX')}</p>
+                        <p className="text-sm mt-1 text-gray-300">
+                          Declarado: <strong className="text-yellow-300">${Number(receipt.amount || 0).toFixed(2)}</strong>
+                          {receipt.appliedAmount !== undefined && <span> · Aplicado: <strong className="text-green-300">${Number(receipt.appliedAmount).toFixed(2)}</strong></span>}
+                        </p>
+                      </div>
+                      <span className={`self-start text-xs px-2 py-1 rounded-full font-bold ${receipt.status === 'approved' ? 'bg-green-700 text-green-100' : receipt.status === 'pending' ? 'bg-yellow-700 text-yellow-100' : 'bg-red-700 text-red-100'}`}>
+                        {receipt.status === 'approved' ? '✅ Aprobado' : receipt.status === 'pending' ? '⏳ En revisión' : '❌ Rechazado'}
+                      </span>
+                    </div>
+                    {urls.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {urls.map((url, index) => {
+                          const isPdf = url.toLowerCase().includes('.pdf') || url.toLowerCase().includes('%2fpdf');
+                          return isPdf ? (
+                            <a key={url} href={url} target="_blank" rel="noreferrer" className="text-xs bg-blue-900/40 text-blue-300 border border-blue-700 px-3 py-2 rounded hover:bg-blue-900/60">
+                              📄 Abrir comprobante {urls.length > 1 ? index + 1 : ''}
+                            </a>
+                          ) : (
+                            <img key={url} src={url} alt={`Comprobante ${index + 1}`}
+                              onClick={() => setViewingReceiptImage(url)}
+                              className="w-24 h-24 object-cover rounded border border-logia-600 cursor-pointer hover:opacity-80" />
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MATRIX PAYMENT MODAL */}
       {showMatrixModal && matrixModalPayment && (

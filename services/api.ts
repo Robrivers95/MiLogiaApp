@@ -461,69 +461,66 @@ export const dataService = {
         let totalPaid = 0;
         let totalDebt = 0;
         let totalBilled = 0;
-        
-        // v3.0.0: Separate tracking for regular vs extra fees
         let totalPaidRegular = 0;
         let totalPaidExtra = 0;
         let totalBilledRegular = 0;
         let totalBilledExtra = 0;
-        
-        snap.forEach(doc => {
-            const p = doc.data() as Payment;
-            
+        let totalDebtRegular = 0;
+        let totalDebtExtra = 0;
+
+        snap.forEach(docSnap => {
+            const p = docSnap.data() as Payment;
             if (startPeriod && p.period < startPeriod) return;
             if (endPeriod && p.period > endPeriod) return;
 
-            // FIX: Force Number() casting to prevent string concatenation
-            const amt = Number(p.amount) || 0;
-            const extra = Number(p.extraAmount) || 0;
-            
-            // v3.0.0: Use new separate payment fields if available, fallback to legacy 'paid'
-            let paidReg = 0;
-            let paidExt = 0;
-            if (p.paidRegular !== undefined || p.paidExtra !== undefined) {
-                paidReg = Number(p.paidRegular) || 0;
-                paidExt = Number(p.paidExtra) || 0;
+            const regularAmount = Number(p.amount) || 0;
+            let paidRegular = 0;
+            if (p.paidRegular !== undefined) {
+                paidRegular = Number(p.paidRegular) || 0;
             } else {
-                // Legacy: use old 'paid' field - assume it covers regular first, then extra
                 const legacyPaid = Number(p.paid) || 0;
-                if (legacyPaid <= amt) {
-                    paidReg = legacyPaid;
-                    paidExt = 0;
-                } else {
-                    paidReg = amt;
-                    paidExt = legacyPaid - amt;
-                }
+                paidRegular = Math.min(legacyPaid, regularAmount);
             }
-            
-            const totalAmount = amt + extra;
-            const totalPaidAmt = paidReg + paidExt;
-            
-            totalBilled += totalAmount;
-            totalPaid += totalPaidAmt;
-            totalDebt += (totalAmount - totalPaidAmt);
-            
-            totalBilledRegular += amt;
-            totalBilledExtra += extra;
-            totalPaidRegular += paidReg;
-            totalPaidExtra += paidExt;
+
+            const hasIndividualExtras = Array.isArray(p.extraFees) && p.extraFees.length > 0;
+            const extraBilled = hasIndividualExtras
+                ? p.extraFees!.reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0)
+                : (Number(p.extraAmount) || 0);
+            const paidExtra = hasIndividualExtras
+                ? p.extraFees!.reduce((sum, fee) => sum + (Number(fee.paid) || 0), 0)
+                : (Number(p.paidExtra) || 0);
+            const regularDebt = Math.max(0, regularAmount - paidRegular);
+            const extraDebt = hasIndividualExtras
+                ? p.extraFees!.reduce((sum, fee) => sum + (fee.forgiven ? 0 : Math.max(0, (Number(fee.amount) || 0) - (Number(fee.paid) || 0))), 0)
+                : Math.max(0, extraBilled - paidExtra);
+
+            totalBilledRegular += regularAmount;
+            totalBilledExtra += extraBilled;
+            totalPaidRegular += paidRegular;
+            totalPaidExtra += paidExtra;
+            totalDebtRegular += regularDebt;
+            totalDebtExtra += extraDebt;
+            totalBilled += regularAmount + extraBilled;
+            totalPaid += paidRegular + paidExtra;
+            totalDebt += regularDebt + extraDebt;
         });
-        
-        return { 
-            totalPaid, 
-            totalDebt, 
+
+        return {
+            totalPaid,
+            totalDebt,
             totalBilled,
             totalPaidRegular,
             totalPaidExtra,
             totalBilledRegular,
             totalBilledExtra,
-            totalDebtRegular: totalBilledRegular - totalPaidRegular,
-            totalDebtExtra: totalBilledExtra - totalPaidExtra
+            totalDebtRegular,
+            totalDebtExtra
         };
     } catch (error) {
-        return { 
-            totalPaid: 0, 
-            totalDebt: 0, 
+        console.error('Error calculating user financial stats', error);
+        return {
+            totalPaid: 0,
+            totalDebt: 0,
             totalBilled: 0,
             totalPaidRegular: 0,
             totalPaidExtra: 0,
@@ -862,7 +859,13 @@ export const dataService = {
                 amount: Number(data.amount) || 0,
                 paid: Number(data.paid) || 0,
                 extraAmount: Number(data.extraAmount) || 0,
-                extraFees: data.extraFees || [] // Ensure extraFees is always an array
+                paidRegular: data.paidRegular !== undefined ? (Number(data.paidRegular) || 0) : undefined,
+                paidExtra: data.paidExtra !== undefined ? (Number(data.paidExtra) || 0) : undefined,
+                extraFees: Array.isArray(data.extraFees) ? data.extraFees.map((fee: IndividualExtraFee) => ({
+                    ...fee,
+                    amount: Number(fee.amount) || 0,
+                    paid: Number(fee.paid) || 0,
+                })) : [] // Normalize amounts so partial payments never become strings
             } as Payment;
         });
     } catch (e) {
@@ -1376,177 +1379,209 @@ export const dataService = {
     receipt: PaymentReceipt,
     reviewerUid: string
   ): Promise<void> => {
-    // 1. Mark receipt as approved
     const receiptRef = doc(db, "groups", receipt.groupId, "paymentReceipts", receipt.id);
+    const storedSnap = await getDoc(receiptRef);
+    const currentReceipt = storedSnap.exists()
+      ? ({ ...receipt, ...storedSnap.data(), id: storedSnap.id } as PaymentReceipt)
+      : receipt;
+
+    // Idempotency: the same receipt must never be credited twice.
+    if (currentReceipt.status === 'approved') return;
+
+    const approvalDate = new Date().toISOString().split('T')[0];
+    const normalize = (value?: string) => (value || '').trim().toLocaleLowerCase('es-MX');
+    const getPaidRegular = (p: Payment): number => {
+      if (p.paidRegular !== undefined) return Number(p.paidRegular) || 0;
+      return Math.min(Number(p.paid) || 0, Number(p.amount) || 0);
+    };
+    const getExtraFees = (p: Payment): IndividualExtraFee[] =>
+      Array.isArray(p.extraFees)
+        ? p.extraFees.map(f => ({ ...f, amount: Number(f.amount) || 0, paid: Number(f.paid) || 0 }))
+        : [];
+    const getPaidExtra = (p: Payment, fees = getExtraFees(p)): number =>
+      fees.length > 0 ? fees.reduce((sum, fee) => sum + fee.paid, 0) : (Number(p.paidExtra) || 0);
+    const extrasCovered = (p: Payment, fees = getExtraFees(p), paidExtra = getPaidExtra(p, fees)): boolean =>
+      fees.length > 0
+        ? fees.every(fee => !!fee.forgiven || fee.paid >= fee.amount)
+        : (Number(p.extraAmount) || 0) <= 0 || paidExtra >= (Number(p.extraAmount) || 0);
+    const computeStatus = (regularCovered: boolean, extraCovered: boolean, paidRegular: number, paidExtra: number): Payment['status'] =>
+      regularCovered && extraCovered ? 'Pagado' : (paidRegular > 0 || paidExtra > 0) ? 'Parcial' : 'Pendiente';
+    const buildComment = (existing: string | undefined, label: string): string =>
+      existing ? `${existing} | ${label}` : label;
+
+    let appliedAmount = 0;
+
+    if (currentReceipt.receiptType === 'concepto_adicional') {
+      const declaredAmount = Number(currentReceipt.amount) || 0;
+      if (declaredAmount <= 0) {
+        throw new Error('El comprobante de cuota extra necesita un monto mayor a cero.');
+      }
+
+      const targetPeriod = currentReceipt.extraFeePeriod || currentReceipt.periods?.[0];
+      if (!targetPeriod) {
+        throw new Error('El comprobante no está ligado a un período de cuota extra. Edítalo antes de aprobar.');
+      }
+
+      const ledgerRef = doc(db, "users", currentReceipt.userId, "ledger", targetPeriod);
+      const ledgerSnap = await getDoc(ledgerRef);
+      if (!ledgerSnap.exists()) {
+        throw new Error(`No existe el registro de pagos ${targetPeriod} para este miembro.`);
+      }
+
+      const payment = ledgerSnap.data() as Payment;
+      const paidRegular = getPaidRegular(payment);
+      const regularCovered = !!payment.regularCovered || paidRegular >= (Number(payment.amount) || 0);
+      const fees = getExtraFees(payment);
+
+      if (fees.length > 0) {
+        let feeIndex = currentReceipt.extraFeeId
+          ? fees.findIndex(fee => fee.id === currentReceipt.extraFeeId)
+          : -1;
+        if (feeIndex < 0 && currentReceipt.conceptDescription) {
+          feeIndex = fees.findIndex(fee => normalize(fee.description) === normalize(currentReceipt.conceptDescription));
+        }
+        if (feeIndex < 0) {
+          throw new Error(`No se encontró la cuota extra "${currentReceipt.conceptDescription || 'seleccionada'}" en ${targetPeriod}.`);
+        }
+
+        const targetFee = fees[feeIndex];
+        if (targetFee.forgiven) {
+          throw new Error('Esta cuota extra fue perdonada/cerrada y ya no acepta pagos.');
+        }
+        const balance = Math.max(0, targetFee.amount - targetFee.paid);
+        if (balance <= 0) {
+          throw new Error('Esta cuota extra ya está pagada al 100%.');
+        }
+
+        appliedAmount = Math.min(declaredAmount, balance);
+        fees[feeIndex] = { ...targetFee, paid: targetFee.paid + appliedAmount };
+
+        const totalExtraAmount = fees.reduce((sum, fee) => sum + fee.amount, 0);
+        const totalExtraPaid = fees.reduce((sum, fee) => sum + fee.paid, 0);
+        const extraCovered = extrasCovered(payment, fees, totalExtraPaid);
+
+        await updateDoc(ledgerRef, {
+          extraFees: fees,
+          extraAmount: totalExtraAmount, // keep legacy summaries synchronized
+          paidExtra: totalExtraPaid,
+          paidRegular,
+          paid: paidRegular + totalExtraPaid,
+          regularCovered,
+          extraCovered,
+          status: computeStatus(regularCovered, extraCovered, paidRegular, totalExtraPaid),
+          paymentDate: approvalDate,
+          comments: buildComment(payment.comments, `Pago ${currentReceipt.conceptDescription || targetFee.description}: +$${appliedAmount.toFixed(2)} (${approvalDate})`),
+        });
+
+        currentReceipt.extraFeeId = targetFee.id;
+        currentReceipt.extraFeePeriod = targetPeriod;
+      } else {
+        // Backward compatibility with one legacy extraAmount/extraDescription.
+        const legacyAmount = Number(payment.extraAmount) || 0;
+        if (legacyAmount <= 0) throw new Error('No existe una cuota extra pendiente en ese período.');
+        if (currentReceipt.conceptDescription && payment.extraDescription && normalize(currentReceipt.conceptDescription) !== normalize(payment.extraDescription)) {
+          throw new Error(`La cuota extra del período es "${payment.extraDescription}", no "${currentReceipt.conceptDescription}".`);
+        }
+        const currentPaidExtra = Number(payment.paidExtra) || 0;
+        const balance = Math.max(0, legacyAmount - currentPaidExtra);
+        if (balance <= 0) throw new Error('Esta cuota extra ya está pagada al 100%.');
+        appliedAmount = Math.min(declaredAmount, balance);
+        const newPaidExtra = currentPaidExtra + appliedAmount;
+        const extraCovered = newPaidExtra >= legacyAmount;
+
+        await updateDoc(ledgerRef, {
+          paidExtra: newPaidExtra,
+          paidRegular,
+          paid: paidRegular + newPaidExtra,
+          regularCovered,
+          extraCovered,
+          status: computeStatus(regularCovered, extraCovered, paidRegular, newPaidExtra),
+          paymentDate: approvalDate,
+          comments: buildComment(payment.comments, `Pago ${currentReceipt.conceptDescription || payment.extraDescription || 'Cuota Extra'}: +$${appliedAmount.toFixed(2)} (${approvalDate})`),
+        });
+        currentReceipt.extraFeeId = currentReceipt.extraFeeId || 'legacy';
+        currentReceipt.extraFeePeriod = targetPeriod;
+      }
+    } else {
+      // Cuota mensual: el monto se aplica SOLO a mensualidades, nunca a cuotas extra.
+      const sortedPeriods = [...(currentReceipt.periods || [])].sort();
+      if (sortedPeriods.length === 0) throw new Error('Selecciona al menos un período mensual.');
+      let remaining = Number(currentReceipt.amount) || 0;
+      const hasDeclaredAmount = remaining > 0;
+
+      for (const period of sortedPeriods) {
+        if (hasDeclaredAmount && remaining <= 0) break;
+        const ledgerRef = doc(db, "users", currentReceipt.userId, "ledger", period);
+        const ledgerSnap = await getDoc(ledgerRef);
+
+        if (!ledgerSnap.exists()) {
+          const groupSnap = await getDoc(doc(db, "groups", currentReceipt.groupId));
+          const feeAmount = groupSnap.exists() ? (Number(groupSnap.data().membershipFee) || 0) : 0;
+          if (feeAmount <= 0) continue;
+          const toApply = hasDeclaredAmount ? Math.min(remaining, feeAmount) : feeAmount;
+          const covered = toApply >= feeAmount;
+          await setDoc(ledgerRef, {
+            period,
+            amount: feeAmount,
+            paidRegular: toApply,
+            paid: toApply,
+            paidExtra: 0,
+            regularCovered: covered,
+            extraCovered: true,
+            status: covered ? 'Pagado' : 'Parcial',
+            comments: buildComment('', `Pago mensual: +$${toApply.toFixed(2)} (${approvalDate})`),
+            paymentDate: approvalDate,
+            groupId: currentReceipt.groupId
+          });
+          appliedAmount += toApply;
+          if (hasDeclaredAmount) remaining -= toApply;
+          continue;
+        }
+
+        const payment = ledgerSnap.data() as Payment;
+        const fees = getExtraFees(payment);
+        const paidExtra = getPaidExtra(payment, fees);
+        const extraCovered = extrasCovered(payment, fees, paidExtra);
+        const currentPaidRegular = getPaidRegular(payment);
+        const regularAmount = Number(payment.amount) || 0;
+        const regularDebt = Math.max(0, regularAmount - currentPaidRegular);
+        const toApply = hasDeclaredAmount ? Math.min(remaining, regularDebt) : regularDebt;
+        const newPaidRegular = currentPaidRegular + toApply;
+        const regularCovered = newPaidRegular >= regularAmount;
+
+        await updateDoc(ledgerRef, {
+          paidRegular: newPaidRegular,
+          paidExtra,
+          paid: newPaidRegular + paidExtra,
+          regularCovered,
+          extraCovered,
+          status: computeStatus(regularCovered, extraCovered, newPaidRegular, paidExtra),
+          paymentDate: approvalDate,
+          comments: buildComment(payment.comments, `Pago mensual: +$${toApply.toFixed(2)} (${approvalDate})`),
+        });
+        appliedAmount += toApply;
+        if (hasDeclaredAmount) remaining -= toApply;
+      }
+    }
+
+    // Mark approved only after the ledger was updated successfully.
     await updateDoc(receiptRef, {
       status: 'approved',
       reviewedAt: new Date().toISOString(),
-      reviewedBy: reviewerUid
+      reviewedBy: reviewerUid,
+      appliedAmount,
+      ...(currentReceipt.extraFeeId ? { extraFeeId: currentReceipt.extraFeeId } : {}),
+      ...(currentReceipt.extraFeePeriod ? { extraFeePeriod: currentReceipt.extraFeePeriod } : {}),
     });
 
-    // 2. Auto-apply payment to the user's ledger for each period in the receipt
     try {
-      const sortedPeriods = [...receipt.periods].sort(); // oldest first
-      const approvalDate = new Date().toISOString().split('T')[0];
-
-      // Helper: get totalExtraAmount from a payment
-      const getTotalExtra = (p: Payment): number =>
-        p.extraFees && p.extraFees.length > 0
-          ? p.extraFees.reduce((s, ef) => s + ef.amount, 0)
-          : Number(p.extraAmount) || 0;
-
-      // Helper: compute payment status from covered flags and paid amounts
-      const computeStatus = (
-        paidReg: number, paidExtra: number,
-        regCovered: boolean, extCovered: boolean
-      ): Payment['status'] =>
-        regCovered && extCovered ? 'Pagado' :
-        (paidReg > 0 || paidExtra > 0) ? 'Parcial' : 'Pendiente';
-
-      // Helper: build updated comment
-      const buildComment = (existing: string, date: string): string =>
-        existing ? `${existing} | Aprobado ${date}` : `Aprobado ${date}`;
-
-      // Helper: derive legacy-compatible paidRegular from a payment record
-      const getLegacyPaidReg = (p: Payment): number => {
-        if (p.paidRegular !== undefined) return Number(p.paidRegular) || 0;
-        const legacyPaid = Number(p.paid) || 0;
-        return Math.min(legacyPaid, Number(p.amount) || 0);
-      };
-
-      if (receipt.amount && Number(receipt.amount) > 0) {
-        // Distribute the declared amount across periods, oldest first (chronological)
-        let remaining = Number(receipt.amount);
-
-        for (const period of sortedPeriods) {
-          if (remaining <= 0) break;
-          const ledgerRef = doc(db, "users", receipt.userId, "ledger", period);
-          const ledgerDoc = await getDoc(ledgerRef);
-
-          if (!ledgerDoc.exists()) {
-            // Mes futuro sin entrada — crear con la cuota del grupo
-            const groupSnap = await getDoc(doc(db, "groups", receipt.groupId));
-            const feeAmount = groupSnap.exists() ? (groupSnap.data().membershipFee || 0) : 0;
-            if (feeAmount <= 0) continue;
-            const toApply = Math.min(remaining, feeAmount);
-            const covered = toApply >= feeAmount;
-            await setDoc(ledgerRef, {
-              period, amount: feeAmount, paidRegular: toApply, paid: toApply,
-              paidExtra: 0, regularCovered: covered, extraCovered: true,
-              status: covered ? 'Pagado' : (toApply > 0 ? 'Parcial' : 'Pendiente'),
-              comments: buildComment('', approvalDate),
-              paymentDate: covered ? approvalDate : null,
-              groupId: receipt.groupId
-            });
-            remaining -= toApply;
-            continue;
-          }
-
-          const payment = ledgerDoc.data() as Payment;
-          const currentPaidReg = getLegacyPaidReg(payment);
-          const regularDebt = Math.max(0, Number(payment.amount) - currentPaidReg);
-
-          // Apply to regular fee first
-          const applyToRegular = Math.min(remaining, regularDebt);
-          const newPaidReg = currentPaidReg + applyToRegular;
-          remaining -= applyToRegular;
-
-          // Apply remaining to individual extra fees, then legacy extra
-          let newPaidExtra = Number(payment.paidExtra) || 0;
-          let newExtraFees: IndividualExtraFee[] | undefined;
-
-          if (remaining > 0 && payment.extraFees && payment.extraFees.length > 0) {
-            newExtraFees = payment.extraFees.map(ef => ({ ...ef }));
-            for (const ef of newExtraFees) {
-              if (remaining <= 0) break;
-              const efDebt = Math.max(0, ef.amount - ef.paid);
-              const applyToEf = Math.min(remaining, efDebt);
-              ef.paid += applyToEf;
-              newPaidExtra += applyToEf;
-              remaining -= applyToEf;
-            }
-          } else if (remaining > 0 && Number(payment.extraAmount) > 0) {
-            const legacyDebt = Math.max(0, Number(payment.extraAmount) - newPaidExtra);
-            const applyToLegacy = Math.min(remaining, legacyDebt);
-            newPaidExtra += applyToLegacy;
-            remaining -= applyToLegacy;
-          }
-
-          const totalExtraAmount = newExtraFees
-            ? newExtraFees.reduce((s, ef) => s + ef.amount, 0)
-            : Number(payment.extraAmount) || 0;
-          const regularCovered = newPaidReg >= Number(payment.amount);
-          const extraCovered = totalExtraAmount <= 0 || newPaidExtra >= totalExtraAmount;
-
-          const updateData: Record<string, unknown> = {
-            paidRegular: newPaidReg,
-            paid: newPaidReg + newPaidExtra,
-            paidExtra: newPaidExtra,
-            regularCovered,
-            extraCovered,
-            status: computeStatus(newPaidReg, newPaidExtra, regularCovered, extraCovered),
-            paymentDate: approvalDate,
-            comments: buildComment(payment.comments, approvalDate),
-          };
-          if (newExtraFees) updateData.extraFees = newExtraFees;
-
-          await updateDoc(ledgerRef, updateData);
-        }
-      } else {
-        // No amount declared: mark each period's regular fee as fully paid
-        for (const period of sortedPeriods) {
-          const ledgerRef = doc(db, "users", receipt.userId, "ledger", period);
-          const ledgerDoc = await getDoc(ledgerRef);
-
-          if (!ledgerDoc.exists()) {
-            // Mes sin entrada (futuro o no generado) — crear con cuota del grupo
-            const groupSnap = await getDoc(doc(db, "groups", receipt.groupId));
-            const feeAmount = groupSnap.exists() ? (groupSnap.data().membershipFee || 0) : 0;
-            if (feeAmount <= 0) continue;
-            await setDoc(ledgerRef, {
-              period, amount: feeAmount, paidRegular: feeAmount, paid: feeAmount,
-              paidExtra: 0, regularCovered: true, extraCovered: true,
-              status: 'Pagado',
-              comments: buildComment('', approvalDate),
-              paymentDate: approvalDate,
-              groupId: receipt.groupId
-            });
-            continue;
-          }
-
-          const payment = ledgerDoc.data() as Payment;
-          const regularAmount = Number(payment.amount) || 0;
-          const currentPaidExtra = Number(payment.paidExtra) || 0;
-          const totalExtraAmount = getTotalExtra(payment);
-          const extraCovered = totalExtraAmount <= 0 || currentPaidExtra >= totalExtraAmount;
-
-          await updateDoc(ledgerRef, {
-            paidRegular: regularAmount,
-            paid: regularAmount + currentPaidExtra,
-            regularCovered: true,
-            extraCovered,
-            status: computeStatus(regularAmount, currentPaidExtra, true, extraCovered),
-            paymentDate: approvalDate,
-            comments: buildComment(payment.comments, approvalDate),
-          });
-        }
-      }
-    } catch (err) {
-      console.error(
-        `Error auto-applying approved receipt ${receipt.id} (user ${receipt.userId}, periods ${receipt.periods.join(', ')}) to ledger:`,
-        err
-      );
-    }
-
-    // 3. Notify the member
-    try {
-      const periodsStr = receipt.periods.join(', ');
-      const label = receipt.receiptType === 'concepto_adicional'
-        ? `tu pago de "${receipt.conceptDescription || 'concepto adicional'}"`
+      const periodsStr = (currentReceipt.periods || []).join(', ');
+      const label = currentReceipt.receiptType === 'concepto_adicional'
+        ? `tu pago de "${currentReceipt.conceptDescription || 'cuota extra'}" por $${appliedAmount.toFixed(2)}`
         : `los períodos ${periodsStr}`;
       await notificationService.createNotification(
-        [receipt.userId],
-        receipt.groupId,
+        [currentReceipt.userId],
+        currentReceipt.groupId,
         'payment_receipt',
         '✅ Comprobante aprobado',
         `Tu comprobante de pago para ${label} fue aprobado y registrado en tu cuenta.`
@@ -1722,6 +1757,93 @@ export const dataService = {
       }
     }
     return count;
+  },
+
+  /**
+   * Recalcula una cuota extra seleccionada usando únicamente comprobantes aprobados.
+   * Sirve para corregir datos históricos creados por la lógica anterior que marcaba
+   * una cuota completa aunque el comprobante fuera parcial.
+   */
+  reconcileExtraFeeFromReceipts: async (
+    groupId: string,
+    description: string,
+    year: number
+  ): Promise<{ updated: number; skippedAmbiguous: number }> => {
+    const normalize = (value?: string) => (value || '').trim().toLocaleLowerCase('es-MX');
+    const receipts = (await dataService.getPaymentReceipts(groupId)).filter(r =>
+      r.status === 'approved' &&
+      r.receiptType === 'concepto_adicional' &&
+      normalize(r.conceptDescription) === normalize(description) &&
+      (Number(r.appliedAmount ?? r.amount) || 0) > 0
+    );
+    const groupUsers = await dataService.getUsers(groupId);
+    let updated = 0;
+    let skippedAmbiguous = 0;
+
+    for (const member of groupUsers) {
+      const memberReceipts = receipts.filter(r => r.userId === member.uid);
+      if (memberReceipts.length === 0) continue;
+      const payments = await dataService.getPayments(member.uid);
+      const matchingPayments = payments.filter(p =>
+        p.period.startsWith(String(year)) &&
+        p.extraFees?.some(fee => normalize(fee.description) === normalize(description))
+      );
+
+      for (const payment of matchingPayments) {
+        const fees = (payment.extraFees || []).map(fee => ({ ...fee }));
+        const index = fees.findIndex(fee => normalize(fee.description) === normalize(description));
+        if (index < 0) continue;
+        const targetFee = fees[index];
+
+        const matchingReceipts = memberReceipts.filter(r => {
+          if (r.extraFeeId && r.extraFeeId === targetFee.id) return true;
+          if (r.extraFeePeriod && r.extraFeePeriod === payment.period) return true;
+          if (r.periods?.includes(payment.period)) return true;
+          // Legacy receipts sometimes omitted the period. Infer only if unambiguous.
+          if ((!r.periods || r.periods.length === 0) && !r.extraFeePeriod && matchingPayments.length === 1) return true;
+          return false;
+        });
+
+        if (matchingReceipts.length === 0) {
+          const hasAmbiguous = memberReceipts.some(r => (!r.periods || r.periods.length === 0) && !r.extraFeePeriod) && matchingPayments.length > 1;
+          if (hasAmbiguous) skippedAmbiguous++;
+          continue;
+        }
+
+        const receiptTotal = matchingReceipts.reduce(
+          (sum, r) => sum + (Number(r.appliedAmount ?? r.amount) || 0),
+          0
+        );
+        const correctedPaid = Math.min(Number(targetFee.amount) || 0, receiptTotal);
+        if (Math.abs((Number(targetFee.paid) || 0) - correctedPaid) < 0.005) continue;
+
+        fees[index] = { ...targetFee, paid: correctedPaid };
+        const totalExtraAmount = fees.reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0);
+        const totalExtraPaid = fees.reduce((sum, fee) => sum + (Number(fee.paid) || 0), 0);
+        const paidRegular = payment.paidRegular !== undefined
+          ? (Number(payment.paidRegular) || 0)
+          : Math.min(Number(payment.paid) || 0, Number(payment.amount) || 0);
+        const regularCovered = !!payment.regularCovered || paidRegular >= (Number(payment.amount) || 0);
+        const extraCovered = fees.every(fee => !!fee.forgiven || (Number(fee.paid) || 0) >= (Number(fee.amount) || 0));
+        const status: Payment['status'] = regularCovered && extraCovered
+          ? 'Pagado'
+          : (paidRegular > 0 || totalExtraPaid > 0) ? 'Parcial' : 'Pendiente';
+
+        await updateDoc(doc(db, 'users', member.uid, 'ledger', payment.period), {
+          extraFees: fees,
+          extraAmount: totalExtraAmount,
+          paidExtra: totalExtraPaid,
+          paidRegular,
+          paid: paidRegular + totalExtraPaid,
+          regularCovered,
+          extraCovered,
+          status,
+        });
+        updated++;
+      }
+    }
+
+    return { updated, skippedAmbiguous };
   },
 
   // --- DEBT NOTIFICATIONS ---
