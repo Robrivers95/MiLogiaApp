@@ -119,6 +119,13 @@ service cloud.firestore {
       allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
     }
 
+    // Banco de preguntas compartido con Entre La Escuadra y El Compás.
+    // Cualquier miembro autenticado puede leer; sólo administración puede modificar.
+    match /questions/{questionId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
+    }
+
     match /appConfig/{configId} {
       allow read: if true;
       allow write: if isMaster();
