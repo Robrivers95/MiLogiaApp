@@ -156,6 +156,26 @@ service cloud.firestore {
                        (request.auth.uid == resource.data.hostUid || isAdminOrMaster());
     }
 
+    // Señalización efímera para la voz WebRTC del juego. Agora sigue siendo
+    // compatible, pero esta ruta mantiene la llamada aunque Agora no esté configurado.
+    // Cada usuario controla su presencia y sólo puede leer/borrar sus propias señales.
+    match /voiceRooms/{voiceRoomId} {
+      allow read: if isSignedIn();
+
+      match /participants/{userId} {
+        allow read: if isSignedIn();
+        allow create, update, delete: if isSignedIn() && request.auth.uid == userId;
+
+        match /signals/{signalId} {
+          allow read, delete: if isSignedIn() && request.auth.uid == userId;
+          allow create: if isSignedIn() &&
+                           request.resource.data.from == request.auth.uid &&
+                           request.resource.data.type in ['offer', 'answer', 'candidate'];
+          allow update: if false;
+        }
+      }
+    }
+
     // Retos asíncronos de 10 preguntas. Sólo los dos jugadores involucrados
     // pueden leerlos; el retador crea y cualquiera de los participantes puede
     // completar/actualizar su duelo.
