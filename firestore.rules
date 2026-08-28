@@ -119,46 +119,119 @@ service cloud.firestore {
       allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
     }
 
-    // Banco de preguntas compartido con Entre La Escuadra y El Compás.
-    // Cualquier miembro autenticado puede leer; sólo administración puede modificar.
     match /questions/{questionId} {
       allow read: if isSignedIn();
       allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
     }
 
-    // Perfil de juego: preferencia de rito y exámenes de acceso aprobados.
-    // Sólo el propio usuario puede consultar o modificar su perfil de juego.
     match /gameProfiles/{userId} {
       allow read, create, update: if isSignedIn() && request.auth.uid == userId;
       allow delete: if isSignedIn() && (request.auth.uid == userId || isAdminOrMaster());
     }
 
-    // Salas del maratón de tablero. Los usuarios autenticados pueden descubrirlas.
-    // El anfitrión y los jugadores ya incorporados pueden actualizar la partida.
-    // Para unirse por primera vez sólo se permite agregar players/playerIds y updatedAt.
+    // Perfil social separado de Registro Logia. Todos los usuarios autenticados
+    // pueden ver el directorio; cada persona controla únicamente su propio perfil.
+    match /gameSocialProfiles/{userId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Salas de juego con jugadores activos + invitados. Los jugadores pueden
+    // actualizar el estado del juego; los invitados sólo pueden entrar/salir y chatear.
     match /gameRooms/{roomId} {
+      function guestIdsBefore() {
+        return ('guestIds' in resource.data) ? resource.data.guestIds : [];
+      }
+      function bannedIdsBefore() {
+        return ('bannedIds' in resource.data) ? resource.data.bannedIds : [];
+      }
+      function roomLocked() {
+        return ('isLocked' in resource.data) && resource.data.isLocked == true;
+      }
+      function isExistingPlayer() {
+        return isSignedIn() && request.auth.uid in resource.data.playerIds;
+      }
+      function isExistingGuest() {
+        return isSignedIn() && request.auth.uid in guestIdsBefore();
+      }
+      function hostUpdate() {
+        return isSignedIn() && request.auth.uid == resource.data.hostUid;
+      }
+      function playerGameUpdate() {
+        return isExistingPlayer() &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'players', 'currentPlayerIndex', 'currentQuestionId', 'currentCategory',
+            'lastDice', 'winnerUid', 'status', 'updatedAt'
+          ]);
+      }
+      function playerSelfLeave() {
+        return isExistingPlayer() &&
+          !(request.auth.uid in request.resource.data.playerIds) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'players', 'playerIds', 'currentPlayerIndex', 'updatedAt'
+          ]);
+      }
+      function guestSelfLeave() {
+        return isExistingGuest() &&
+          !(request.auth.uid in request.resource.data.guestIds) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'guests', 'guestIds', 'updatedAt'
+          ]);
+      }
+      function joinAsPlayer() {
+        return isSignedIn() &&
+          !roomLocked() &&
+          resource.data.status == 'waiting' &&
+          !(request.auth.uid in bannedIdsBefore()) &&
+          !(request.auth.uid in resource.data.playerIds) &&
+          request.auth.uid in request.resource.data.playerIds &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'players', 'playerIds', 'guests', 'guestIds', 'updatedAt'
+          ]);
+      }
+      function joinAsGuest() {
+        return isSignedIn() &&
+          !roomLocked() &&
+          !(request.auth.uid in bannedIdsBefore()) &&
+          !(request.auth.uid in resource.data.playerIds) &&
+          !(request.auth.uid in guestIdsBefore()) &&
+          request.auth.uid in request.resource.data.guestIds &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'guests', 'guestIds', 'updatedAt'
+          ]);
+      }
+
       allow read: if isSignedIn();
       allow create: if isSignedIn() &&
                        request.resource.data.hostUid == request.auth.uid &&
-                       request.auth.uid in request.resource.data.playerIds;
-      allow update: if isSignedIn() && (
-                       request.auth.uid == resource.data.hostUid ||
-                       request.auth.uid in resource.data.playerIds ||
-                       (
-                         resource.data.status == 'waiting' &&
-                         request.resource.data.status == 'waiting' &&
-                         !(request.auth.uid in resource.data.playerIds) &&
-                         request.auth.uid in request.resource.data.playerIds &&
-                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players', 'playerIds', 'updatedAt'])
-                       )
-                     );
-      allow delete: if isSignedIn() &&
-                       (request.auth.uid == resource.data.hostUid || isAdminOrMaster());
+                       request.auth.uid in request.resource.data.playerIds &&
+                       request.resource.data.maxAttendees == 20;
+      allow update: if hostUpdate() || playerGameUpdate() || playerSelfLeave() || guestSelfLeave() || joinAsPlayer() || joinAsGuest();
+      allow delete: if isSignedIn() && (request.auth.uid == resource.data.hostUid || isAdminOrMaster());
+
+      match /chat/{messageId} {
+        function parentRoom() {
+          return get(/databases/$(database)/documents/gameRooms/$(roomId)).data;
+        }
+        function parentGuestIds() {
+          return ('guestIds' in parentRoom()) ? parentRoom().guestIds : [];
+        }
+        function isRoomMember() {
+          return isSignedIn() &&
+            (request.auth.uid in parentRoom().playerIds || request.auth.uid in parentGuestIds());
+        }
+        allow read: if isRoomMember();
+        allow create: if isRoomMember() &&
+                         request.resource.data.senderUid == request.auth.uid &&
+                         request.resource.data.text is string &&
+                         request.resource.data.text.size() > 0 &&
+                         request.resource.data.text.size() <= 500;
+        allow update, delete: if false;
+      }
     }
 
-    // Señalización efímera para la voz WebRTC del juego. Agora sigue siendo
-    // compatible, pero esta ruta mantiene la llamada aunque Agora no esté configurado.
-    // Cada usuario controla su presencia y sólo puede leer/borrar sus propias señales.
+    // Señalización efímera para voz. La interfaz del juego sólo permite entrar
+    // a esta llamada a jugadores activos; los invitados no reciben controles de voz.
     match /voiceRooms/{voiceRoomId} {
       allow read: if isSignedIn();
 
@@ -176,12 +249,38 @@ service cloud.firestore {
       }
     }
 
-    // Retos asíncronos de 10 preguntas. Sólo los dos jugadores involucrados
-    // pueden leerlos; el retador crea y cualquiera de los participantes puede
-    // completar/actualizar su duelo.
-    match /duels/{duelId} {
+    // Conversaciones privadas uno-a-uno del juego.
+    match /directConversations/{conversationId} {
+      function isConversationMember() {
+        return isSignedIn() && request.auth.uid in resource.data.memberIds;
+      }
       allow create: if isSignedIn() &&
-                       request.resource.data.challengerUid == request.auth.uid;
+                       request.resource.data.memberIds.size() == 2 &&
+                       request.auth.uid in request.resource.data.memberIds;
+      allow read: if isConversationMember();
+      allow update: if isConversationMember() &&
+                       request.resource.data.memberIds == resource.data.memberIds;
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        function parentConversation() {
+          return get(/databases/$(database)/documents/directConversations/$(conversationId)).data;
+        }
+        function isParentMember() {
+          return isSignedIn() && request.auth.uid in parentConversation().memberIds;
+        }
+        allow read: if isParentMember();
+        allow create: if isParentMember() &&
+                         request.resource.data.senderUid == request.auth.uid &&
+                         request.resource.data.text is string &&
+                         request.resource.data.text.size() > 0 &&
+                         request.resource.data.text.size() <= 1000;
+        allow update, delete: if false;
+      }
+    }
+
+    match /duels/{duelId} {
+      allow create: if isSignedIn() && request.resource.data.challengerUid == request.auth.uid;
       allow read, update: if isSignedIn() &&
                              (resource.data.challengerUid == request.auth.uid ||
                               resource.data.opponentUid == request.auth.uid);
@@ -194,8 +293,6 @@ service cloud.firestore {
       allow write: if isMaster();
     }
 
-    // Biblioteca de Alejandría. The aliases are intentionally retained so old PDFs,
-    // likes and comments can reappear without migrating or deleting production data.
     match /libraryPosts/{postId} {
       allow read: if isSignedIn();
       allow create: if canWriteLibrary() && request.resource.data.authorId == request.auth.uid;
