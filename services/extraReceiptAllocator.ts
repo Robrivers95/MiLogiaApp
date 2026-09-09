@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, updateDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { IndividualExtraFee, Payment, PaymentReceipt } from '../types';
 
@@ -13,6 +13,14 @@ const paidRegular = (payment: Payment): number => {
   return Math.min(Number(payment.paid) || 0, Number(payment.amount) || 0);
 };
 
+const unique = (values: Array<string | undefined>): string[] =>
+  Array.from(new Set(values.filter((value): value is string => Boolean(value))));
+
+/**
+ * Aplica un comprobante de cuota extraordinaria SOLO a la cuota seleccionada.
+ * Si el comprobante excede el saldo, el excedente se conserva en el recibo como
+ * unappliedAmount; nunca se mueve silenciosamente a otra deuda.
+ */
 export async function applyExtraReceiptPayment(
   receipt: PaymentReceipt,
   approvalDate: string
@@ -24,86 +32,133 @@ export async function applyExtraReceiptPayment(
 
   const targetPeriod = receipt.targetExtraFeePeriod || receipt.periods?.[0] || '';
   const targetId = receipt.targetExtraFeeId || receipt.conceptId || '';
-  const targetDescription = (receipt.conceptDescription || '').trim().toLowerCase();
+  const targetDescription = (receipt.conceptDescription || '').trim().toLocaleLowerCase('es-MX');
+  const receiptUrls = unique([
+    ...(receipt.receiptImageUrls || []),
+    receipt.receiptImageUrl,
+  ]);
 
-  const ordered = [...ledgers].sort((a, b) => {
-    const aTarget = a.period === targetPeriod ? 0 : 1;
-    const bTarget = b.period === targetPeriod ? 0 : 1;
-    return aTarget - bTarget || a.period.localeCompare(b.period);
-  });
+  let row = targetPeriod ? ledgers.find(item => item.period === targetPeriod) : undefined;
 
-  let remaining = Math.max(0, Number(receipt.amount) || 0);
-  if (remaining <= 0) {
-    for (const row of ordered) {
-      const fee = (row.payment.extraFees || []).find(item =>
-        !item.forgiven &&
-        ((targetId && item.id === targetId) ||
-         (targetDescription && item.description.trim().toLowerCase() === targetDescription))
-      );
-      if (fee) {
-        remaining = Math.max(0, Number(fee.amount) - Number(fee.paid || 0));
-        break;
+  // Compatibilidad con comprobantes históricos sin período exacto: solo inferir
+  // cuando existe una única coincidencia inequívoca.
+  if (!row) {
+    const matches = ledgers.filter(item => {
+      const fees = item.payment.extraFees || [];
+      if (targetId && fees.some(fee => fee.id === targetId)) return true;
+      if (targetDescription && fees.some(fee => fee.description.trim().toLocaleLowerCase('es-MX') === targetDescription)) return true;
+      if (!fees.length && Number(item.payment.extraAmount) > 0 && targetDescription) {
+        return (item.payment.extraDescription || 'Cuota Extra').trim().toLocaleLowerCase('es-MX') === targetDescription;
       }
-    }
+      return false;
+    });
+    if (matches.length === 1) row = matches[0];
   }
 
+  if (!row) {
+    throw new Error('No se pudo identificar de forma segura la cuota extraordinaria a la que pertenece este comprobante.');
+  }
+
+  const payment = row.payment;
+  const regular = paidRegular(payment);
+  const regularCovered = regular >= Number(payment.amount || 0);
+  const declared = Math.max(0, Number(receipt.amount) || 0);
   const result: ExtraAllocationResult = { applied: 0, unapplied: 0, allocations: [] };
 
-  const candidates: Array<{ row: typeof ordered[number]; fee: IndividualExtraFee; target: boolean }> = [];
-  for (const row of ordered) {
-    for (const fee of row.payment.extraFees || []) {
-      if (fee.forgiven || Number(fee.paid || 0) >= Number(fee.amount || 0)) continue;
-      const target = Boolean(
-        (targetId && fee.id === targetId) ||
-        (!targetId && targetDescription && fee.description.trim().toLowerCase() === targetDescription && (!targetPeriod || row.period === targetPeriod))
-      );
-      candidates.push({ row, fee, target });
+  if (payment.extraFees && payment.extraFees.length > 0) {
+    const fees: IndividualExtraFee[] = payment.extraFees.map(item => ({
+      ...item,
+      amount: Number(item.amount) || 0,
+      paid: Number(item.paid) || 0,
+    }));
+
+    let index = targetId ? fees.findIndex(fee => fee.id === targetId) : -1;
+    if (index < 0 && targetDescription) {
+      const descriptionMatches = fees
+        .map((fee, i) => ({ fee, i }))
+        .filter(({ fee }) => fee.description.trim().toLocaleLowerCase('es-MX') === targetDescription);
+      if (descriptionMatches.length === 1) index = descriptionMatches[0].i;
     }
-  }
-  candidates.sort((a, b) => Number(b.target) - Number(a.target) || a.row.period.localeCompare(b.row.period));
+    if (index < 0) throw new Error('La cuota extraordinaria seleccionada ya no existe en el ledger del miembro.');
 
-  const changed = new Map<string, { ref: typeof ordered[number]['ref']; payment: Payment; fees: IndividualExtraFee[] }>();
+    const fee = fees[index];
+    const debt = fee.forgiven ? 0 : Math.max(0, fee.amount - fee.paid);
+    const amountToProcess = declared > 0 ? declared : debt;
+    const applied = Math.min(amountToProcess, debt);
 
-  for (const candidate of candidates) {
-    if (remaining <= 0) break;
-    const key = candidate.row.period;
-    const state = changed.get(key) || {
-      ref: candidate.row.ref,
-      payment: candidate.row.payment,
-      fees: (candidate.row.payment.extraFees || []).map(item => ({ ...item })),
-    };
-    const fee = state.fees.find(item => item.id === candidate.fee.id);
-    if (!fee) continue;
-    const debt = Math.max(0, Number(fee.amount) - Number(fee.paid || 0));
-    const applied = Math.min(remaining, debt);
-    if (applied <= 0) continue;
-    fee.paid = Number(fee.paid || 0) + applied;
-    remaining -= applied;
-    result.applied += applied;
-    result.allocations.push({ period: key, feeId: fee.id, description: fee.description, amount: applied });
-    changed.set(key, state);
-  }
+    fees[index] = {
+      ...fee,
+      paid: Math.min(fee.amount, fee.paid + applied),
+      receiptUrls: unique([...(fee.receiptUrls || []), ...receiptUrls]),
+      receiptIds: unique([...(fee.receiptIds || []), receipt.id]),
+    } as IndividualExtraFee;
 
-  for (const [period, state] of changed) {
-    const totalExtra = state.fees.reduce((sum, fee) => sum + (fee.forgiven ? 0 : Number(fee.amount || 0)), 0);
-    const totalPaidExtra = state.fees.reduce((sum, fee) => sum + Number(fee.paid || 0), 0);
-    const regular = paidRegular(state.payment);
-    const regularCovered = regular >= Number(state.payment.amount || 0);
-    const extraCovered = totalExtra <= 0 || totalPaidExtra >= totalExtra;
-    await updateDoc(state.ref, {
-      extraFees: state.fees,
-      extraAmount: state.fees.reduce((sum, fee) => sum + Number(fee.amount || 0), 0),
+    const totalExtraAmount = fees.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const totalPaidExtra = fees.reduce((sum, item) => sum + Number(item.paid || 0), 0);
+    const activeExtraDebt = fees.reduce(
+      (sum, item) => sum + (item.forgiven ? 0 : Math.max(0, Number(item.amount || 0) - Number(item.paid || 0))),
+      0
+    );
+    const extraCovered = activeExtraDebt <= 0;
+
+    await updateDoc(row.ref, {
+      extraFees: fees,
+      extraAmount: totalExtraAmount,
       paidExtra: totalPaidExtra,
       paidRegular: regular,
       paid: regular + totalPaidExtra,
       regularCovered,
       extraCovered,
       status: regularCovered && extraCovered ? 'Pagado' : (regular > 0 || totalPaidExtra > 0 ? 'Parcial' : 'Pendiente'),
-      paymentDate: approvalDate,
-      comments: state.payment.comments ? `${state.payment.comments} | Aprobado ${approvalDate}` : `Aprobado ${approvalDate}`,
+      paymentDate: applied > 0 ? approvalDate : (payment.paymentDate || null),
+      comments: payment.comments
+        ? `${payment.comments} | Comprobante ${receipt.id}: +$${applied.toFixed(2)} a ${fee.description} (${approvalDate})`
+        : `Comprobante ${receipt.id}: +$${applied.toFixed(2)} a ${fee.description} (${approvalDate})`,
     });
+
+    result.applied = applied;
+    result.unapplied = Math.max(0, amountToProcess - applied);
+    if (applied > 0) {
+      result.allocations.push({ period: row.period, feeId: fee.id, description: fee.description, amount: applied });
+    }
+    return result;
   }
 
-  result.unapplied = remaining;
+  // Compatibilidad con cuota extraordinaria legacy (extraAmount/extraDescription).
+  const legacyAmount = Math.max(0, Number(payment.extraAmount) || 0);
+  if (legacyAmount <= 0) throw new Error('No existe una cuota extraordinaria en el período seleccionado.');
+
+  const legacyPaid = Math.max(0, Number(payment.paidExtra) || 0);
+  const debt = Math.max(0, legacyAmount - legacyPaid);
+  const amountToProcess = declared > 0 ? declared : debt;
+  const applied = Math.min(amountToProcess, debt);
+  const newPaidExtra = Math.min(legacyAmount, legacyPaid + applied);
+  const extraCovered = newPaidExtra >= legacyAmount;
+
+  await updateDoc(row.ref, {
+    paidExtra: newPaidExtra,
+    paidRegular: regular,
+    paid: regular + newPaidExtra,
+    regularCovered,
+    extraCovered,
+    extraReceiptUrls: unique([...(payment.extraReceiptUrls || []), ...receiptUrls]),
+    extraReceiptIds: unique([...(payment.extraReceiptIds || []), receipt.id]),
+    status: regularCovered && extraCovered ? 'Pagado' : (regular > 0 || newPaidExtra > 0 ? 'Parcial' : 'Pendiente'),
+    paymentDate: applied > 0 ? approvalDate : (payment.paymentDate || null),
+    comments: payment.comments
+      ? `${payment.comments} | Comprobante ${receipt.id}: +$${applied.toFixed(2)} a ${payment.extraDescription || 'Cuota Extra'} (${approvalDate})`
+      : `Comprobante ${receipt.id}: +$${applied.toFixed(2)} a ${payment.extraDescription || 'Cuota Extra'} (${approvalDate})`,
+  });
+
+  result.applied = applied;
+  result.unapplied = Math.max(0, amountToProcess - applied);
+  if (applied > 0) {
+    result.allocations.push({
+      period: row.period,
+      feeId: 'legacy',
+      description: payment.extraDescription || 'Cuota Extra',
+      amount: applied,
+    });
+  }
   return result;
 }
