@@ -201,7 +201,7 @@ const AdminAIAssistant: React.FC<Props> = ({ user, onNavigate }) => {
       }
     } catch (error: any) {
       console.warn('Gemini intent fallback:', error);
-      if (error?.status === 429 && String(error.message).includes('10 consultas')) addAssistant(error.message);
+      if (error?.status === 429 && String(error.message).includes('consultas de IA por hoy')) addAssistant(error.message);
       else await executeLocalFallback(clean);
     } finally {
       setWorking(false);
@@ -233,7 +233,7 @@ const AdminAIAssistant: React.FC<Props> = ({ user, onNavigate }) => {
   return <>
     <button type="button" onClick={() => setOpen(value => !value)} className="fixed bottom-24 right-5 z-50 h-14 w-14 rounded-full bg-amber-500 text-logia-950 shadow-xl border-2 border-amber-200 flex items-center justify-center text-2xl" aria-label="Abrir asistente de IA">✦</button>
     {open && <div className="fixed inset-x-2 bottom-40 sm:left-auto sm:right-4 sm:w-[430px] z-50 rounded-2xl border border-amber-500/40 bg-logia-900 text-white shadow-2xl overflow-hidden">
-      <div className="p-3 border-b border-white/10 flex items-center justify-between"><div><p className="font-bold">Asistente de Mi Logia</p><p className="text-[11px] text-white/60">{remaining === null ? 'Máximo 10 consultas de IA al día' : `${remaining} consultas de IA disponibles hoy`}</p></div><button onClick={() => setShowHelp(true)} className="text-xs underline">Ayuda</button></div>
+      <div className="p-3 border-b border-white/10 flex items-center justify-between"><div><p className="font-bold">Asistente de Mi Logia</p><p className="text-[11px] text-white/60">{remaining === null ? 'Máximo 30 consultas de IA al día' : `${remaining} consultas de IA disponibles hoy`}</p></div><button onClick={() => setShowHelp(true)} className="text-xs underline">Ayuda</button></div>
       <div className="h-72 overflow-y-auto p-3 space-y-3 bg-black/10">
         {messages.map(message => <div key={message.id} className={message.role === 'user' ? 'ml-10 rounded-2xl rounded-br-sm bg-amber-500 text-logia-950 p-3 text-sm' : 'mr-5 rounded-2xl rounded-bl-sm bg-white/10 p-3 text-sm'}>
           <p className="whitespace-pre-line">{message.text}</p>

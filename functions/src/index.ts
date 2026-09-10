@@ -135,7 +135,7 @@ export const sendNotificationToGroup = functions.https.onRequest(async (req, res
 const ALLOWED_ACTIONS = [
   'dashboard', 'requests', 'users', 'fees', 'attendance', 'trivia', 'treasury',
   'notices', 'tasks', 'banks', 'visits', 'payment-matrix', 'create-user',
-  'manual-merge', 'receipts', 'debt-notify', 'member-pending',
+  'manual-merge', 'receipts', 'debt-notify', 'member-pending', 'active-notices', 'active-tasks',
   'broadcast-matrix', 'register-payment'
 ] as const;
 
@@ -156,6 +156,21 @@ type IntentResult = {
 
 const isAllowedAction = (value: unknown): value is AllowedAction =>
   typeof value === 'string' && (ALLOWED_ACTIONS as readonly string[]).includes(value);
+
+const DAILY_AI_LIMIT = 30;
+
+const consumeDailyAIQuery = async (uid: string) => {
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Monterrey', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const ref = admin.firestore().doc(`aiUsage/${uid}_${day}`);
+  return admin.firestore().runTransaction(async transaction => {
+    const snap = await transaction.get(ref);
+    const used = Number(snap.data()?.count || 0);
+    if (used >= DAILY_AI_LIMIT) return { allowed: false, used, remaining: 0, limit: DAILY_AI_LIMIT };
+    const next = used + 1;
+    transaction.set(ref, { uid, day, count: next, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    return { allowed: true, used: next, remaining: DAILY_AI_LIMIT - next, limit: DAILY_AI_LIMIT };
+  });
+};
 
 /**
  * Interpreta lenguaje natural, pero solo puede devolver acciones incluidas en ALLOWED_ACTIONS.
@@ -203,6 +218,12 @@ export const interpretAdminIntent = functions
         return;
       }
 
+      const rateLimit = await consumeDailyAIQuery(decoded.uid);
+      if (!rateLimit.allowed) {
+        res.status(429).json({ error: 'Ya alcanzaste el límite de 30 consultas de IA por hoy. Podrás volver a consultar mañana.', rateLimit });
+        return;
+      }
+
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error('GEMINI_API_KEY no está configurada');
 
@@ -224,6 +245,32 @@ export const interpretAdminIntent = functions
         ['receipts', 'revisar comprobantes'],
         ['debt-notify', 'enviar recordatorios de adeudo'],
         ['member-pending', 'consultar cuánto debe y qué tareas pendientes tiene un miembro'],
+        ['active-notices', 'consultar cuáles avisos están activos o publicados'],
+        ['active-tasks', 'consultar cuáles tareas siguen activas o pendientes'],
+        ['active-notices', 'consultar cuáles avisos están activos o publicados'],
+        ['active-tasks', 'consultar cuáles tareas siguen activas o pendientes'],
+        ['active-notices', 'consultar cuáles avisos están activos o publicados'],
+        ['active-tasks', 'consultar cuáles tareas siguen activas o pendientes'],
+        ['active-notices', 'consultar cuáles avisos están activos o publicados'],
+        ['active-tasks', 'consultar cuáles tareas siguen activas o pendientes'],
+        ['active-notices', 'consultar cuáles avisos están activos o publicados'],
+        ['active-tasks', 'consultar cuáles tareas siguen activas o pendientes'],
+        ['active-notices', 'consultar cuáles avisos están activos o publicados'],
+        ['active-tasks', 'consultar cuáles tareas siguen activas o pendientes'],
+        ['active-notices', 'consultar cuáles avisos están activos o publicados'],
+        ['active-tasks', 'consultar cuáles tareas siguen activas o pendientes'],
+        ['active-notices', 'consultar cuáles avisos están activos o publicados'],
+        ['active-tasks', 'consultar cuáles tareas siguen activas o pendientes'],
+        ['active-notices', 'consultar cuáles avisos están activos o publicados'],
+        ['active-tasks', 'consultar cuáles tareas siguen activas o pendientes'],
+        ['active-notices', 'consultar cuáles avisos están activos o publicados'],
+        ['active-tasks', 'consultar cuáles tareas siguen activas o pendientes'],
+        ['active-notices', 'consultar cuáles avisos están activos o publicados'],
+        ['active-tasks', 'consultar cuáles tareas siguen activas o pendientes'],
+        ['active-notices', 'consultar cuáles avisos están activos o publicados'],
+        ['active-tasks', 'consultar cuáles tareas siguen activas o pendientes'],
+        ['active-notices', 'consultar cuáles avisos están activos o publicados'],
+        ['active-tasks', 'consultar cuáles tareas siguen activas o pendientes'],
         ['broadcast-matrix', 'enviar imagen de la matriz al buzón de todos'],
         ['register-payment', 'preparar registro de cuota normal o extraordinaria']
       ].map(([id, description]) => `${id}: ${description}`).join('\n');
@@ -309,7 +356,7 @@ export const interpretAdminIntent = functions
         ...(typeof raw.clarification === 'string' && { clarification: raw.clarification.slice(0, 300) })
       };
 
-      res.status(200).json(result);
+      res.status(200).json({ ...result, rateLimit });
     } catch (error) {
       console.error('Error interpretando intención:', error);
       res.status(500).json({

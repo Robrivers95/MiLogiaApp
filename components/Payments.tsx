@@ -44,6 +44,8 @@ const Payments: React.FC<Props> = ({ user }) => {
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [receiptType, setReceiptType] = useState<'cuota_mensual' | 'concepto_adicional'>('cuota_mensual');
   const [conceptDescription, setConceptDescription] = useState('');
+  const [selectedExtraFeeKey, setSelectedExtraFeeKey] = useState('');
+  const [receiptNotes, setReceiptNotes] = useState('');
   const [receiptPeriods, setReceiptPeriods] = useState<string[]>([]);
   const [receiptTransferDate, setReceiptTransferDate] = useState('');
   const [receiptFiles, setReceiptFiles] = useState<File[]>([]);         // múltiples archivos
@@ -162,6 +164,17 @@ const Payments: React.FC<Props> = ({ user }) => {
     })
     .map(p => p.period);
 
+  const pendingExtraOptions = payments.flatMap(payment => (payment.extraFees || [])
+    .filter(fee => !fee.forgiven && Number(fee.paid || 0) < Number(fee.amount || 0))
+    .map(fee => ({
+      key: `${payment.period}::${fee.id}`,
+      period: payment.period,
+      feeId: fee.id,
+      description: fee.description,
+      balance: Math.max(0, Number(fee.amount) - Number(fee.paid || 0)),
+    })))
+    .sort((a, b) => a.period.localeCompare(b.period));
+
   // Multiple receipts per period
   const receiptsByPeriod = (period: string): PaymentReceipt[] =>
     receipts.filter(r => r.periods.includes(period));
@@ -207,30 +220,39 @@ const Payments: React.FC<Props> = ({ user }) => {
       setReceiptMsg({ text: 'Adjunta al menos un comprobante y la fecha de transferencia.', type: 'error' });
       return;
     }
+    if (!receiptAmount || !Number.isFinite(Number(receiptAmount)) || Number(receiptAmount) <= 0) {
+      setReceiptMsg({ text: 'Ingresa el monto transferido; puede ser un abono parcial.', type: 'error' });
+      return;
+    }
     if (receiptType === 'cuota_mensual' && receiptPeriods.length === 0) {
       setReceiptMsg({ text: 'Selecciona al menos un mes para pagar.', type: 'error' });
       return;
     }
-    if (receiptType === 'concepto_adicional' && !conceptDescription.trim()) {
-      setReceiptMsg({ text: 'Escribe la descripción del concepto.', type: 'error' });
+    if (receiptType === 'concepto_adicional' && !selectedExtraFeeKey) {
+      setReceiptMsg({ text: 'Selecciona la cuota extraordinaria a la que corresponde el pago.', type: 'error' });
       return;
     }
     if (!user.groupId) {
       setReceiptMsg({ text: 'Error: tu cuenta no está asociada a un grupo. Contacta al administrador.', type: 'error' });
       return;
     }
+    const selectedExtra = pendingExtraOptions.find(item => item.key === selectedExtraFeeKey);
     setSubmittingReceipt(true);
     try {
       await dataService.submitPaymentReceipt(receiptFiles, {
         groupId: user.groupId,
         userId: user.uid,
         userName: user.name || user.email,
-        periods: receiptPeriods,
+        periods: receiptType === 'concepto_adicional' && selectedExtra ? [selectedExtra.period] : receiptPeriods,
         transferDate: receiptTransferDate,
         receiptImageUrl: '',
-        amount: receiptAmount ? Number(receiptAmount) : undefined,
+        amount: Number(receiptAmount),
         receiptType,
-        conceptDescription: receiptType === 'concepto_adicional' ? conceptDescription.trim() : undefined,
+        conceptDescription: receiptType === 'concepto_adicional' ? selectedExtra?.description : undefined,
+        conceptId: receiptType === 'concepto_adicional' ? selectedExtra?.feeId : undefined,
+        targetExtraFeeId: receiptType === 'concepto_adicional' ? selectedExtra?.feeId : undefined,
+        targetExtraFeePeriod: receiptType === 'concepto_adicional' ? selectedExtra?.period : undefined,
+        memberComments: receiptNotes.trim() || undefined,
         status: 'pending',
         submittedAt: new Date().toISOString()
       });
@@ -242,6 +264,8 @@ const Payments: React.FC<Props> = ({ user }) => {
       setReceiptAmount('');
       setReceiptType('cuota_mensual');
       setConceptDescription('');
+      setSelectedExtraFeeKey('');
+      setReceiptNotes('');
       dataService.getUserPaymentReceipts(user.uid, user.groupId)
         .then(recs => setReceipts(recs))
         .catch(() => {});
@@ -591,7 +615,7 @@ const Payments: React.FC<Props> = ({ user }) => {
                 <div className="grid grid-cols-2 gap-2">
                   <label className={`flex items-center gap-2 p-3 rounded border cursor-pointer transition-colors ${receiptType === 'cuota_mensual' ? 'border-indigo-500 bg-indigo-900/30' : 'border-logia-700 bg-logia-900/50'}`}>
                     <input type="radio" name="receiptType" value="cuota_mensual" checked={receiptType === 'cuota_mensual'}
-                      onChange={() => { setReceiptType('cuota_mensual'); setReceiptPeriods([]); }} className="accent-indigo-500" />
+                      onChange={() => { setReceiptType('cuota_mensual'); setReceiptPeriods([]); setSelectedExtraFeeKey(''); }} className="accent-indigo-500" />
                     <div>
                       <span className="text-sm font-bold text-white block">📅 Cuota Mensual</span>
                       <span className="text-xs text-gray-400">Pago de mensualidad regular</span>
@@ -599,7 +623,7 @@ const Payments: React.FC<Props> = ({ user }) => {
                   </label>
                   <label className={`flex items-center gap-2 p-3 rounded border cursor-pointer transition-colors ${receiptType === 'concepto_adicional' ? 'border-purple-500 bg-purple-900/30' : 'border-logia-700 bg-logia-900/50'}`}>
                     <input type="radio" name="receiptType" value="concepto_adicional" checked={receiptType === 'concepto_adicional'}
-                      onChange={() => { setReceiptType('concepto_adicional'); setReceiptPeriods([]); }} className="accent-purple-500" />
+                      onChange={() => { setReceiptType('concepto_adicional'); setReceiptPeriods([]); setSelectedExtraFeeKey(''); }} className="accent-purple-500" />
                     <div>
                       <span className="text-sm font-bold text-white block">💡 Concepto Adicional</span>
                       <span className="text-xs text-gray-400">Cuota extra, evento, etc.</span>
@@ -608,19 +632,31 @@ const Payments: React.FC<Props> = ({ user }) => {
                 </div>
               </div>
 
-              {/* Descripción (solo para concepto adicional) */}
+              {/* Selección de cuota extraordinaria */}
               {receiptType === 'concepto_adicional' && (
-                <div>
-                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">
-                    Descripción del concepto <span className="text-red-400">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={conceptDescription}
-                    onChange={e => setConceptDescription(e.target.value)}
-                    placeholder="Ej: Cena anual, evento especial, cuota extraordinaria..."
-                    className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
-                  />
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-400 uppercase mb-2">
+                      Cuota extraordinaria pendiente <span className="text-red-400">*</span>
+                    </label>
+                    <select value={selectedExtraFeeKey} onChange={e => {
+                      setSelectedExtraFeeKey(e.target.value);
+                      const selected = pendingExtraOptions.find(item => item.key === e.target.value);
+                      setConceptDescription(selected?.description || '');
+                    }} className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white">
+                      <option value="">Selecciona una cuota</option>
+                      {pendingExtraOptions.map(item => (
+                        <option key={item.key} value={item.key}>{formatPeriod(item.period)} · {item.description} · pendiente $ {item.balance.toFixed(2)}</option>
+                      ))}
+                    </select>
+                    {pendingExtraOptions.length === 0 && <p className="text-xs text-gray-500 mt-1">No tienes cuotas extraordinarias pendientes.</p>}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Descripción o detalle adicional (opcional)</label>
+                    <textarea value={receiptNotes} onChange={e => setReceiptNotes(e.target.value)} rows={3}
+                      placeholder="Puedes conservar aquí cualquier explicación o detalle del pago."
+                      className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white" />
+                  </div>
                 </div>
               )}
 
@@ -668,16 +704,20 @@ const Payments: React.FC<Props> = ({ user }) => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Monto transferido (opcional)</label>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Monto transferido *</label>
+                <p className="text-xs text-gray-500 mb-2">El comprobante puede ser mayor al saldo. Si se aprueba, solo se aplicará lo que realmente se deba y el excedente quedará identificado para conciliación.</p>
                 <input
-                  type="number" min="0" step="0.01"
+                  type="number" min="0.01" step="0.01" required
                   value={receiptAmount}
                   onChange={e => setReceiptAmount(e.target.value)}
                   placeholder="Ej: 250.00"
                   className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
                 />
                 {receiptType === 'cuota_mensual' && receiptPeriods.length > 1 && receiptAmount && (
-                  <p className="text-xs text-gray-500 mt-1">💡 El monto se distribuirá cronológicamente: primero los meses más antiguos.</p>
+                  <p className="text-xs text-gray-500 mt-1">💡 El monto se distribuirá cronológicamente: primero los meses más antiguos. También se permiten parcialidades.</p>
+                )}
+                {receiptType === 'concepto_adicional' && receiptAmount && (
+                  <p className="text-xs text-gray-500 mt-1">💡 Se aplicará primero a la cuota seleccionada; cualquier sobrante irá a otras cuotas extraordinarias pendientes.</p>
                 )}
               </div>
 

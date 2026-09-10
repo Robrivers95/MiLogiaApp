@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, Payment, IndividualExtraFee, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Trivia, VisitRequest, Group, BankBalance, ExtraFee, PaymentReceipt } from '../types';
 import { dataService, generateTriviaWithAI, authService, notificationService } from '../services/api';
+import { adminAIService } from '../services/adminAI';
 import { doc, deleteDoc, collection, getDocs, getDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useReadOnly } from '../contexts/ReadOnlyContext';
@@ -15,6 +16,18 @@ type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia'
 
 const Admin: React.FC<Props> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
+
+  useEffect(() => {
+    const handleAITab = (event: Event) => {
+      const tab = (event as CustomEvent<{ tab?: Tab }>).detail?.tab;
+      if (tab) {
+        setActiveTab(tab);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    };
+    window.addEventListener('logia-admin-tab', handleAITab);
+    return () => window.removeEventListener('logia-admin-tab', handleAITab);
+  }, []);
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
@@ -88,6 +101,8 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [treasuryEntries, setTreasuryEntries] = useState<TreasuryEntry[]>([]);
   const [combinedTreasuryHistory, setCombinedTreasuryHistory] = useState<TreasuryEntry[]>([]); // Includes Quotas
   const [treasuryBalance, setTreasuryBalance] = useState({ general: 0, charity: 0, quotas: 0 });
+  const [treasuryQuotaTypeFilterV3, setTreasuryQuotaTypeFilterV3] = useState<'all' | 'regular' | 'extra' | 'unclassified' | 'manual'>('all');
+  const [treasuryConceptFilterV3, setTreasuryConceptFilterV3] = useState('all');
   const [editingTreasuryId, setEditingTreasuryId] = useState<string | null>(null);
   const [newTransType, setNewTransType] = useState<'income' | 'expense'>('income');
   const [newTransAmount, setNewTransAmount] = useState(0);
@@ -176,6 +191,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [allUserLedgers, setAllUserLedgers] = useState<Record<string, Payment[]>>({});
   const [matrixFilter, setMatrixFilter] = useState<'regular' | 'extra' | 'all'>('regular');
   const [matrixExtraDesc, setMatrixExtraDesc] = useState<string>('');
+  const [matrixEvidenceReceiptsV3, setMatrixEvidenceReceiptsV3] = useState<PaymentReceipt[]>([]);
   // Cuota extra masiva
   const [showBulkExtraPanel, setShowBulkExtraPanel] = useState(false);
   const [bulkExtraDesc, setBulkExtraDesc] = useState('');
@@ -257,6 +273,9 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [viewingReceiptImage, setViewingReceiptImage] = useState<string | null>(null);
   const [receiptFilter, setReceiptFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
+  const [receiptReconciliationFilter, setReceiptReconciliationFilter] = useState<'all' | 'pending' | 'matched' | 'difference'>('all');
+  const [matrixViewMode, setMatrixViewMode] = useState<'status' | 'amount' | 'detail'>('status');
+  const [matrixEvidenceReceipts, setMatrixEvidenceReceipts] = useState<PaymentReceipt[]>([]);
   // Edit receipt before approving
   const [editingReceiptId, setEditingReceiptId] = useState<string | null>(null);
   const [editReceiptPeriods, setEditReceiptPeriods] = useState<string[]>([]);
@@ -338,6 +357,7 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
       if (activeTab === 'payment-matrix') {
           loadAllLedgers();
+          loadPaymentReceipts();
       }
       if (activeTab === 'manual-merge') {
           loadTempUsers();
@@ -367,12 +387,24 @@ const Admin: React.FC<Props> = ({ user }) => {
         });
         setUsers(data);
         
-        const stats: any = {};
-        for (const u of data) {
-            const s = await dataService.getUserFinancialStats(u.uid, filterStart, filterEnd);
-            stats[u.uid] = s;
-        }
-        setUserStats(stats);
+        const statsEntries = await Promise.all(data.map(async u => {
+            const legacyStats = await dataService.getUserFinancialStats(u.uid, filterStart, filterEnd);
+            try {
+                const canonicalSummary = await adminAIService.getUserPendingSummary(user.groupId, u);
+                const totalDebtRegular = Number(canonicalSummary.regularDebt) || 0;
+                const totalDebtExtra = Number(canonicalSummary.extraDebt) || 0;
+                return [u.uid, {
+                    ...legacyStats,
+                    totalDebtRegular,
+                    totalDebtExtra,
+                    totalDebt: totalDebtRegular + totalDebtExtra,
+                }] as const;
+            } catch (canonicalError) {
+                console.error(`Error calculando deuda canónica de ${u.name}:`, canonicalError);
+                return [u.uid, legacyStats] as const;
+            }
+        }));
+        setUserStats(Object.fromEntries(statsEntries));
 
     } catch (e) {
         console.error("Error loading users", e);
@@ -2363,6 +2395,186 @@ const Admin: React.FC<Props> = ({ user }) => {
   
   const activeUsers = users.filter(u => u.active).length;
 
+  const normalizeFinancialV3 = (value?: string) => (value || '').trim().toLocaleLowerCase('es-MX');
+  const uniqueFinancialV3 = (values: Array<string | undefined>) => Array.from(new Set(values.filter((value): value is string => Boolean(value))));
+
+  const receiptUrlsV3 = (receipt: PaymentReceipt): string[] =>
+    uniqueFinancialV3([...(receipt.receiptImageUrls || []), receipt.receiptImageUrl]);
+
+  const getReceiptsForMatrixCellV3 = (uid: string, period: string): PaymentReceipt[] => {
+    const concept = normalizeFinancialV3(matrixExtraDesc);
+    return (paymentReceipts as PaymentReceipt[]).filter(receipt => {
+      if (receipt.userId !== uid) return false;
+      const allocations = receipt.allocationSummary || [];
+      const periodMatch = !!receipt.periods?.includes(period) ||
+        receipt.targetExtraFeePeriod === period ||
+        (receipt as any).extraFeePeriod === period ||
+        allocations.some(item => item.period === period) ||
+        ((!receipt.periods || receipt.periods.length === 0) &&
+          !(receipt as any).targetExtraFeePeriod &&
+          receipt.transferDate?.slice(0, 7) === period);
+      if (!periodMatch) return false;
+
+      if (matrixFilter === 'regular') {
+        return receipt.receiptType === 'cuota_mensual' ||
+          allocations.some(item => item.period === period && item.feeId === 'regular');
+      }
+      if (matrixFilter === 'extra' && matrixExtraDesc) {
+        if (receipt.receiptType !== 'concepto_adicional') return false;
+        return normalizeFinancialV3(receipt.conceptDescription) === concept ||
+          allocations.some(item => item.period === period && normalizeFinancialV3(item.description) === concept);
+      }
+      return true;
+    }).sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
+  };
+
+  const getMatrixCellAmountsV3 = (uid: string, period: string) => {
+    const payment = (allUserLedgers[uid] || []).find(item => item.period === period);
+    if (!payment) return { billed: 0, paid: 0, pending: 0, status: 'Sin cuota' };
+
+    const regularBilled = Math.max(0, Number(payment.amount) || 0);
+    const regularPaid = Math.min(regularBilled, Math.max(0, Number(payment.paidRegular ?? payment.paid ?? 0)));
+    const regularPending = Math.max(0, regularBilled - regularPaid);
+
+    if (matrixFilter === 'regular') {
+      return { billed: regularBilled, paid: regularPaid, pending: regularPending, status: regularPending <= 0 ? 'Pagado' : regularPaid > 0 ? 'Parcial' : 'Pendiente' };
+    }
+
+    if (matrixFilter === 'extra' && matrixExtraDesc) {
+      const fee = payment.extraFees?.find(item => normalizeFinancialV3(item.description) === normalizeFinancialV3(matrixExtraDesc));
+      if (fee) {
+        const billed = Math.max(0, Number(fee.amount) || 0);
+        const paid = Math.min(billed, Math.max(0, Number(fee.paid) || 0));
+        const pending = fee.forgiven ? 0 : Math.max(0, billed - paid);
+        return { billed, paid, pending, status: fee.forgiven ? 'Perdonado' : pending <= 0 ? 'Pagado' : paid > 0 ? 'Parcial' : 'Pendiente' };
+      }
+      const legacyMatch = !payment.extraFees?.length && Number(payment.extraAmount) > 0 &&
+        normalizeFinancialV3(payment.extraDescription || 'Cuota Extra') === normalizeFinancialV3(matrixExtraDesc);
+      if (!legacyMatch) return { billed: 0, paid: 0, pending: 0, status: 'Sin cuota' };
+      const billed = Math.max(0, Number(payment.extraAmount) || 0);
+      const paid = Math.min(billed, Math.max(0, Number(payment.paidExtra) || 0));
+      const pending = Math.max(0, billed - paid);
+      return { billed, paid, pending, status: pending <= 0 ? 'Pagado' : paid > 0 ? 'Parcial' : 'Pendiente' };
+    }
+
+    const fees = payment.extraFees || [];
+    const extraBilled = fees.length
+      ? fees.reduce((sum, fee) => sum + Math.max(0, Number(fee.amount) || 0), 0)
+      : Math.max(0, Number(payment.extraAmount) || 0);
+    const extraPaid = fees.length
+      ? fees.reduce((sum, fee) => sum + Math.max(0, Number(fee.paid) || 0), 0)
+      : Math.max(0, Number(payment.paidExtra) || 0);
+    const extraPending = fees.length
+      ? fees.reduce((sum, fee) => sum + (fee.forgiven ? 0 : Math.max(0, Number(fee.amount || 0) - Number(fee.paid || 0))), 0)
+      : Math.max(0, extraBilled - extraPaid);
+    const billed = regularBilled + extraBilled;
+    const paid = regularPaid + extraPaid;
+    const pending = regularPending + extraPending;
+    return { billed, paid, pending, status: pending <= 0 ? 'Pagado' : paid > 0 ? 'Parcial' : 'Pendiente' };
+  };
+
+  const getSelectedExtraForModalV3 = () => {
+    if (!matrixModalPayment || matrixFilter !== 'extra' || !matrixExtraDesc) return null;
+    const fee = matrixModalPayment.extraFees?.find(item => normalizeFinancialV3(item.description) === normalizeFinancialV3(matrixExtraDesc));
+    if (fee) return {
+      description: fee.description,
+      billed: Math.max(0, Number(fee.amount) || 0),
+      paid: Math.max(0, Number(fee.paid) || 0),
+      pending: fee.forgiven ? 0 : Math.max(0, Number(fee.amount || 0) - Number(fee.paid || 0)),
+      forgiven: !!fee.forgiven,
+    };
+    const legacyMatch = !matrixModalPayment.extraFees?.length && Number(matrixModalPayment.extraAmount) > 0 &&
+      normalizeFinancialV3(matrixModalPayment.extraDescription || 'Cuota Extra') === normalizeFinancialV3(matrixExtraDesc);
+    if (!legacyMatch) return null;
+    return {
+      description: matrixModalPayment.extraDescription || 'Cuota Extra',
+      billed: Math.max(0, Number(matrixModalPayment.extraAmount) || 0),
+      paid: Math.max(0, Number(matrixModalPayment.paidExtra) || 0),
+      pending: Math.max(0, Number(matrixModalPayment.extraAmount || 0) - Number(matrixModalPayment.paidExtra || 0)),
+      forgiven: false,
+    };
+  };
+
+  const normalizeReceiptConcept = (value?: string) => (value || '').trim().toLocaleLowerCase('es-MX');
+
+  const getReceiptUrls = (receipt: PaymentReceipt): string[] =>
+    Array.from(new Set([...(receipt.receiptImageUrls || []), receipt.receiptImageUrl].filter(Boolean)));
+
+  const getReceiptsForMatrixCell = (uid: string, period: string): PaymentReceipt[] => {
+    return (paymentReceipts as PaymentReceipt[]).filter(receipt => {
+      if (receipt.userId !== uid) return false;
+      const periodMatch = receipt.periods?.includes(period) || receipt.targetExtraFeePeriod === period;
+      if (!periodMatch) return false;
+      if (matrixFilter === 'regular') return receipt.receiptType === 'cuota_mensual';
+      if (matrixFilter === 'extra' && matrixExtraDesc) {
+        return receipt.receiptType === 'concepto_adicional' &&
+          normalizeReceiptConcept(receipt.conceptDescription) === normalizeReceiptConcept(matrixExtraDesc);
+      }
+      return true;
+    }).sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+  };
+
+  const getMatrixCellAmounts = (uid: string, period: string) => {
+    const payment = (allUserLedgers[uid] || []).find(item => item.period === period);
+    if (!payment) return { billed: 0, paid: 0, pending: 0, status: 'Sin cuota' };
+
+    if (matrixFilter === 'regular') {
+      const billed = Math.max(0, Number(payment.amount) || 0);
+      const paid = Math.min(billed, Math.max(0, Number(payment.paidRegular ?? payment.paid ?? 0)));
+      const pending = Math.max(0, billed - paid);
+      return { billed, paid, pending, status: pending <= 0 ? 'Pagado' : paid > 0 ? 'Parcial' : 'Pendiente' };
+    }
+
+    if (matrixFilter === 'extra' && matrixExtraDesc) {
+      const fee = payment.extraFees?.find(item => normalizeReceiptConcept(item.description) === normalizeReceiptConcept(matrixExtraDesc));
+      if (fee) {
+        const billed = Math.max(0, Number(fee.amount) || 0);
+        const paid = Math.min(billed, Math.max(0, Number(fee.paid) || 0));
+        const pending = fee.forgiven ? 0 : Math.max(0, billed - paid);
+        return { billed, paid, pending, status: fee.forgiven ? 'Perdonado' : pending <= 0 ? 'Pagado' : paid > 0 ? 'Parcial' : 'Pendiente' };
+      }
+      const legacyMatch = !payment.extraFees?.length && Number(payment.extraAmount) > 0 &&
+        normalizeReceiptConcept(payment.extraDescription || 'Cuota Extra') === normalizeReceiptConcept(matrixExtraDesc);
+      if (!legacyMatch) return { billed: 0, paid: 0, pending: 0, status: 'Sin cuota' };
+      const billed = Math.max(0, Number(payment.extraAmount) || 0);
+      const paid = Math.min(billed, Math.max(0, Number(payment.paidExtra) || 0));
+      const pending = Math.max(0, billed - paid);
+      return { billed, paid, pending, status: pending <= 0 ? 'Pagado' : paid > 0 ? 'Parcial' : 'Pendiente' };
+    }
+
+    const regularBilled = Math.max(0, Number(payment.amount) || 0);
+    const regularPaid = Math.min(regularBilled, Math.max(0, Number(payment.paidRegular ?? payment.paid ?? 0)));
+    const fees = payment.extraFees || [];
+    const extraBilled = fees.length
+      ? fees.reduce((sum, fee) => sum + Math.max(0, Number(fee.amount) || 0), 0)
+      : Math.max(0, Number(payment.extraAmount) || 0);
+    const extraPaid = fees.length
+      ? fees.reduce((sum, fee) => sum + Math.max(0, Number(fee.paid) || 0), 0)
+      : Math.max(0, Number(payment.paidExtra) || 0);
+    const extraPending = fees.length
+      ? fees.reduce((sum, fee) => sum + (fee.forgiven ? 0 : Math.max(0, Number(fee.amount || 0) - Number(fee.paid || 0))), 0)
+      : Math.max(0, extraBilled - extraPaid);
+    const billed = regularBilled + extraBilled;
+    const paid = regularPaid + extraPaid;
+    const pending = Math.max(0, regularBilled - regularPaid) + extraPending;
+    return { billed, paid, pending, status: pending <= 0 ? 'Pagado' : paid > 0 ? 'Parcial' : 'Pendiente' };
+  };
+
+  const openReceiptInMatrix = async (receipt: PaymentReceipt) => {
+    const period = receipt.targetExtraFeePeriod || receipt.periods?.[0] || new Date().toISOString().slice(0, 7);
+    const year = Number(period.slice(0, 4)) || new Date().getFullYear();
+    setMatrixYear(year);
+    if (receipt.receiptType === 'concepto_adicional') {
+      setMatrixFilter('extra');
+      setMatrixExtraDesc(receipt.conceptDescription || '');
+    } else {
+      setMatrixFilter('regular');
+      setMatrixExtraDesc('');
+    }
+    setActiveTab('payment-matrix');
+    await Promise.all([loadAllLedgers(), loadPaymentReceipts()]);
+  };
+
   return (
     <div className="pb-24">
       {/* HEADER */}
@@ -2886,7 +3098,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                              ${stats.totalPaidExtra || 0}
                                          </td>
                                          <td className="p-3 text-right font-mono font-bold text-red-400">
-                                             ${stats.totalDebt}
+                                             ${Number(stats.totalDebtRegular || 0) + Number(stats.totalDebtExtra || 0)}
                                          </td>
                                          <td className="p-3 flex justify-center gap-2">
                                              {!u.active ? (
@@ -3870,64 +4082,94 @@ const Admin: React.FC<Props> = ({ user }) => {
                 </div>
 
                 <div className="bg-logia-800 rounded-xl border border-logia-700 shadow-lg overflow-hidden">
-                    <div className="p-4 border-b border-logia-700 flex justify-between items-center">
-                        <h3 className="font-bold text-white">Historial de Movimientos (Incluye Cuotas)</h3>
-                        <button onClick={handleDownloadTreasuryCSV} className="text-xs bg-green-700 px-2 py-1 rounded text-white">📥 CSV Detallado</button>
+                  <div className="p-4 border-b border-logia-700 flex flex-wrap justify-between items-center gap-3">
+                    <div>
+                      <h3 className="font-bold text-white">Historial de Movimientos (Incluye Cuotas)</h3>
+                      <p className="text-xs text-gray-500">Las cuotas automáticas muestran si son mensuales o extraordinarias y conservan su concepto.</p>
                     </div>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left text-sm text-gray-300">
-                            <thead className="bg-logia-900 text-xs uppercase text-gray-500">
-                                <tr>
-                                    <th className="p-3">Fecha</th>
-                                    <th className="p-3">Tipo</th>
-                                    <th className="p-3">Concepto</th>
-                                    <th className="p-3">Descripción</th>
-                                    <th className="p-3 text-right">Monto</th>
-                                    <th className="p-3 text-center">Acción</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-logia-700">
-                                {combinedTreasuryHistory.map((t) => {
-                                    const isQuota = t.id.startsWith('quota_');
-                                    return (
-                                        <tr key={t.id} className={`hover:bg-logia-700/50 ${isQuota ? 'bg-logia-900/30 text-gray-400 italic' : ''}`}>
-                                            <td className="p-3 whitespace-nowrap">{t.date}</td>
-                                            <td className="p-3 text-xs uppercase">{isQuota ? 'CUOTA' : (t.type === 'income' ? 'INGRESO' : 'GASTO')}</td>
-                                            <td className="p-3 text-xs uppercase">{t.category.replace('_', ' ')}</td>
-                                            <td className="p-3">{t.description}</td>
-                                            <td className={`p-3 text-right font-bold ${t.type === 'income' ? 'text-green-400' : 'text-red-400'}`}>
-                                                {t.type === 'income' ? '+' : '-'}${t.amount}
-                                            </td>
-                                            <td className="p-3 flex justify-center gap-2">
-                                                {!isQuota ? (
-                                                    <>
-                                                        <button 
-                                                        type="button"
-                                                        onClick={(e) => handleEditTransaction(t, e)} 
-                                                        className="text-gray-400 hover:text-white p-1"
-                                                        title="Editar"
-                                                        >
-                                                        ✏️
-                                                        </button>
-                                                        <button 
-                                                            type="button"
-                                                            onClick={(e) => handleDeleteTransaction(t.id, e)} 
-                                                            className="text-white p-2 bg-red-600 rounded border border-red-700 hover:bg-red-500 cursor-pointer w-8 h-8 flex items-center justify-center shadow-md"
-                                                            title="Eliminar"
-                                                        >
-                                                            🗑️
-                                                        </button>
-                                                    </>
-                                                ) : (
-                                                    <span className="text-[10px] text-gray-600">Automático</span>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
+                    <button onClick={handleDownloadTreasuryCSV} className="text-xs bg-green-700 px-2 py-1 rounded text-white">📥 CSV Detallado</button>
+                  </div>
+                  <div className="p-3 border-b border-logia-700 bg-logia-900/40 grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Tipo de cuota / movimiento</label>
+                      <select value={treasuryQuotaTypeFilterV3} onChange={e => setTreasuryQuotaTypeFilterV3(e.target.value as any)} className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-sm text-white">
+                        <option value="all">Todos</option>
+                        <option value="regular">Cuota regular / mensual</option>
+                        <option value="extra">Cuota extraordinaria</option>
+                        <option value="unclassified">Pago histórico sin clasificar</option>
+                        <option value="manual">Movimiento manual</option>
+                      </select>
                     </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Concepto</label>
+                      <select value={treasuryConceptFilterV3} onChange={e => setTreasuryConceptFilterV3(e.target.value)} className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-sm text-white">
+                        <option value="all">Todos los conceptos</option>
+                        {Array.from(new Set(combinedTreasuryHistory.map(t => (t as any).quotaConcept || String(t.category || '').replace(/_/g, ' ')).filter(Boolean))).sort().map(concept => (
+                          <option key={concept} value={concept}>{concept}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm text-gray-300 min-w-[1050px]">
+                      <thead className="bg-logia-900 text-xs uppercase text-gray-500">
+                        <tr>
+                          <th className="p-3">Fecha</th>
+                          <th className="p-3">Movimiento</th>
+                          <th className="p-3">Tipo cuota</th>
+                          <th className="p-3">Concepto cuota</th>
+                          <th className="p-3">Descripción</th>
+                          <th className="p-3 text-right">Monto</th>
+                          <th className="p-3 text-center">Comprobante</th>
+                          <th className="p-3 text-center">Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-logia-700">
+                        {combinedTreasuryHistory
+                          .filter(t => {
+                            const quotaType = (t as any).quotaType || (t.id.startsWith('quota_') ? 'unclassified' : 'manual');
+                            const concept = (t as any).quotaConcept || String(t.category || '').replace(/_/g, ' ');
+                            if (treasuryQuotaTypeFilterV3 !== 'all' && quotaType !== treasuryQuotaTypeFilterV3) return false;
+                            if (treasuryConceptFilterV3 !== 'all' && concept !== treasuryConceptFilterV3) return false;
+                            return true;
+                          })
+                          .map((t) => {
+                            const isQuota = t.id.startsWith('quota_');
+                            const quotaType = (t as any).quotaType || (isQuota ? 'unclassified' : 'manual');
+                            const concept = (t as any).quotaConcept || String(t.category || '').replace(/_/g, ' ');
+                            const urls: string[] = Array.from(new Set(((t as any).receiptUrls || []).filter(Boolean)));
+                            const quotaLabel = quotaType === 'regular' ? 'Mensual' : quotaType === 'extra' ? 'Extraordinaria' : quotaType === 'unclassified' ? 'Sin clasificar' : 'Manual';
+                            return (
+                              <tr key={t.id} className={`hover:bg-logia-700/50 ${isQuota ? 'bg-logia-900/30' : ''}`}>
+                                <td className="p-3 whitespace-nowrap">{t.date}</td>
+                                <td className="p-3 text-xs uppercase">{t.type === 'income' ? 'INGRESO' : 'GASTO'}</td>
+                                <td className="p-3"><span className={`text-xs px-2 py-1 rounded ${quotaType === 'regular' ? 'bg-indigo-900/60 text-indigo-200' : quotaType === 'extra' ? 'bg-purple-900/60 text-purple-200' : quotaType === 'unclassified' ? 'bg-yellow-900/60 text-yellow-200' : 'bg-gray-700 text-gray-300'}`}>{quotaLabel}</span></td>
+                                <td className="p-3 font-medium text-white">{concept || '—'}</td>
+                                <td className="p-3">{t.description}</td>
+                                <td className={`p-3 text-right font-bold ${t.type === 'income' ? 'text-green-400' : 'text-red-400'}`}>{t.type === 'income' ? '+' : '-'}${Number(t.amount || 0).toFixed(2)}</td>
+                                <td className="p-3 text-center">
+                                  {urls.length > 0 ? (
+                                    <div className="flex flex-wrap justify-center gap-1">
+                                      {urls.map((url, index) => (
+                                        <button key={url} type="button" onClick={() => url.toLowerCase().includes('.pdf') ? window.open(url, '_blank') : setViewingReceiptImage(url)} className="text-[10px] bg-blue-900/40 text-blue-300 border border-blue-700 rounded px-2 py-1">🧾 {index + 1}</button>
+                                      ))}
+                                    </div>
+                                  ) : <span className="text-gray-600 text-xs">—</span>}
+                                </td>
+                                <td className="p-3 text-center">
+                                  {!isQuota ? (
+                                    <div className="flex justify-center gap-2">
+                                      <button type="button" onClick={(e) => handleEditTransaction(t, e)} className="text-gray-400 hover:text-white p-1" title="Editar">✏️</button>
+                                      <button type="button" onClick={(e) => handleDeleteTransaction(t.id, e)} className="text-white p-2 bg-red-600 rounded border border-red-700 hover:bg-red-500" title="Eliminar">🗑️</button>
+                                    </div>
+                                  ) : <span className="text-[10px] text-gray-600">Automático</span>}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
             </div>
         )}
@@ -4264,7 +4506,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                     <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                         <h3 className="text-xl font-bold text-white">📊 Matriz de Pagos</h3>
                         <div className="flex gap-2 flex-wrap">
-                            <button onClick={loadAllLedgers} className="bg-logia-900 hover:bg-logia-700 text-gray-300 px-3 py-1 rounded text-xs border border-logia-700 flex items-center gap-1">
+                            <button onClick={() => { loadAllLedgers(); loadPaymentReceipts(); }} className="bg-logia-900 hover:bg-logia-700 text-gray-300 px-3 py-1 rounded text-xs border border-logia-700 flex items-center gap-1">
                                 🔄 Actualizar
                             </button>
                             <button onClick={() => {
@@ -4366,6 +4608,21 @@ const Admin: React.FC<Props> = ({ user }) => {
                         Vista rápida de los pagos mensuales. Haz clic en una celda para registrar o editar el pago.
                     </p>
                     
+                    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-logia-700 bg-logia-900/50 p-3">
+                        <span className="text-xs font-bold uppercase text-gray-400 mr-1">Vista de la matriz</span>
+                        {([
+                            ['status', '✓ Estado'],
+                            ['amount', '$ Montos'],
+                            ['detail', '▦ Detalle'],
+                        ] as const).map(([mode, label]) => (
+                            <button key={mode} onClick={() => setMatrixViewMode(mode)}
+                                className={`px-3 py-1.5 rounded text-xs font-bold border ${matrixViewMode === mode ? 'bg-blue-700 border-blue-500 text-white' : 'bg-logia-900 border-logia-700 text-gray-300 hover:bg-logia-700'}`}>
+                                {label}
+                            </button>
+                        ))}
+                        <span className="text-xs text-gray-500 ml-1">Estado = símbolos · Montos = pagado/saldo · Detalle = cargo/pagado/pendiente.</span>
+                    </div>
+
                     {/* Año + Filtro */}
                     <div className="flex flex-wrap gap-4 mb-5 items-end">
                         <div>
@@ -4698,106 +4955,80 @@ const Admin: React.FC<Props> = ({ user }) => {
                         </div>
                     )}
                     <div className="overflow-x-auto">
-                        <table className="w-full text-xs border-collapse">
-                            <thead>
-                                <tr className="bg-logia-900">
-                                    <th className="p-2 text-left text-gray-400 font-bold border border-logia-700">Miembro</th>
-                                    {matrixMonths.map((month, idx) => (
-                                        <th key={idx} className="p-2 text-center text-gray-400 font-bold border border-logia-700 min-w-[60px]">
-                                            {month}
-                                        </th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {filteredUsers.filter(u => u.active).map(u => (
-                                    <tr key={u.uid} className="hover:bg-logia-700/30">
-                                        <td className="p-2 text-white font-medium border border-logia-700 whitespace-nowrap">
-                                            {u.name}
-                                        </td>
-                                        {matrixMonths.map((month, idx) => {
-                                            const monthNum = (idx + 1).toString().padStart(2, '0');
-                                            const period = `${matrixYear}-${monthNum}`;
-                                            const userLedger = allUserLedgers[u.uid] || [];
-                                            const paymentData = userLedger.find(p => p.period === period);
-
-                                            let cellClass = 'bg-logia-900/50 text-gray-600 cursor-default';
-                                            let cellTitle = 'Sin cuota registrada';
-                                            let cellText = '–';
-
-                                            if (matrixFilter === 'regular') {
-                                                // Solo cuota mensual regular
-                                                if (!paymentData) { cellTitle = 'Sin cuota'; }
-                                                else {
-                                                    const isPaid = !!paymentData.regularCovered;
-                                                    const paidReg = Number(paymentData.paidRegular ?? paymentData.paid ?? 0);
-                                                    const isPartial = !isPaid && paidReg > 0;
-                                                    if (isPaid) { cellClass = 'bg-green-600 text-white cursor-pointer hover:brightness-110'; cellTitle = `Pagado $${paymentData.amount}`; cellText = '✓'; }
-                                                    else if (isPartial) { cellClass = 'bg-yellow-700/60 text-yellow-200 cursor-pointer hover:brightness-110'; cellTitle = `Parcial: $${paidReg.toFixed(0)} / $${paymentData.amount}`; cellText = '½'; }
-                                                    else { cellClass = 'bg-red-900/30 text-gray-400 cursor-pointer hover:brightness-110'; cellTitle = `Pendiente: $${paymentData.amount}`; cellText = '✗'; }
-                                                }
-                                            } else if (matrixFilter === 'extra' && matrixExtraDesc) {
-                                                // Cuota extraordinaria específica
-                                                const ef = paymentData?.extraFees?.find(f => f.description === matrixExtraDesc);
-                                                const legacyMatch = !paymentData?.extraFees?.length && paymentData?.extraAmount &&
-                                                    (paymentData.extraDescription || 'Cuota Extra') === matrixExtraDesc;
-                                                if (!paymentData || (!ef && !legacyMatch)) {
-                                                    cellTitle = 'Sin esta cuota extra'; cellText = '–';
-                                                } else if (ef) {
-                                                    if (ef.forgiven) {
-                                                        cellClass = 'bg-gray-700/60 text-gray-400 cursor-pointer hover:brightness-110';
-                                                        cellTitle = `Perdonado — no pagó $${ef.amount}${ef.forgivenNote ? ` · ${ef.forgivenNote}` : ''}`;
-                                                        cellText = '○';
-                                                    } else {
-                                                        const covered = ef.paid >= ef.amount;
-                                                        const partial = !covered && ef.paid > 0;
-                                                        if (covered) { cellClass = 'bg-purple-600 text-white cursor-pointer hover:brightness-110'; cellTitle = `Pagado $${ef.amount}`; cellText = '✓'; }
-                                                        else if (partial) { cellClass = 'bg-purple-900/60 text-purple-200 cursor-pointer hover:brightness-110'; cellTitle = `Parcial: $${ef.paid.toFixed(0)} / $${ef.amount}`; cellText = '½'; }
-                                                        else { cellClass = 'bg-red-900/30 text-gray-400 cursor-pointer hover:brightness-110'; cellTitle = `Pendiente: $${ef.amount}`; cellText = '✗'; }
-                                                    }
-                                                } else if (legacyMatch) {
-                                                    const paidExtra = paymentData.paidExtra || 0;
-                                                    const covered = paidExtra >= (paymentData.extraAmount || 0);
-                                                    const partial = !covered && paidExtra > 0;
-                                                    if (covered) { cellClass = 'bg-purple-600 text-white cursor-pointer hover:brightness-110'; cellTitle = `Pagado $${paymentData.extraAmount}`; cellText = '✓'; }
-                                                    else if (partial) { cellClass = 'bg-purple-900/60 text-purple-200 cursor-pointer hover:brightness-110'; cellTitle = `Parcial: $${paidExtra.toFixed(0)} / $${paymentData.extraAmount}`; cellText = '½'; }
-                                                    else { cellClass = 'bg-red-900/30 text-gray-400 cursor-pointer hover:brightness-110'; cellTitle = `Pendiente: $${paymentData.extraAmount}`; cellText = '✗'; }
-                                                }
-                                            } else {
-                                                // General — todo combinado
-                                                if (!paymentData) { cellTitle = 'Sin cuota'; }
-                                                else {
-                                                    const isPaid = !!paymentData.regularCovered;
-                                                    const paidReg = Number(paymentData.paidRegular ?? paymentData.paid ?? 0);
-                                                    const isPartial = !isPaid && paidReg > 0;
-                                                    const extraDebt = paymentData.extraFees?.length
-                                                        ? paymentData.extraFees.reduce((s, ef) => s + Math.max(0, ef.amount - ef.paid), 0)
-                                                        : paymentData.extraAmount ? Math.max(0, paymentData.extraAmount - (paymentData.paidExtra || 0)) : 0;
-                                                    const hasExtra = (paymentData.extraFees?.length || 0) > 0 || (paymentData.extraAmount || 0) > 0;
-                                                    if (isPaid && (!hasExtra || extraDebt <= 0)) { cellClass = 'bg-green-600 text-white cursor-pointer hover:brightness-110'; cellTitle = 'Pagado (todo)'; cellText = '✓'; }
-                                                    else if (isPaid && extraDebt > 0) { cellClass = 'bg-teal-700 text-white cursor-pointer hover:brightness-110'; cellTitle = `Cuota pagada, extra pendiente $${extraDebt.toFixed(0)}`; cellText = '✓*'; }
-                                                    else if (isPartial) { cellClass = 'bg-yellow-700/60 text-yellow-200 cursor-pointer hover:brightness-110'; cellTitle = 'Parcial'; cellText = '½'; }
-                                                    else { cellClass = 'bg-red-900/30 text-gray-400 cursor-pointer hover:brightness-110'; cellTitle = 'Pendiente'; cellText = '✗'; }
-                                                }
-                                            }
-                                            
-                                            return (
-                                                <td 
-                                                    key={idx} 
-                                                    className={`p-2 text-center border border-logia-700 transition-colors ${cellClass}`}
-                                                    onClick={() => paymentData && handleOpenMatrixModal(u.uid, u.name, period)}
-                                                    title={cellTitle}
-                                                >
-                                                    {cellText}
-                                                </td>
-                                            );
-                                        })}
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                      <table className="w-full text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-logia-900">
+                            <th className="p-2 text-left text-gray-400 font-bold border border-logia-700 sticky left-0 bg-logia-900 z-10">Miembro</th>
+                            {matrixMonths.map((month, idx) => (
+                              <th key={idx} className="p-2 text-center text-gray-400 font-bold border border-logia-700 min-w-[94px]">{month}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredUsers.filter(u => u.active).map(u => (
+                            <tr key={u.uid} className="hover:bg-logia-700/20">
+                              <td className="p-2 text-white font-medium border border-logia-700 whitespace-nowrap sticky left-0 bg-logia-800 z-10">{u.name}</td>
+                              {matrixMonths.map((month, idx) => {
+                                const period = `${matrixYear}-${String(idx + 1).padStart(2, '0')}`;
+                                const paymentData = (allUserLedgers[u.uid] || []).find(p => p.period === period);
+                                const amounts = getMatrixCellAmountsV3(u.uid, period);
+                                const receipts = getReceiptsForMatrixCellV3(u.uid, period);
+                                const isPaid = amounts.status === 'Pagado';
+                                const isPartial = amounts.status === 'Parcial';
+                                const isForgiven = amounts.status === 'Perdonado';
+                                const cellClass = isForgiven
+                                  ? 'bg-gray-700/60 text-gray-300'
+                                  : isPaid
+                                    ? (matrixFilter === 'extra' ? 'bg-purple-700/80 text-white' : 'bg-green-700/80 text-white')
+                                    : isPartial
+                                      ? 'bg-yellow-800/60 text-yellow-100'
+                                      : amounts.status === 'Sin cuota'
+                                        ? 'bg-logia-900/50 text-gray-600'
+                                        : 'bg-red-900/30 text-red-200';
+                                const statusSymbol = isForgiven ? '○' : isPaid ? '✓' : isPartial ? '½' : amounts.status === 'Sin cuota' ? '–' : '✗';
+                                return (
+                                  <td key={idx} className={`p-1 border border-logia-700 align-top ${cellClass}`}>
+                                    <button
+                                      type="button"
+                                      disabled={!paymentData}
+                                      onClick={() => paymentData && handleOpenMatrixModal(u.uid, u.name, period)}
+                                      className="w-full min-h-[64px] rounded p-1 text-center disabled:cursor-default"
+                                      title={`${u.name} · ${period} · ${amounts.status} · Cargo $${amounts.billed.toFixed(2)} · Pagado $${amounts.paid.toFixed(2)} · Pendiente $${amounts.pending.toFixed(2)}`}
+                                    >
+                                      {matrixViewMode === 'status' && <div className="text-lg font-bold leading-tight">{statusSymbol}</div>}
+                                      {matrixViewMode === 'amount' && (
+                                        <div className="leading-tight">
+                                          <div className="font-bold text-[11px]">P ${amounts.paid.toFixed(0)}</div>
+                                          <div className="text-[9px] opacity-80">Debe ${amounts.pending.toFixed(0)}</div>
+                                        </div>
+                                      )}
+                                      {matrixViewMode === 'detail' && (
+                                        <div className="text-[9px] leading-tight space-y-0.5">
+                                          <div>Cargo <strong>${amounts.billed.toFixed(0)}</strong></div>
+                                          <div>Pagado <strong>${amounts.paid.toFixed(0)}</strong></div>
+                                          <div>Deuda <strong>${amounts.pending.toFixed(0)}</strong></div>
+                                        </div>
+                                      )}
+                                    </button>
+                                    {receipts.length > 0 && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); setMatrixEvidenceReceiptsV3(receipts); }}
+                                        className="mt-1 w-full rounded bg-blue-950/70 border border-blue-600/50 px-1 py-1 text-[9px] font-bold text-blue-200 hover:bg-blue-900"
+                                        title="Ver comprobantes de este miembro y período"
+                                      >
+                                        🧾 {receipts.length} comprobante{receipts.length === 1 ? '' : 's'}
+                                      </button>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                    
+
                     <div className="mt-4 flex flex-wrap gap-4 text-xs">
                         {matrixFilter === 'extra'
                             ? <>
@@ -5035,16 +5266,45 @@ const Admin: React.FC<Props> = ({ user }) => {
                     {f === 'pending' ? '⏳ Pendientes' : f === 'approved' ? '✅ Aprobados' : f === 'rejected' ? '❌ Rechazados' : '📋 Todos'}
                   </button>
                 ))}
-                <button onClick={loadPaymentReceipts} className="ml-auto px-3 py-1 rounded text-sm bg-logia-900 text-gray-400 hover:bg-logia-700">
-                  🔄 Actualizar
-                </button>
+                <div className="flex items-center gap-2 ml-auto">
+                  <label className="text-xs text-gray-500">Conciliación bancaria</label>
+                  <select value={receiptReconciliationFilter} onChange={e => setReceiptReconciliationFilter(e.target.value as any)}
+                    className="bg-logia-900 border border-logia-700 rounded px-2 py-1 text-xs text-white">
+                    <option value="all">Todos</option>
+                    <option value="pending">Por conciliar</option>
+                    <option value="matched">Conciliados</option>
+                    <option value="difference">Con diferencia</option>
+                  </select>
+                  <button onClick={loadPaymentReceipts} className="px-3 py-1 rounded text-sm bg-logia-900 text-gray-400 hover:bg-logia-700">🔄 Actualizar</button>
+                </div>
               </div>
+
+              {(() => {
+                const receipts = paymentReceipts as PaymentReceipt[];
+                const approved = receipts.filter(item => item.status === 'approved');
+                const declared = approved.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+                const applied = approved.reduce((sum, item) => sum + (Number(item.appliedAmount) || 0), 0);
+                const differences = approved.reduce((sum, item) => sum + (Number(item.unappliedAmount) || 0), 0);
+                const pendingBank = approved.filter(item => (item.reconciliationStatus || 'pending') !== 'matched').length;
+                return (
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
+                    <div className="rounded-lg bg-logia-900 border border-logia-700 p-3"><p className="text-[10px] uppercase text-gray-500">Total comprobantes aprobados</p><p className="font-bold text-white">${declared.toFixed(2)}</p></div>
+                    <div className="rounded-lg bg-logia-900 border border-logia-700 p-3"><p className="text-[10px] uppercase text-gray-500">Aplicado al ledger</p><p className="font-bold text-green-300">${applied.toFixed(2)}</p></div>
+                    <div className="rounded-lg bg-logia-900 border border-logia-700 p-3"><p className="text-[10px] uppercase text-gray-500">Excedente / diferencia</p><p className={`font-bold ${differences > 0 ? 'text-yellow-300' : 'text-gray-300'}`}>${differences.toFixed(2)}</p></div>
+                    <div className="rounded-lg bg-logia-900 border border-logia-700 p-3"><p className="text-[10px] uppercase text-gray-500">Por conciliar con banco</p><p className="font-bold text-blue-300">${pendingBank}</p></div>
+                  </div>
+                );
+              })()}
 
               {loadingReceipts ? (
                 <p className="text-center text-gray-400 py-8">Cargando...</p>
               ) : (
                 (() => {
-                  const filtered = paymentReceipts.filter(r => receiptFilter === 'all' || r.status === receiptFilter);
+                  const filtered = (paymentReceipts as PaymentReceipt[]).filter(r =>
+                    (receiptFilter === 'all' || r.status === receiptFilter) &&
+                    (receiptReconciliationFilter === 'all' ||
+                      (receiptReconciliationFilter === 'pending' ? (r.reconciliationStatus || 'pending') === 'pending' : r.reconciliationStatus === receiptReconciliationFilter))
+                  );
                   if (filtered.length === 0) return <p className="text-center text-gray-500 py-8">No hay comprobantes.</p>;
                   return (
                     <div className="space-y-3">
@@ -5063,7 +5323,13 @@ const Admin: React.FC<Props> = ({ user }) => {
                                 ? <p className="text-sm text-gray-300 mt-1">Concepto: <span className="font-bold text-purple-300">{receipt.conceptDescription || '—'}</span></p>
                                 : <p className="text-sm text-gray-300 mt-1">Períodos: <span className="font-bold text-white">{(receipt.periods || []).join(', ')}</span></p>
                               }
-                              {receipt.amount && <p className="text-sm text-gray-300">Monto declarado: <span className="font-bold text-yellow-300">${receipt.amount}</span></p>}
+                              {receipt.amount != null && (
+                                <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-1 text-xs">
+                                  <div className="rounded bg-black/20 p-2"><span className="text-gray-500 block">Comprobante</span><strong className="text-yellow-300">${Number(receipt.amount || 0).toFixed(2)}</strong></div>
+                                  <div className="rounded bg-black/20 p-2"><span className="text-gray-500 block">Aplicado a deuda</span><strong className="text-green-300">${receipt.appliedAmount !== undefined ? Number(receipt.appliedAmount).toFixed(2) : 'Histórico'}</strong></div>
+                                  <div className="rounded bg-black/20 p-2"><span className="text-gray-500 block">Excedente no aplicado</span><strong className={Number(receipt.unappliedAmount || 0) > 0 ? 'text-orange-300' : 'text-gray-300'}>${Number(receipt.unappliedAmount || 0).toFixed(2)}</strong></div>
+                                </div>
+                              )}
                             </div>
                             <div className="flex flex-col gap-2 items-end">
                               <span className={`text-xs px-2 py-1 rounded-full font-bold ${
@@ -5078,21 +5344,27 @@ const Admin: React.FC<Props> = ({ user }) => {
                               }`}>
                                 {receipt.status === 'pending' ? '⏳ Pendiente' : receipt.status === 'approved' ? '✅ Aprobado' : '❌ Rechazado'}
                               </span>
-                              {/* Mostrar todas las fotos/archivos adjuntos */}
+                              {receipt.status === 'approved' && (
+                                <span className={`text-xs px-2 py-1 rounded-full font-bold ${receipt.reconciliationStatus === 'matched' ? 'bg-blue-700 text-blue-100' : receipt.reconciliationStatus === 'difference' ? 'bg-orange-700 text-orange-100' : 'bg-gray-700 text-gray-200'}`}>
+                                  {receipt.reconciliationStatus === 'matched' ? '🏦 Conciliado' : receipt.reconciliationStatus === 'difference' ? '⚠️ Diferencia banco' : '🏦 Por conciliar'}
+                                </span>
+                              )}
+                              {/* Evidencia visible */}
                               {(() => {
-                                const urls: string[] = receipt.receiptImageUrls?.length
-                                  ? receipt.receiptImageUrls
-                                  : receipt.receiptImageUrl ? [receipt.receiptImageUrl] : [];
+                                const urls = getReceiptUrls(receipt as PaymentReceipt);
                                 return urls.length > 0 ? (
-                                  <div className="flex flex-wrap gap-1 mt-1">
-                                    {urls.map((url: string, i: number) => (
-                                      <button key={i} onClick={() => setViewingReceiptImage(url)}
-                                        className="text-xs bg-logia-900 hover:bg-logia-700 text-blue-300 px-2 py-1 rounded border border-blue-600/40">
-                                        🖼️ {urls.length > 1 ? `Foto ${i+1}` : 'Ver Foto'}
-                                      </button>
-                                    ))}
+                                  <div className="flex flex-wrap gap-2 mt-1 max-w-[280px] justify-end">
+                                    {urls.map((url: string, i: number) => {
+                                      const pdf = url.toLowerCase().includes('.pdf') || url.toLowerCase().includes('%2epdf');
+                                      return pdf ? (
+                                        <a key={url} href={url} target="_blank" rel="noreferrer" className="text-xs bg-blue-900/40 text-blue-300 px-2 py-2 rounded border border-blue-600/40">📄 PDF {i + 1}</a>
+                                      ) : (
+                                        <img key={url} src={url} alt={`Comprobante ${i + 1}`} onClick={() => setViewingReceiptImage(url)}
+                                          className="w-20 h-20 object-cover rounded border border-blue-600/40 cursor-pointer hover:opacity-80" />
+                                      );
+                                    })}
                                   </div>
-                                ) : null;
+                                ) : <span className="text-[10px] text-gray-600">Sin archivo visible</span>;
                               })()}
                             </div>
                           </div>
@@ -5149,6 +5421,24 @@ const Admin: React.FC<Props> = ({ user }) => {
 
                           {receipt.reviewComments && (
                             <p className="text-xs text-gray-400 italic bg-logia-900 p-2 rounded">Comentario: {receipt.reviewComments}</p>
+                          )}
+                          {receipt.status === 'approved' && (
+                            <div className="flex flex-wrap gap-2 pt-1">
+                              <button onClick={() => void openReceiptInMatrix(receipt as PaymentReceipt)} className="bg-indigo-800 hover:bg-indigo-700 text-white text-xs px-3 py-2 rounded font-bold">📊 Ver en Matriz</button>
+                              <button onClick={async () => {
+                                const current = (receipt.reconciliationStatus || 'pending') as 'pending' | 'matched' | 'difference';
+                                const next = current === 'matched' ? 'pending' : (Number(receipt.unappliedAmount || 0) > 0 ? 'difference' : 'matched');
+                                const reference = next === 'pending' ? '' : (window.prompt('Referencia de Mercado Pago / banco (opcional):', receipt.bankReference || '') || '');
+                                const note = next === 'pending' ? '' : (window.prompt('Nota de conciliación (opcional):', receipt.reconciliationNote || '') || '');
+                                await dataService.updatePaymentReceiptReconciliation(receipt.groupId, receipt.id, next, user.uid, reference, note);
+                                await loadPaymentReceipts();
+                              }} className={`text-white text-xs px-3 py-2 rounded font-bold ${receipt.reconciliationStatus === 'matched' ? 'bg-blue-800 hover:bg-blue-700' : 'bg-slate-700 hover:bg-slate-600'}`}>
+                                {receipt.reconciliationStatus === 'matched' ? '✅ Conciliado con banco' : Number(receipt.unappliedAmount || 0) > 0 ? '⚠️ Marcar diferencia banco' : '🏦 Marcar conciliado'}
+                              </button>
+                              {(receipt.bankReference || receipt.reconciliationNote) && (
+                                <span className="text-xs text-gray-400 self-center">{receipt.bankReference ? `Ref: ${receipt.bankReference}` : ''}{receipt.reconciliationNote ? ` · ${receipt.reconciliationNote}` : ''}</span>
+                              )}
+                            </div>
                           )}
                           {receipt.status === 'pending' && !isReadOnly && (
                             <div className="flex gap-2 pt-1 flex-wrap">
@@ -5272,107 +5562,151 @@ const Admin: React.FC<Props> = ({ user }) => {
 
       </div>
 
+      {/* MATRIX RECEIPT EVIDENCE MODAL */}
+      {matrixEvidenceReceipts.length > 0 && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[120] p-4" onClick={() => setMatrixEvidenceReceipts([])}>
+          <div className="bg-logia-800 w-full max-w-3xl max-h-[88vh] overflow-y-auto rounded-xl border border-blue-600/40 shadow-2xl" onClick={event => event.stopPropagation()}>
+            <div className="sticky top-0 bg-logia-900 border-b border-logia-700 p-4 flex justify-between items-center">
+              <div><h3 className="font-bold text-white">🧾 Evidencia del pago</h3><p className="text-xs text-gray-400">Comprobantes vinculados a esta celda de la matriz</p></div>
+              <button onClick={() => setMatrixEvidenceReceipts([])} className="text-2xl text-gray-400 hover:text-white">×</button>
+            </div>
+            <div className="p-4 space-y-3">
+              {matrixEvidenceReceipts.map(receipt => (
+                <div key={receipt.id} className="rounded-lg border border-logia-700 bg-logia-900/60 p-4">
+                  <div className="flex flex-wrap justify-between gap-2">
+                    <div><p className="font-bold text-white">{receipt.userName}</p><p className="text-xs text-gray-400">{receipt.receiptType === 'concepto_adicional' ? receipt.conceptDescription : (receipt.periods || []).join(', ')}</p></div>
+                    <span className={`text-xs rounded-full px-2 py-1 ${receipt.status === 'approved' ? 'bg-green-800 text-green-200' : receipt.status === 'pending' ? 'bg-yellow-800 text-yellow-200' : 'bg-red-800 text-red-200'}`}>{receipt.status === 'approved' ? '✅ Aprobado' : receipt.status === 'pending' ? '⏳ Pendiente' : '❌ Rechazado'}</span>
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-2 text-xs"><div><span className="text-gray-500">Comprobante</span><p className="text-yellow-300 font-bold">${Number(receipt.amount || 0).toFixed(2)}</p></div><div><span className="text-gray-500">Aplicado</span><p className="text-green-300 font-bold">{receipt.appliedAmount !== undefined ? `${Number(receipt.appliedAmount).toFixed(2)}` : 'Histórico'}</p></div><div><span className="text-gray-500">Diferencia</span><p className="text-orange-300 font-bold">${Number(receipt.unappliedAmount || 0).toFixed(2)}</p></div></div>
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    {getReceiptUrls(receipt).map((url, index) => {
+                      const pdf = url.toLowerCase().includes('.pdf') || url.toLowerCase().includes('%2epdf');
+                      return pdf ? <a key={url} href={url} target="_blank" rel="noreferrer" className="text-xs bg-blue-900/40 text-blue-300 px-3 py-2 rounded">📄 Abrir PDF</a> : <img key={url} src={url} alt={`Comprobante ${index + 1}`} onClick={() => setViewingReceiptImage(url)} className="w-28 h-28 object-cover rounded border border-logia-600 cursor-pointer hover:opacity-80" />;
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* COMPROBANTES DE CELDA V3 */}
+      {matrixEvidenceReceiptsV3.length > 0 && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[120] p-4" onClick={() => setMatrixEvidenceReceiptsV3([])}>
+          <div className="bg-logia-800 w-full max-w-3xl rounded-xl border border-blue-700 shadow-2xl max-h-[88vh] overflow-y-auto p-5" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <div>
+                <h3 className="text-lg font-bold text-white">🧾 Comprobantes relacionados</h3>
+                <p className="text-xs text-gray-400">Evidencia encontrada para la celda seleccionada.</p>
+              </div>
+              <button onClick={() => setMatrixEvidenceReceiptsV3([])} className="text-2xl text-gray-400 hover:text-white">×</button>
+            </div>
+            <div className="space-y-3">
+              {matrixEvidenceReceiptsV3.map(receipt => {
+                const urls = receiptUrlsV3(receipt);
+                return (
+                  <div key={receipt.id} className="rounded-lg border border-logia-700 bg-logia-900 p-4">
+                    <div className="flex flex-wrap justify-between gap-3">
+                      <div>
+                        <p className="font-bold text-white">{receipt.userName}</p>
+                        <p className="text-xs text-gray-400">{receipt.receiptType === 'cuota_mensual' ? 'Cuota mensual' : receipt.conceptDescription || 'Cuota extraordinaria'} · {(receipt.periods || []).join(', ') || receipt.targetExtraFeePeriod || (receipt as any).extraFeePeriod || 'Sin período explícito'}</p>
+                        <p className="text-xs text-gray-500">Transferencia: {receipt.transferDate ? new Date(receipt.transferDate).toLocaleString('es-MX') : '—'}</p>
+                        <p className="text-sm mt-1">Comprobante: <strong className="text-yellow-300">${Number(receipt.amount || 0).toFixed(2)}</strong>{receipt.appliedAmount !== undefined && <> · Aplicado: <strong className="text-green-300">${Number(receipt.appliedAmount || 0).toFixed(2)}</strong></>}</p>
+                      </div>
+                      <span className={`text-xs px-2 py-1 rounded h-fit font-bold ${receipt.status === 'approved' ? 'bg-green-700 text-green-100' : receipt.status === 'pending' ? 'bg-yellow-700 text-yellow-100' : 'bg-red-700 text-red-100'}`}>{receipt.status === 'approved' ? '✅ Aprobado' : receipt.status === 'pending' ? '⏳ Pendiente' : '❌ Rechazado'}</span>
+                    </div>
+                    {urls.length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {urls.map((url, index) => url.toLowerCase().includes('.pdf') ? (
+                          <a key={url} href={url} target="_blank" rel="noreferrer" className="text-xs bg-blue-900/40 border border-blue-700 text-blue-300 rounded px-3 py-2">📄 Abrir PDF {index + 1}</a>
+                        ) : (
+                          <img key={url} src={url} alt={'Comprobante ' + (index + 1)} onClick={() => setViewingReceiptImage(url)} className="w-28 h-28 object-cover rounded border border-logia-600 cursor-pointer hover:opacity-80" />
+                        ))}
+                      </div>
+                    ) : <p className="text-xs text-gray-600 mt-2">Este registro no conserva una URL de imagen.</p>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MATRIX PAYMENT MODAL */}
       {showMatrixModal && matrixModalPayment && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-logia-800 rounded-xl border border-logia-700 shadow-2xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center">
-              <h3 className="text-lg font-bold text-white">💰 Registrar Pago</h3>
+          <div className="bg-logia-800 rounded-xl border border-logia-700 shadow-2xl w-full max-w-lg p-5 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-white">Detalle de pago</h3>
+                <p className="text-sm text-gray-400">{matrixModalUserName} · <span className="text-indigo-300">{matrixModalPeriod}</span></p>
+              </div>
               <button onClick={() => setShowMatrixModal(false)} className="text-gray-400 hover:text-white text-2xl">×</button>
             </div>
-            <div className="bg-logia-900 rounded p-3 text-sm space-y-1">
-              <p className="text-gray-400">Miembro: <span className="text-white font-bold">{matrixModalUserName}</span></p>
-              <p className="text-gray-400">Período: <span className="text-indigo-300 font-bold">{matrixModalPeriod}</span></p>
-              <p className="text-gray-400">Cuota mensual: <span className="text-white font-bold">${Number(matrixModalPayment.amount).toFixed(2)}</span></p>
-              <p className="text-gray-400">Ya pagado: <span className={`font-bold ${(matrixModalPayment.paidRegular || 0) > 0 ? 'text-green-400' : 'text-gray-500'}`}>${Number(matrixModalPayment.paidRegular !== undefined ? matrixModalPayment.paidRegular : matrixModalPayment.paid || 0).toFixed(2)}</span></p>
-              <p className="text-gray-400">Estado actual: <span className={`font-bold ${matrixModalPayment.regularCovered ? 'text-green-400' : 'text-yellow-300'}`}>{matrixModalPayment.regularCovered ? '✅ Pagado' : '⏳ Pendiente/Parcial'}</span></p>
-            </div>
 
-            <div>
-              <label className="block text-xs font-bold text-gray-400 uppercase mb-2">
-                Monto pagado (deja vacío para marcar como pagado completo)
-              </label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={matrixModalAmountPaid}
-                onChange={e => setMatrixModalAmountPaid(e.target.value)}
-                placeholder={`Total: $${Number(matrixModalPayment.amount).toFixed(2)}`}
-                className="w-full px-3 py-2 bg-logia-900 border border-logia-700 rounded text-white text-sm focus:ring-2 focus:ring-indigo-500"
-              />
-              {matrixModalAmountPaid && Number(matrixModalAmountPaid) < Number(matrixModalPayment.amount) && (
-                <p className="text-xs text-yellow-400 mt-1">⚠️ Pago parcial – no se marcará como pagado completo.</p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Comentario (opcional)</label>
-              <input
-                type="text"
-                value={matrixModalComments}
-                onChange={e => setMatrixModalComments(e.target.value)}
-                placeholder="Ej: Pagó en efectivo, transferencia SPEI..."
-                className="w-full px-3 py-2 bg-logia-900 border border-logia-700 rounded text-white text-sm focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adjuntar comprobante (opcional)</label>
-              {matrixModalPayment.receiptImageBase64 && !matrixModalFile && (
-                <div className="mb-2">
-                  <p className="text-xs text-green-400 mb-1">📄 Comprobante existente:</p>
-                  <img
-                    src={matrixModalPayment.receiptImageBase64}
-                    alt="Comprobante actual"
-                    className="max-h-24 rounded border border-logia-700 object-contain cursor-pointer"
-                    onClick={() => setViewingReceiptImage(matrixModalPayment!.receiptImageBase64!)}
-                  />
+            {matrixFilter === 'extra' && matrixExtraDesc ? (() => {
+              const detail = getSelectedExtraForModalV3();
+              const receipts = getReceiptsForMatrixCellV3(matrixModalUid, matrixModalPeriod);
+              return (
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-purple-700/50 bg-purple-900/20 p-4">
+                    <p className="text-xs uppercase text-purple-300 font-bold mb-1">Cuota extraordinaria seleccionada</p>
+                    <h4 className="font-bold text-white text-lg">{matrixExtraDesc}</h4>
+                    {detail ? (
+                      <div className="grid grid-cols-3 gap-2 mt-3 text-center">
+                        <div className="bg-logia-900 rounded p-2"><p className="text-[10px] text-gray-500 uppercase">Cargo</p><p className="font-bold text-white">${detail.billed.toFixed(2)}</p></div>
+                        <div className="bg-logia-900 rounded p-2"><p className="text-[10px] text-gray-500 uppercase">Pagado</p><p className="font-bold text-green-400">${detail.paid.toFixed(2)}</p></div>
+                        <div className="bg-logia-900 rounded p-2"><p className="text-[10px] text-gray-500 uppercase">Pendiente</p><p className="font-bold text-red-400">${detail.pending.toFixed(2)}</p></div>
+                      </div>
+                    ) : <p className="text-sm text-gray-500 mt-2">Este miembro no tiene esta cuota extraordinaria en el período.</p>}
+                  </div>
+                  <div className="rounded-lg border border-blue-800/50 bg-blue-950/20 p-3">
+                    <div className="flex justify-between items-center">
+                      <p className="text-xs font-bold text-blue-300 uppercase">Comprobantes</p>
+                      <span className="text-xs text-gray-400">{receipts.length}</span>
+                    </div>
+                    {receipts.length > 0 ? (
+                      <button onClick={() => setMatrixEvidenceReceiptsV3(receipts)} className="mt-2 w-full bg-blue-800 hover:bg-blue-700 text-white rounded py-2 text-sm font-bold">🧾 Ver evidencia</button>
+                    ) : <p className="text-xs text-gray-500 mt-2">No se encontró comprobante relacionado con esta cuota y período.</p>}
+                  </div>
+                  <p className="text-xs text-gray-500">Para modificar manualmente el pago de una cuota extraordinaria usa Gestión de Miembros → Gestionar Pagos; esta ventana prioriza la conciliación y evita alterar accidentalmente la cuota mensual.</p>
+                  <button onClick={() => setShowMatrixModal(false)} className="w-full py-2 bg-logia-900 text-gray-300 rounded font-bold">Cerrar</button>
                 </div>
-              )}
-              <input
-                type="file"
-                accept="image/*,application/pdf"
-                onChange={e => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  setMatrixModalFile(file);
-                  if (file.type.startsWith('image/')) {
-                    const reader = new FileReader();
-                    reader.onloadend = () => setMatrixModalPreview(reader.result as string);
-                    reader.readAsDataURL(file);
-                  } else {
-                    setMatrixModalPreview(null);
-                  }
-                }}
-                className="w-full text-sm text-gray-300 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-bold file:bg-indigo-700 file:text-white hover:file:bg-indigo-600 cursor-pointer"
-              />
-              {matrixModalFile && (
-                <div className="mt-2">
-                  {matrixModalPreview ? (
-                    <img src={matrixModalPreview} alt="Vista previa" className="max-h-32 rounded border border-logia-700 object-contain" />
-                  ) : (
-                    <p className="text-xs text-green-400">📄 {matrixModalFile.name}</p>
-                  )}
-                </div>
-              )}
-            </div>
+              );
+            })() : (
+              <>
+                {(() => {
+                  const amounts = getMatrixCellAmountsV3(matrixModalUid, matrixModalPeriod);
+                  const receipts = getReceiptsForMatrixCellV3(matrixModalUid, matrixModalPeriod);
+                  return <div className="space-y-3">
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="bg-logia-900 rounded p-2"><p className="text-[10px] text-gray-500 uppercase">Cargo</p><p className="font-bold text-white">${amounts.billed.toFixed(2)}</p></div>
+                      <div className="bg-logia-900 rounded p-2"><p className="text-[10px] text-gray-500 uppercase">Pagado</p><p className="font-bold text-green-400">${amounts.paid.toFixed(2)}</p></div>
+                      <div className="bg-logia-900 rounded p-2"><p className="text-[10px] text-gray-500 uppercase">Pendiente</p><p className="font-bold text-red-400">${amounts.pending.toFixed(2)}</p></div>
+                    </div>
+                    {receipts.length > 0 && <button onClick={() => setMatrixEvidenceReceiptsV3(receipts)} className="w-full bg-blue-900/50 border border-blue-700 text-blue-200 rounded py-2 text-sm font-bold">🧾 Ver {receipts.length} comprobante{receipts.length === 1 ? '' : 's'}</button>}
+                  </div>;
+                })()}
 
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={() => setShowMatrixModal(false)}
-                className="flex-1 py-2 bg-logia-900 text-gray-300 rounded font-bold"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleSaveMatrixPayment}
-                disabled={savingMatrixPayment}
-                className="flex-1 py-2 bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 text-white rounded font-bold"
-              >
-                {savingMatrixPayment ? 'Guardando...' : '💾 Guardar'}
-              </button>
-            </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Monto recibido para la cuota mensual</label>
+                  <input type="number" min="0" step="0.01" value={matrixModalAmountPaid} onChange={e => setMatrixModalAmountPaid(e.target.value)} placeholder={`Total: $${Number(matrixModalPayment.amount).toFixed(2)}`} className="w-full px-3 py-2 bg-logia-900 border border-logia-700 rounded text-white text-sm focus:ring-2 focus:ring-indigo-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Comentario (opcional)</label>
+                  <input type="text" value={matrixModalComments} onChange={e => setMatrixModalComments(e.target.value)} placeholder="Ej: Pagó en efectivo, transferencia SPEI..." className="w-full px-3 py-2 bg-logia-900 border border-logia-700 rounded text-white text-sm focus:ring-2 focus:ring-indigo-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adjuntar comprobante manual (opcional)</label>
+                  <input type="file" accept="image/*,application/pdf" onChange={e => { const file = e.target.files?.[0]; if (!file) return; setMatrixModalFile(file); if (file.type.startsWith('image/')) { const reader = new FileReader(); reader.onloadend = () => setMatrixModalPreview(reader.result as string); reader.readAsDataURL(file); } else setMatrixModalPreview(null); }} className="w-full text-sm text-gray-300 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-bold file:bg-indigo-700 file:text-white" />
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button onClick={() => setShowMatrixModal(false)} className="flex-1 py-2 bg-logia-900 text-gray-300 rounded font-bold">Cancelar</button>
+                  <button onClick={handleSaveMatrixPayment} disabled={savingMatrixPayment} className="flex-1 py-2 bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 text-white rounded font-bold">{savingMatrixPayment ? 'Guardando...' : '💾 Guardar mensualidad'}</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

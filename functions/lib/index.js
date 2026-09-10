@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendNotificationToGroup = exports.sendNotification = void 0;
+exports.interpretAdminIntent = exports.sendNotificationToGroup = exports.sendNotification = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 admin.initializeApp();
@@ -42,7 +42,6 @@ admin.initializeApp();
  * Endpoint: https://us-central1-registrologia.cloudfunctions.net/sendNotification
  */
 exports.sendNotification = functions.https.onRequest(async (req, res) => {
-    // Habilitar CORS
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.set('Access-Control-Allow-Headers', 'Content-Type');
@@ -64,7 +63,6 @@ exports.sendNotification = functions.https.onRequest(async (req, res) => {
             res.status(400).json({ error: 'Se requiere notification con title y body' });
             return;
         }
-        // Construir el mensaje
         const message = {
             notification: {
                 title: notification.title,
@@ -78,18 +76,10 @@ exports.sendNotification = functions.https.onRequest(async (req, res) => {
                 }
             }
         };
-        // Enviar a todos los tokens
         const responses = await Promise.allSettled(tokens.map((token) => admin.messaging().send(Object.assign(Object.assign({}, message), { token }))));
-        // Contar éxitos y fallos
         const successCount = responses.filter(r => r.status === 'fulfilled').length;
         const failureCount = responses.filter(r => r.status === 'rejected').length;
-        console.log(`Notificaciones enviadas: ${successCount} exitosas, ${failureCount} fallidas`);
-        res.status(200).json({
-            success: true,
-            successCount,
-            failureCount,
-            total: tokens.length
-        });
+        res.status(200).json({ success: true, successCount, failureCount, total: tokens.length });
     }
     catch (error) {
         console.error('Error enviando notificaciones:', error);
@@ -99,9 +89,7 @@ exports.sendNotification = functions.https.onRequest(async (req, res) => {
         });
     }
 });
-/**
- * Cloud Function para enviar notificación a un grupo específico
- */
+/** Cloud Function para enviar notificación a un grupo específico. */
 exports.sendNotificationToGroup = functions.https.onRequest(async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -116,7 +104,6 @@ exports.sendNotificationToGroup = functions.https.onRequest(async (req, res) => 
             res.status(400).json({ error: 'Se requiere groupId' });
             return;
         }
-        // Obtener todos los usuarios activos del grupo
         const usersSnapshot = await admin.firestore()
             .collection('users')
             .where('groupId', '==', groupId)
@@ -125,19 +112,13 @@ exports.sendNotificationToGroup = functions.https.onRequest(async (req, res) => 
         const tokens = [];
         usersSnapshot.forEach(doc => {
             const userData = doc.data();
-            if (userData.fcmToken) {
+            if (userData.fcmToken)
                 tokens.push(userData.fcmToken);
-            }
         });
         if (tokens.length === 0) {
-            res.status(200).json({
-                success: true,
-                message: 'No hay usuarios con tokens en este grupo',
-                successCount: 0
-            });
+            res.status(200).json({ success: true, message: 'No hay usuarios con tokens en este grupo', successCount: 0 });
             return;
         }
-        // Construir el mensaje
         const message = {
             notification: {
                 title: notification.title,
@@ -151,22 +132,185 @@ exports.sendNotificationToGroup = functions.https.onRequest(async (req, res) => 
                 }
             }
         };
-        // Enviar a todos los tokens
         const responses = await Promise.allSettled(tokens.map((token) => admin.messaging().send(Object.assign(Object.assign({}, message), { token }))));
         const successCount = responses.filter(r => r.status === 'fulfilled').length;
         const failureCount = responses.filter(r => r.status === 'rejected').length;
-        console.log(`Notificaciones al grupo ${groupId}: ${successCount} exitosas, ${failureCount} fallidas`);
-        res.status(200).json({
-            success: true,
-            successCount,
-            failureCount,
-            total: tokens.length
-        });
+        res.status(200).json({ success: true, successCount, failureCount, total: tokens.length });
     }
     catch (error) {
         console.error('Error enviando notificaciones al grupo:', error);
         res.status(500).json({
             error: 'Error interno del servidor',
+            details: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+const ALLOWED_ACTIONS = [
+    'dashboard', 'requests', 'users', 'fees', 'attendance', 'trivia', 'treasury',
+    'notices', 'tasks', 'banks', 'visits', 'payment-matrix', 'create-user',
+    'manual-merge', 'receipts', 'debt-notify', 'member-pending', 'active-notices', 'active-tasks',
+    'broadcast-matrix', 'register-payment'
+];
+const isAllowedAction = (value) => typeof value === 'string' && ALLOWED_ACTIONS.includes(value);
+const DAILY_AI_LIMIT = 30;
+const consumeDailyAIQuery = async (uid) => {
+    const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Monterrey', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const ref = admin.firestore().doc(`aiUsage/${uid}_${day}`);
+    return admin.firestore().runTransaction(async (transaction) => {
+        var _a;
+        const snap = await transaction.get(ref);
+        const used = Number(((_a = snap.data()) === null || _a === void 0 ? void 0 : _a.count) || 0);
+        if (used >= DAILY_AI_LIMIT)
+            return { allowed: false, used, remaining: 0, limit: DAILY_AI_LIMIT };
+        const next = used + 1;
+        transaction.set(ref, { uid, day, count: next, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        return { allowed: true, used: next, remaining: DAILY_AI_LIMIT - next, limit: DAILY_AI_LIMIT };
+    });
+};
+/**
+ * Interpreta lenguaje natural, pero solo puede devolver acciones incluidas en ALLOWED_ACTIONS.
+ * No lee ni escribe registros de negocio. La app sigue ejecutando y validando cada acción.
+ */
+exports.interpretAdminIntent = functions
+    .runWith({ secrets: ['GEMINI_API_KEY'], timeoutSeconds: 30, memory: '256MB' })
+    .https.onRequest(async (req, res) => {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+        res.status(204).send('');
+        return;
+    }
+    if (req.method !== 'POST') {
+        res.status(405).json({ error: 'Método no permitido' });
+        return;
+    }
+    try {
+        const authorization = req.get('Authorization') || '';
+        if (!authorization.startsWith('Bearer ')) {
+            res.status(401).json({ error: 'Falta autenticación' });
+            return;
+        }
+        const decoded = await admin.auth().verifyIdToken(authorization.slice(7));
+        const userSnap = await admin.firestore().doc(`users/${decoded.uid}`).get();
+        const profile = userSnap.data();
+        if (!profile || !['admin', 'master'].includes(profile.role)) {
+            res.status(403).json({ error: 'Solo Admin y Master pueden usar el asistente' });
+            return;
+        }
+        const instruction = String(((_a = req.body) === null || _a === void 0 ? void 0 : _a.instruction) || '').trim().slice(0, 1000);
+        const groupId = String(((_b = req.body) === null || _b === void 0 ? void 0 : _b.groupId) || '').trim();
+        if (!instruction || !groupId) {
+            res.status(400).json({ error: 'Faltan instruction o groupId' });
+            return;
+        }
+        if (profile.role !== 'master' && profile.groupId !== groupId) {
+            res.status(403).json({ error: 'La logia no corresponde al usuario' });
+            return;
+        }
+        const rateLimit = await consumeDailyAIQuery(decoded.uid);
+        if (!rateLimit.allowed) {
+            res.status(429).json({ error: 'Ya alcanzaste el límite de 30 consultas de IA por hoy. Podrás volver a consultar mañana.', rateLimit });
+            return;
+        }
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey)
+            throw new Error('GEMINI_API_KEY no está configurada');
+        const catalog = [
+            ['dashboard', 'abrir resumen administrativo'],
+            ['requests', 'revisar solicitudes pendientes'],
+            ['users', 'administrar o consultar miembros'],
+            ['fees', 'administrar cuotas normales o extraordinarias'],
+            ['attendance', 'registrar o consultar asistencia'],
+            ['trivia', 'crear o administrar trivias'],
+            ['treasury', 'registrar o consultar ingresos y gastos'],
+            ['notices', 'crear o administrar avisos'],
+            ['tasks', 'crear, asignar o consultar tareas'],
+            ['banks', 'consultar o actualizar bancos y efectivo'],
+            ['visits', 'administrar solicitudes de visita'],
+            ['payment-matrix', 'abrir matriz de pagos'],
+            ['create-user', 'crear un miembro'],
+            ['manual-merge', 'vincular usuarios temporales'],
+            ['receipts', 'revisar comprobantes'],
+            ['debt-notify', 'enviar recordatorios de adeudo'],
+            ['member-pending', 'consultar cuánto debe y qué tareas pendientes tiene un miembro'],
+            ['active-notices', 'consultar cuáles avisos están activos o publicados'],
+            ['active-tasks', 'consultar cuáles tareas siguen activas o pendientes'],
+            ['active-notices', 'consultar cuáles avisos están activos o publicados'],
+            ['active-tasks', 'consultar cuáles tareas siguen activas o pendientes'],
+            ['broadcast-matrix', 'enviar imagen de la matriz al buzón de todos'],
+            ['register-payment', 'preparar registro de cuota normal o extraordinaria']
+        ].map(([id, description]) => `${id}: ${description}`).join('\n');
+        const prompt = `Eres un clasificador de intenciones para Mi Logia App.\n` +
+            `Solo puedes elegir acciones del catálogo. Nunca inventes acciones y nunca ejecutes nada.\n` +
+            `Si la petición pregunta cuánto debe una persona o qué pendientes tiene, usa member-pending y extrae memberName.\n` +
+            `Si la intención es clara, confidence debe ser >= 0.85. Si es ambigua, usa unknown y entrega hasta 3 alternatives.\n` +
+            `Catálogo:\n${catalog}\n\nInstrucción del usuario: ${JSON.stringify(instruction)}`;
+        const geminiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey
+            },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: {
+                    temperature: 0,
+                    responseMimeType: 'application/json',
+                    responseSchema: {
+                        type: 'OBJECT',
+                        properties: {
+                            action: { type: 'STRING' },
+                            confidence: { type: 'NUMBER' },
+                            parameters: {
+                                type: 'OBJECT',
+                                properties: {
+                                    memberName: { type: 'STRING' },
+                                    year: { type: 'INTEGER' },
+                                    months: { type: 'INTEGER' },
+                                    paymentType: { type: 'STRING' }
+                                }
+                            },
+                            alternatives: {
+                                type: 'ARRAY',
+                                items: {
+                                    type: 'OBJECT',
+                                    properties: {
+                                        action: { type: 'STRING' },
+                                        confidence: { type: 'NUMBER' }
+                                    },
+                                    required: ['action', 'confidence']
+                                }
+                            },
+                            clarification: { type: 'STRING' }
+                        },
+                        required: ['action', 'confidence', 'parameters', 'alternatives']
+                    }
+                }
+            })
+        });
+        if (!geminiResponse.ok) {
+            const details = await geminiResponse.text();
+            throw new Error(`Gemini respondió ${geminiResponse.status}: ${details.slice(0, 300)}`);
+        }
+        const payload = await geminiResponse.json();
+        const rawText = (_g = (_f = (_e = (_d = (_c = payload === null || payload === void 0 ? void 0 : payload.candidates) === null || _c === void 0 ? void 0 : _c[0]) === null || _d === void 0 ? void 0 : _d.content) === null || _e === void 0 ? void 0 : _e.parts) === null || _f === void 0 ? void 0 : _f[0]) === null || _g === void 0 ? void 0 : _g.text;
+        if (!rawText)
+            throw new Error('Gemini no devolvió una intención');
+        const raw = JSON.parse(rawText);
+        const result = Object.assign({ action: isAllowedAction(raw.action) ? raw.action : 'unknown', confidence: Math.max(0, Math.min(1, Number(raw.confidence) || 0)), parameters: Object.assign(Object.assign(Object.assign(Object.assign({}, (typeof ((_h = raw.parameters) === null || _h === void 0 ? void 0 : _h.memberName) === 'string' && { memberName: raw.parameters.memberName.trim().slice(0, 150) })), (Number.isInteger((_j = raw.parameters) === null || _j === void 0 ? void 0 : _j.year) && { year: raw.parameters.year })), (Number.isInteger((_k = raw.parameters) === null || _k === void 0 ? void 0 : _k.months) && { months: raw.parameters.months })), (['regular', 'extra'].includes((_l = raw.parameters) === null || _l === void 0 ? void 0 : _l.paymentType) && { paymentType: raw.parameters.paymentType })), alternatives: Array.isArray(raw.alternatives)
+                ? raw.alternatives
+                    .filter((item) => isAllowedAction(item === null || item === void 0 ? void 0 : item.action))
+                    .slice(0, 3)
+                    .map((item) => ({ action: item.action, confidence: Math.max(0, Math.min(1, Number(item.confidence) || 0)) }))
+                : [] }, (typeof raw.clarification === 'string' && { clarification: raw.clarification.slice(0, 300) }));
+        res.status(200).json(Object.assign(Object.assign({}, result), { rateLimit }));
+    }
+    catch (error) {
+        console.error('Error interpretando intención:', error);
+        res.status(500).json({
+            error: 'No fue posible interpretar la instrucción',
             details: error instanceof Error ? error.message : 'Unknown error'
         });
     }

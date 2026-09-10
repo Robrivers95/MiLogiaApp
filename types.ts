@@ -83,11 +83,22 @@ export interface PaymentReceipt {
   receiptType: 'cuota_mensual' | 'concepto_adicional';
   conceptDescription?: string;
   conceptId?: string;
+  targetExtraFeeId?: string;
+  targetExtraFeePeriod?: string;
+  memberComments?: string;
+  unappliedAmount?: number;
+  allocationSummary?: Array<{ period: string; feeId: string; description: string; amount: number }>;
   status: 'pending' | 'approved' | 'rejected';
   submittedAt: string;
   reviewedAt?: string;
   reviewedBy?: string;
   reviewComments?: string;
+  appliedAmount?: number;
+  reconciliationStatus?: 'pending' | 'matched' | 'difference';
+  reconciliationNote?: string;
+  bankReference?: string;
+  reconciledAt?: string;
+  reconciledBy?: string;
 }
 
 export interface Task {
@@ -118,6 +129,7 @@ export interface IndividualExtraFee {
   createdAt: string;
   createdBy?: string;
   receiptUrls?: string[];
+  receiptIds?: string[];
   forgiven?: boolean;
   forgivenAt?: string;
   forgivenBy?: string;
@@ -140,6 +152,9 @@ export interface Payment {
   regularCovered?: boolean;
   extraCovered?: boolean;
   regularReceiptUrls?: string[];
+  regularReceiptIds?: string[];
+  extraReceiptUrls?: string[];
+  extraReceiptIds?: string[];
   adminReceiptUrl?: string;
   receiptImageBase64?: string;
 }
@@ -154,7 +169,7 @@ export interface Fee { groupId: string; period: string; amount: number; }
 export type TransactionType = 'income' | 'expense';
 export type FundSource = 'tesoro_general' | 'beneficencia' | 'cuotas';
 export interface TreasuryAllocation { source: FundSource; amount: number; }
-export interface TreasuryEntry { id: string; groupId: string; date: string; type: TransactionType; category: 'saco_beneficencia' | 'cuota_extra' | 'evento' | 'donacion' | 'gasto_operativo' | 'gasto_social' | 'compra_material' | 'otro'; description: string; amount: number; allocations: TreasuryAllocation[]; createdBy: string; createdAt: number; }
+export interface TreasuryEntry { id: string; quotaType?: 'regular' | 'extra' | 'unclassified' | 'manual'; quotaConcept?: string; period?: string; memberId?: string; memberName?: string; receiptUrls?: string[]; receiptIds?: string[]; groupId: string; date: string; type: TransactionType; category: 'saco_beneficencia' | 'cuota_regular' | 'cuota_extra' | 'evento' | 'donacion' | 'gasto_operativo' | 'gasto_social' | 'compra_material' | 'otro'; description: string; amount: number; allocations: TreasuryAllocation[]; createdBy: string; createdAt: number; }
 export interface VisitRequest { id: string; fromGroupId: string; fromGroupName: string; toGroupId: string; toGroupName: string; requestedBy: string; requestedByName: string; visitDate: string; numberOfVisitors: number; message: string; status: 'pending' | 'accepted' | 'rejected' | 'completed'; createdAt: number; messages: VisitMessage[]; }
 export interface VisitMessage { id: string; senderId: string; senderName: string; text: string; timestamp: number; }
 export interface BankBalance { id: string; groupId: string; type: 'bank' | 'cash'; name: string; amount: number; lastUpdated: string; comment?: string; updatedBy: string; }
