@@ -177,6 +177,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [matrixFilter, setMatrixFilter] = useState<'regular' | 'extra' | 'all'>('regular');
   const [matrixExtraDesc, setMatrixExtraDesc] = useState<string>('');
   const [showMatrixReceiptsModal, setShowMatrixReceiptsModal] = useState(false);
+  const [matrixReview, setMatrixReview] = useState<{ uid: string; name: string; period: string; paid: number; receipts: number }[] | null>(null);
   const [reconcilingMatrixConcept, setReconcilingMatrixConcept] = useState(false);
   // Cuota extra masiva
   const [showBulkExtraPanel, setShowBulkExtraPanel] = useState(false);
@@ -263,6 +264,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   // Edit payment receipt (pending, rejected, or approved extra-fee correction)
   const [editingReceiptId, setEditingReceiptId] = useState<string | null>(null);
   const [editReceiptPeriods, setEditReceiptPeriods] = useState<string[]>([]);
+  const [editReceiptDate, setEditReceiptDate] = useState('');
   const [editReceiptAmount, setEditReceiptAmount] = useState<string>('');
   const [editReceiptType, setEditReceiptType] = useState<'cuota_mensual' | 'concepto_adicional'>('cuota_mensual');
   const [editReceiptConcept, setEditReceiptConcept] = useState<string>('');
@@ -410,6 +412,7 @@ const Admin: React.FC<Props> = ({ user }) => {
 
   const startEditingReceipt = (receipt: any) => {
     setEditingReceiptId(receipt.id);
+    setEditReceiptDate((receipt.transferDate || "").slice(0, 10));
     setEditReceiptPeriods(receipt.periods || []);
     setEditReceiptAmount(receipt.amount != null ? String(receipt.amount) : '');
     setEditReceiptType(receipt.receiptType || 'cuota_mensual');
@@ -429,6 +432,7 @@ const Admin: React.FC<Props> = ({ user }) => {
     try {
       await dataService.updatePaymentReceipt(receipt.groupId || user.groupId, receipt.id, {
         periods: editReceiptPeriods,
+        transferDate: editReceiptDate,
         amount: editReceiptAmount !== '' ? Number(editReceiptAmount) : undefined,
         receiptType: editReceiptType,
         conceptDescription: editReceiptType === 'concepto_adicional' ? editReceiptConcept : undefined,
@@ -437,7 +441,7 @@ const Admin: React.FC<Props> = ({ user }) => {
       await Promise.all([loadPaymentReceipts(), loadAllLedgers(), loadUsers()]);
       showMessage(
         receipt.status === 'approved'
-          ? '✅ Comprobante aprobado corregido. El monto aplicado y el saldo fueron recalculados.'
+          ? '✅ Comprobante corregido. Los demás abonos se conservaron.'
           : '✅ Comprobante actualizado.',
         'success'
       );
@@ -1131,46 +1135,6 @@ const Admin: React.FC<Props> = ({ user }) => {
           .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
   };
 
-  const getApprovedExtraReceiptTotal = (
-      memberUid: string,
-      period: string,
-      description: string,
-      feeId?: string
-  ): { total: number; count: number } => {
-      const normalizedDescription = normalizeConcept(description);
-      const memberLedger = allUserLedgers[memberUid] || [];
-      const matchingConceptPeriods = memberLedger.filter(payment => {
-          if (!payment.period.startsWith(String(matrixYear))) return false;
-          if (payment.extraFees?.length) {
-              return payment.extraFees.some(fee => normalizeConcept(fee.description) === normalizedDescription);
-          }
-          return Number(payment.extraAmount) > 0 &&
-              normalizeConcept(payment.extraDescription || 'Cuota Extra') === normalizedDescription;
-      });
-
-      const matchingReceipts = (paymentReceipts as PaymentReceipt[]).filter(receipt => {
-          if (receipt.userId !== memberUid || receipt.status !== 'approved') return false;
-          if (receipt.receiptType !== 'concepto_adicional') return false;
-          if (normalizeConcept(receipt.conceptDescription) !== normalizedDescription) return false;
-
-          if (feeId && receipt.extraFeeId) return receipt.extraFeeId === feeId;
-          if (receipt.extraFeePeriod) return receipt.extraFeePeriod === period;
-          if (receipt.periods?.length) return receipt.periods.includes(period);
-
-          // Legacy: without period/fee id, infer only if this concept appears once
-          // for this member in the selected year.
-          return matchingConceptPeriods.length === 1 && matchingConceptPeriods[0].period === period;
-      });
-
-      return {
-          total: matchingReceipts.reduce(
-              (sum, receipt) => sum + (Number(receipt.appliedAmount ?? receipt.amount) || 0),
-              0
-          ),
-          count: matchingReceipts.length
-      };
-  };
-
   const handleDownloadMatrixCSV = () => {
       const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
       const activeUsers = filteredUsers.filter(u => u.active);
@@ -1215,19 +1179,13 @@ const Admin: React.FC<Props> = ({ user }) => {
                       normalizeConcept(payment?.extraDescription || 'Cuota Extra') === normalizeConcept(matrixExtraDesc);
                   if (fee) {
                       billed = Number(fee.amount) || 0;
-                      const receiptEvidence = getApprovedExtraReceiptTotal(member.uid, period, fee.description, fee.id);
-                      paid = receiptEvidence.count > 0
-                          ? Math.min(billed, receiptEvidence.total)
-                          : (Number(fee.paid) || 0);
+                      paid = Number(fee.paid) || 0;
                       pending = fee.forgiven ? 0 : Math.max(0, billed - paid);
                       status = fee.forgiven ? 'Perdonado' : pending <= 0 ? 'Pagado' : paid > 0 ? 'Parcial' : 'Pendiente';
                   } else if (payment && legacyMatch) {
                       billed = Number(payment.extraAmount) || 0;
                       const description = payment.extraDescription || 'Cuota Extra';
-                      const receiptEvidence = getApprovedExtraReceiptTotal(member.uid, period, description);
-                      paid = receiptEvidence.count > 0
-                          ? Math.min(billed, receiptEvidence.total)
-                          : (Number(payment.paidExtra) || 0);
+                      paid = Number(payment.paidExtra) || 0;
                       pending = Math.max(0, billed - paid);
                       status = pending <= 0 ? 'Pagado' : paid > 0 ? 'Parcial' : 'Pendiente';
                   }
@@ -1278,16 +1236,13 @@ const Admin: React.FC<Props> = ({ user }) => {
 
   const handleReconcileMatrixConcept = async () => {
       if (matrixFilter !== 'extra' || !matrixExtraDesc || isReadOnly) return;
-      if (!window.confirm(
-          `¿Recalcular los pagos de "${matrixExtraDesc}" en ${matrixYear} usando la suma de sus comprobantes APROBADOS?\n\n` +
-          'Esto sirve para corregir registros antiguos que fueron marcados como 100% pagados por error.'
-      )) return;
       setReconcilingMatrixConcept(true);
       try {
           const result = await dataService.reconcileExtraFeeFromReceipts(user.groupId, matrixExtraDesc, matrixYear);
+          setMatrixReview(result.details);
           await Promise.all([loadAllLedgers(), loadUsers(), loadPaymentReceipts()]);
           showMessage(
-              `✅ Reconciliación terminada: ${result.updated} registro(s) corregidos` +
+              `Revisión: ${result.discrepancies} registro(s) con diferencia entre el total registrado y sus comprobantes. No se modificaron saldos` +
               (result.skippedAmbiguous ? `; ${result.skippedAmbiguous} omitido(s) por período ambiguo.` : '.'),
               'success'
           );
@@ -1366,10 +1321,17 @@ const Admin: React.FC<Props> = ({ user }) => {
           showMessage("Error eliminando movimiento", 'error');
       }
   };
+  const awaitOpenQuota = (uid: string) => {
+      handleOpenPayments(uid).catch(() => showMessage("No se pudieron cargar los pagos", "error"));
+  };
   const handleEditTransaction = (t: TreasuryEntry, e: React.MouseEvent) => {
       e.stopPropagation();
       e.preventDefault();
       if (isReadOnly) return;
+      if (t.id.startsWith("quota_")) {
+          awaitOpenQuota(t.createdBy);
+          return;
+      }
       setEditingTreasuryId(t.id);
       setNewTransDate(t.date);
       setNewTransType(t.type as 'income' | 'expense');
@@ -1611,7 +1573,8 @@ const Admin: React.FC<Props> = ({ user }) => {
           showMessage("Pago guardado");
           const payments = await dataService.getPayments(editingUserLedger);
           setEditPayments(payments);
-          await loadUsers();
+          await Promise.all([loadUsers(), loadAllLedgers(), loadTreasury(), loadDashboardStats()]);
+          setUserPaymentsCache({});
       } catch (e) {
           console.error(e);
           showMessage("Error guardando pago", 'error');
@@ -3926,6 +3889,13 @@ const Admin: React.FC<Props> = ({ user }) => {
 
         {activeTab === 'treasury' && (
              <div className="space-y-6">
+                <div className="bg-logia-800 border border-logia-700 rounded p-3 text-sm text-gray-300">
+                  <div className="flex flex-wrap gap-3 mb-2">
+                    <button onClick={() => { loadTreasury(); loadDashboardStats(); }} className="text-blue-300">🔄 Actualizar resumen</button>
+                    <button onClick={() => { setReceiptFilter('approved'); setActiveTab('receipts'); loadPaymentReceipts(); }} className="text-yellow-300">🧾 Transferencias aprobadas / corregir fecha</button>
+                  </div>
+                  Los pagos de miembros ya están incluidos en este balance. Registra aquí únicamente otros ingresos y egresos para evitar duplicarlos. Las filas de cuotas son acumulados mensuales; sus fechas no representan cada depósito bancario.
+                </div>
                 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <div className="bg-blue-900/40 p-3 rounded-lg border border-blue-500/30 text-center">
@@ -4111,7 +4081,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                         </button>
                                                     </>
                                                 ) : (
-                                                    <span className="text-[10px] text-gray-600">Automático</span>
+                                                    <button disabled={isReadOnly} onClick={(e) => handleEditTransaction(t, e)} className="text-xs text-yellow-300 disabled:opacity-50">✏️ Corregir pago / fecha</button>
                                                 )}
                                             </td>
                                         </tr>
@@ -4473,10 +4443,10 @@ const Admin: React.FC<Props> = ({ user }) => {
                                     <button
                                         onClick={handleReconcileMatrixConcept}
                                         disabled={reconcilingMatrixConcept || isReadOnly}
-                                        title="Corrige pagos históricos usando los montos reales de comprobantes aprobados"
+                                        title="Compara saldos contra comprobantes sin cambiar pagos manuales"
                                         className="bg-orange-800 hover:bg-orange-700 disabled:opacity-40 text-white px-3 py-1 rounded text-xs border border-orange-700 flex items-center gap-1"
                                     >
-                                        {reconcilingMatrixConcept ? '⏳ Recalculando...' : '♻️ Reconciliar'}
+                                        {reconcilingMatrixConcept ? '⏳ Revisando...' : '🔎 Revisar diferencias'}
                                     </button>
                                 </>
                             )}
@@ -4641,6 +4611,16 @@ const Admin: React.FC<Props> = ({ user }) => {
                             </div>
                         </div>
                     </div>
+
+                    {matrixReview !== null && (
+                      <div className="mb-4 p-3 border border-yellow-700 rounded text-sm text-gray-200 overflow-x-auto">
+                        <div className="flex justify-between"><strong>Revisión de diferencias</strong><button onClick={() => setMatrixReview(null)}>Cerrar</button></div>
+                        <p className="text-xs my-2">El total registrado incluye abonos manuales. Una diferencia puede ser un abono sin comprobante o un error histórico; revísala antes de corregir. Esta revisión no modifica saldos ni concilia con el banco.</p>
+                        <table className="w-full text-left"><thead><tr><th>Miembro / mes</th><th>Registrado</th><th>Comprobantes aplicados</th><th>Diferencia</th><th></th></tr></thead>
+                        <tbody>{matrixReview.map((r, i) => <tr key={`${r.uid}-${r.period}-${i}`}><td>{r.name} / {r.period}</td><td>${r.paid.toFixed(2)}</td><td>${r.receipts.toFixed(2)}</td><td>${(r.paid-r.receipts).toFixed(2)}</td><td><button disabled={isReadOnly} onClick={() => awaitOpenQuota(r.uid)} className="text-yellow-300">Revisar pago</button></td></tr>)}</tbody></table>
+                        {!matrixReview.length && <p>No se encontraron diferencias en los registros no ambiguos.</p>}
+                      </div>
+                    )}
 
                     {/* ── PANEL: Cuota Extra Masiva ── */}
                     <div className="border border-logia-700 rounded-lg overflow-hidden mb-4">
@@ -4930,10 +4910,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                         cellTitle = `Perdonado — no pagó $${ef.amount}${ef.forgivenNote ? ` · ${ef.forgivenNote}` : ''}`;
                                                         cellText = '○';
                                                     } else {
-                                                        const receiptEvidence = getApprovedExtraReceiptTotal(u.uid, period, ef.description, ef.id);
-                                                        const effectivePaid = receiptEvidence.count > 0
-                                                            ? Math.min(Number(ef.amount) || 0, receiptEvidence.total)
-                                                            : (Number(ef.paid) || 0);
+                                                        const effectivePaid = Number(ef.paid) || 0;
                                                         const covered = effectivePaid >= ef.amount;
                                                         const partial = !covered && effectivePaid > 0;
                                                         if (covered) { cellClass = 'bg-purple-600 text-white cursor-pointer hover:brightness-110'; cellTitle = `Pagado $${effectivePaid.toFixed(0)} / $${ef.amount}`; cellText = '✓'; }
@@ -4943,10 +4920,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                 } else if (legacyMatch) {
                                                     const extraAmount = Number(paymentData.extraAmount) || 0;
                                                     const description = paymentData.extraDescription || 'Cuota Extra';
-                                                    const receiptEvidence = getApprovedExtraReceiptTotal(u.uid, period, description);
-                                                    const paidExtra = receiptEvidence.count > 0
-                                                        ? Math.min(extraAmount, receiptEvidence.total)
-                                                        : (Number(paymentData.paidExtra) || 0);
+                                                    const paidExtra = Number(paymentData.paidExtra) || 0;
                                                     const covered = paidExtra >= extraAmount;
                                                     const partial = !covered && paidExtra > 0;
                                                     if (covered) { cellClass = 'bg-purple-600 text-white cursor-pointer hover:brightness-110'; cellTitle = `Pagado $${paidExtra.toFixed(0)} / $${extraAmount}`; cellText = '✓'; }
@@ -5345,7 +5319,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                               <p className="text-yellow-300 font-bold text-sm">✏️ Editando comprobante</p>
                               {receipt.status === 'approved' && (
                                 <div className="bg-blue-900/30 border border-blue-700/50 rounded p-2 text-xs text-blue-200">
-                                  🔒 Ya está aprobado. El destino contable (tipo, concepto y período) queda bloqueado. Si corriges el monto de una cuota extra, se recalculará automáticamente el saldo y todos los montos aplicados de esa cuota.
+                                  🔒 Ya está aprobado. El destino contable (tipo, concepto y período) queda bloqueado. Si corriges el monto aplicado de una cuota extra, solo se ajustará la diferencia de ese comprobante. Los otros abonos se conservan.
                                 </div>
                               )}
                               <div>
@@ -5388,6 +5362,10 @@ const Admin: React.FC<Props> = ({ user }) => {
                                 {receipt.status === 'approved' && receipt.receiptType === 'cuota_mensual' && (
                                   <p className="text-[11px] text-gray-500 mt-1">Para corregir un monto mensual ya aprobado usa Gestión de Pagos; aquí se evita redistribuir meses históricos accidentalmente.</p>
                                 )}
+                              </div>
+                              <div>
+                                <label className="text-xs text-gray-400 block mb-1">Fecha de transferencia</label>
+                                <input type="date" value={editReceiptDate} onChange={e => setEditReceiptDate(e.target.value)} className="bg-logia-800 text-white px-3 py-1 rounded" />
                               </div>
                               <div className="flex gap-2">
                                 <button onClick={() => saveReceiptEdit(receipt)} disabled={savingReceiptEdit}
@@ -6011,11 +5989,12 @@ const Admin: React.FC<Props> = ({ user }) => {
                      <button onClick={() => setEditingUserLedger(null)} className="text-gray-400 hover:text-white text-xl">×</button>
                  </div>
                  <div className="overflow-y-auto p-4 space-y-2 flex-1">
-                     <p className="text-xs text-gray-500 mb-2">Registra monto recibido y fecha exacta de pago.</p>
+                     <p className="text-xs text-gray-500 mb-2">Registra el TOTAL acumulado recibido, incluyendo abonos manuales. No vuelvas a sumar los comprobantes aprobados. La fecha corresponde al registro mensual agregado; consulta los comprobantes para cada transferencia.</p>
                      {editPayments.map(p => {
                          const total = p.amount + (p.extraAmount || 0);
                          return (
                              <div key={p.period} className="bg-logia-900 p-3 rounded border border-logia-700 flex flex-col gap-2">
+                                 {!!p.correctionHistory?.length && <details className="text-xs text-gray-400"><summary>Historial de correcciones ({p.correctionHistory.length})</summary>{p.correctionHistory.map((h, i) => <p key={i}>{h.at} · {h.reason} · ${h.before.toFixed(2)} → ${h.after.toFixed(2)}{h.beforeDate !== h.afterDate ? ` · Fecha: ${h.beforeDate || 'sin fecha'} → ${h.afterDate || 'sin fecha'}` : ''}</p>)}</details>}
                                  <div className="flex justify-between items-center">
                                      <div className="font-bold text-indigo-300">{p.period}</div>
                                      <div className="text-xs text-gray-400">
@@ -6051,7 +6030,9 @@ const Admin: React.FC<Props> = ({ user }) => {
                                          <input 
                                             type="number" 
                                             placeholder="$0" 
-                                            value={p.paidExtra ?? 0} 
+                                            value={p.paidExtra ?? 0}
+                                            readOnly={!!p.extraFees?.length}
+                                            title={p.extraFees?.length ? "Edita cada cuota extra en su detalle para mantener los totales consistentes" : "Total acumulado extra"}
                                             onChange={(e) => {
                                                 const valStr = e.target.value;
                                                 const val = valStr === '' ? 0 : parseFloat(valStr);
@@ -6112,7 +6093,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                className="text-[10px] text-gray-300" />
                                              <div className="flex gap-1">
                                                <button onClick={() => {
-                                                 if (adminPhotoFile && selectedMember) handleAdminPhotoUpload(selectedMember.uid, p.period);
+                                                 if (adminPhotoFile && editingUserLedger) handleAdminPhotoUpload(editingUserLedger, p.period);
                                                }} disabled={!adminPhotoFile || uploadingAdminPhoto}
                                                  className="text-[10px] bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white px-2 py-1 rounded">
                                                  {uploadingAdminPhoto ? '...' : '⬆️ Subir'}

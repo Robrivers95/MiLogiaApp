@@ -6,7 +6,8 @@
     "dev": "vite",
     "prebuild": "node scripts/download-icons.js",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:accounting": "node tests/run-accounting.mjs"
   },
   "dependencies": {
     "react": "^18.2.0",

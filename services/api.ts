@@ -2,6 +2,7 @@
 import { User, Payment, IndividualExtraFee, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee, AppNotification, NotificationType, PaymentReceipt } from '../types';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { auth, db, storage } from './firebase';
+import { normalizePayment, correctAppliedPayment } from './paymentAccounting';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { 
   signInWithEmailAndPassword, 
@@ -23,7 +24,8 @@ import {
   limit,
   increment,
   writeBatch,
-  addDoc
+  addDoc,
+  runTransaction
 } from "firebase/firestore";
 
 const INITIAL_RPG: RpgCharacter = {
@@ -659,7 +661,7 @@ export const dataService = {
                           date: p.paymentDate ? p.paymentDate.slice(0, 10) : 'Sin Fecha',
                           type: 'income',
                           category: 'cuota_extra', // Reuse category or map to specific label in UI
-                          description: `Pago Cuota ${p.period} - ${u.name}`,
+                          description: `Acumulado ${p.period} - ${u.name} (incluye abonos manuales; no es un depósito individual)`,
                           amount: Number(p.paid),
                           allocations: [{ source: 'cuotas', amount: Number(p.paid) }],
                           createdBy: u.uid,
@@ -875,7 +877,16 @@ export const dataService = {
 
   updatePayment: async (uid: string, payment: Payment) => {
     const ref = doc(db, "users", uid, "ledger", payment.period);
-    await setDoc(ref, payment, { merge: true });
+    const normalized = normalizePayment(payment);
+    await runTransaction(db, async transaction => {
+      const snapshot = await transaction.get(ref);
+      const before = snapshot.exists() ? snapshot.data() as Payment : undefined;
+      transaction.set(ref, { ...normalized, correctionHistory: [...(before?.correctionHistory || []), {
+        at: new Date().toISOString(), by: auth.currentUser?.uid || '', reason: payment.comments || 'Edición administrativa',
+        before: Number(before?.paid) || 0, after: normalized.paid,
+        beforeDate: before?.paymentDate || null, afterDate: payment.paymentDate || null
+      }] }, { merge: true });
+    });
   },
 
   deletePayment: async (uid: string, period: string) => {
@@ -1619,8 +1630,7 @@ export const dataService = {
   /**
    * Admin edita un comprobante.
    * - Pendiente/rechazado: puede corregir los campos normales.
-   * - Aprobado de cuota extra: permite corregir el monto y recalcula automáticamente
-   *   appliedAmount + ledger usando TODOS los comprobantes aprobados de esa cuota.
+   * - Aprobado extra: ajusta solo la contribución del comprobante en una transacción.
    * - Aprobado mensual: permite corregir metadatos, pero no el monto porque no se guarda
    *   el desglose exacto por período de aprobaciones históricas.
    */
@@ -1639,147 +1649,45 @@ export const dataService = {
       Object.entries(updates).filter(([k]) => allowed.includes(k as keyof PaymentReceipt) && updates[k as keyof PaymentReceipt] !== undefined)
     ) as Partial<PaymentReceipt>;
 
-    // Pending/rejected records have not credited the ledger, so a normal edit is safe.
-    if (current.status !== 'approved') {
-      await updateDoc(ref, clean);
-      return;
-    }
-
-    const normalize = (value?: string) => (value || '').trim().toLocaleLowerCase('es-MX');
-
-    // An approved monthly receipt cannot safely have its amount redistributed without
-    // a historical per-period allocation. Metadata edits are still allowed.
-    if (current.receiptType !== 'concepto_adicional') {
-      if (clean.amount !== undefined && Number(clean.amount) !== Number(current.amount || 0)) {
-        throw new Error('Para un comprobante mensual ya aprobado, corrige el pago desde Gestión de Pagos. El histórico no puede redistribuir ese monto con seguridad.');
+    // Commit the receipt and its ledger delta atomically; never rebuild from evidence.
+    await runTransaction(db, async transaction => {
+      const liveSnap = await transaction.get(ref);
+      if (!liveSnap.exists()) throw new Error('El comprobante ya no existe.');
+      const live = liveSnap.data() as PaymentReceipt;
+      if (live.status !== current.status) throw new Error('El estado cambió. Actualiza y vuelve a intentar.');
+      if (live.status !== 'approved') { transaction.update(ref, clean); return; }
+      if (clean.receiptType && clean.receiptType !== live.receiptType) throw new Error('No puedes cambiar el tipo de un pago aprobado.');
+      if (clean.periods && JSON.stringify(clean.periods) !== JSON.stringify(live.periods || [])) throw new Error('No puedes redistribuir un pago histórico entre meses sin su desglose.');
+      if (clean.conceptDescription !== undefined && clean.conceptDescription !== live.conceptDescription) throw new Error('No puedes cambiar el destino de un pago aprobado.');
+      if (clean.transferDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(clean.transferDate)) throw new Error('Indica una fecha válida.');
+      const changedAmount = clean.amount !== undefined && Number(clean.amount) !== Number(live.amount || 0);
+      const changes: Record<string, unknown> = {};
+      if (clean.transferDate !== undefined) changes.transferDate = clean.transferDate;
+      if (changedAmount) {
+        if (live.receiptType !== 'concepto_adicional') throw new Error('Corrige el total mensual desde Gestión de Pagos; este comprobante histórico no tiene desglose por mes.');
+        const targetPeriod = live.extraFeePeriod || live.periods?.[0];
+        if (!targetPeriod || live.appliedAmount === undefined) throw new Error('Falta el monto aplicado histórico. Revisa el pago manualmente antes de corregir el comprobante.');
+        const ledgerRef = doc(db, 'users', live.userId, 'ledger', targetPeriod);
+        const ledgerSnap = await transaction.get(ledgerRef);
+        if (!ledgerSnap.exists()) throw new Error('No existe el registro del miembro.');
+        const payment = ledgerSnap.data() as Payment;
+        const fees = (payment.extraFees || []).map(fee => ({ ...fee }));
+        const matches = fees.map((fee, index) => ({ fee, index })).filter(({ fee }) => live.extraFeeId && live.extraFeeId !== 'legacy' ? fee.id === live.extraFeeId : fee.description === live.conceptDescription);
+        if (fees.length && matches.length !== 1) throw new Error('El concepto es ambiguo; revisa el pago del miembro.');
+        if (!fees.length && (payment.extraDescription || '') !== (live.conceptDescription || '')) throw new Error('El concepto histórico no coincide.');
+        const target = matches[0]?.fee;
+        const paid = Number(target ? target.paid : payment.paidExtra) || 0;
+        const cap = Number(target ? target.amount : payment.extraAmount) || 0;
+        const amount = Number(clean.amount);
+        const corrected = correctAppliedPayment(paid, cap, Number(live.appliedAmount), amount);
+        if (target) fees[matches[0].index].paid = corrected;
+        const updated = normalizePayment({ ...payment, ...(fees.length ? { extraFees: fees } : { paidExtra: corrected }) });
+        transaction.update(ledgerRef, { ...updated, correctionHistory: [...(payment.correctionHistory || []), { at: new Date().toISOString(), by: auth.currentUser?.uid || '', reason: `Corrección comprobante ${receiptId}`, before: Number(payment.paid) || 0, after: updated.paid }] });
+        changes.amount = amount;
+        changes.appliedAmount = amount;
       }
-      const metadataOnly: Partial<PaymentReceipt> = {};
-      if (clean.transferDate !== undefined) metadataOnly.transferDate = clean.transferDate;
-      if (Object.keys(metadataOnly).length > 0) await updateDoc(ref, metadataOnly);
-      return;
-    }
-
-    // Once an extra-fee receipt is approved, keep its accounting target fixed.
-    if (clean.receiptType && clean.receiptType !== current.receiptType) {
-      throw new Error('No puedes cambiar el tipo de un comprobante ya aprobado.');
-    }
-    if (clean.conceptDescription !== undefined && normalize(clean.conceptDescription) !== normalize(current.conceptDescription)) {
-      throw new Error('No puedes cambiar el concepto de un comprobante ya aprobado. Corrige solo el monto.');
-    }
-
-    const targetPeriod = current.extraFeePeriod || current.periods?.[0];
-    if (!targetPeriod) throw new Error('El comprobante aprobado no tiene período de cuota extra asociado.');
-    if (clean.periods?.length && !clean.periods.includes(targetPeriod)) {
-      throw new Error('No puedes mover a otro período un comprobante ya aprobado.');
-    }
-
-    const correctedAmount = clean.amount !== undefined ? Number(clean.amount) : Number(current.amount || 0);
-    if (!Number.isFinite(correctedAmount) || correctedAmount <= 0) {
-      throw new Error('El monto corregido debe ser mayor a cero.');
-    }
-
-    // Save the corrected receipt value first so the recalculation reads the new truth.
-    await updateDoc(ref, {
-      amount: correctedAmount,
-      ...(clean.transferDate !== undefined ? { transferDate: clean.transferDate } : {})
+      if (Object.keys(changes).length) transaction.update(ref, { ...changes, correctionHistory: [...((live as any).correctionHistory || []), { at: new Date().toISOString(), by: auth.currentUser?.uid || '', before: { amount: live.amount ?? null, transferDate: live.transferDate }, after: changes }] });
     });
-
-    const ledgerRef = doc(db, 'users', current.userId, 'ledger', targetPeriod);
-    const ledgerSnap = await getDoc(ledgerRef);
-    if (!ledgerSnap.exists()) throw new Error(`No existe el ledger ${targetPeriod} del miembro.`);
-    const payment = ledgerSnap.data() as Payment;
-    const fees: IndividualExtraFee[] = Array.isArray(payment.extraFees)
-      ? payment.extraFees.map(f => ({ ...f, amount: Number(f.amount) || 0, paid: Number(f.paid) || 0 }))
-      : [];
-
-    let feeIndex = current.extraFeeId && current.extraFeeId !== 'legacy'
-      ? fees.findIndex(f => f.id === current.extraFeeId)
-      : -1;
-    if (feeIndex < 0 && current.conceptDescription) {
-      feeIndex = fees.findIndex(f => normalize(f.description) === normalize(current.conceptDescription));
-    }
-
-    const allReceipts = await dataService.getPaymentReceipts(groupId);
-    const correctedReceipts = allReceipts
-      .map(r => r.id === receiptId ? { ...r, amount: correctedAmount } : r)
-      .filter(r => {
-        if (r.status !== 'approved' || r.userId !== current.userId || r.receiptType !== 'concepto_adicional') return false;
-        const samePeriod = (r.extraFeePeriod || r.periods?.[0]) === targetPeriod;
-        if (!samePeriod) return false;
-        if (feeIndex >= 0 && r.extraFeeId && r.extraFeeId !== 'legacy') return r.extraFeeId === fees[feeIndex].id;
-        return normalize(r.conceptDescription) === normalize(current.conceptDescription);
-      })
-      .sort((a, b) => (a.reviewedAt || a.submittedAt).localeCompare(b.reviewedAt || b.submittedAt));
-
-    const regularAmount = Number(payment.amount) || 0;
-    const paidRegular = payment.paidRegular !== undefined
-      ? Number(payment.paidRegular) || 0
-      : Math.min(Number(payment.paid) || 0, regularAmount);
-    const regularCovered = !!payment.regularCovered || paidRegular >= regularAmount;
-    const correctionDate = new Date().toISOString().split('T')[0];
-
-    const applyReceiptsAgainstCap = async (cap: number): Promise<number> => {
-      let remaining = Math.max(0, cap);
-      let totalApplied = 0;
-      for (const r of correctedReceipts) {
-        const declared = Math.max(0, Number(r.amount) || 0);
-        const applied = Math.min(declared, remaining);
-        remaining -= applied;
-        totalApplied += applied;
-        if (Number(r.appliedAmount ?? -1) !== applied) {
-          await updateDoc(doc(db, 'groups', groupId, 'paymentReceipts', r.id), { appliedAmount: applied });
-        }
-      }
-      return totalApplied;
-    };
-
-    if (feeIndex >= 0) {
-      const targetFee = fees[feeIndex];
-      const totalApplied = await applyReceiptsAgainstCap(targetFee.amount);
-      fees[feeIndex] = { ...targetFee, paid: totalApplied };
-
-      const totalExtraAmount = fees.reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0);
-      const totalExtraPaid = fees.reduce((sum, fee) => sum + (Number(fee.paid) || 0), 0);
-      const extraCovered = fees.every(fee => !!fee.forgiven || (Number(fee.paid) || 0) >= (Number(fee.amount) || 0));
-      const status: Payment['status'] = regularCovered && extraCovered
-        ? 'Pagado'
-        : (paidRegular > 0 || totalExtraPaid > 0) ? 'Parcial' : 'Pendiente';
-
-      await updateDoc(ledgerRef, {
-        extraFees: fees,
-        extraAmount: totalExtraAmount,
-        paidExtra: totalExtraPaid,
-        paidRegular,
-        paid: paidRegular + totalExtraPaid,
-        regularCovered,
-        extraCovered,
-        status,
-        comments: payment.comments
-          ? `${payment.comments} | Corrección comprobante ${receiptId}: $${correctedAmount.toFixed(2)} (${correctionDate})`
-          : `Corrección comprobante ${receiptId}: $${correctedAmount.toFixed(2)} (${correctionDate})`
-      });
-    } else {
-      // Legacy extraAmount/extraDescription.
-      const legacyCap = Number(payment.extraAmount) || 0;
-      if (legacyCap <= 0) throw new Error('No se encontró la cuota extra asociada al comprobante aprobado.');
-      const totalApplied = await applyReceiptsAgainstCap(legacyCap);
-      const extraCovered = totalApplied >= legacyCap;
-      const status: Payment['status'] = regularCovered && extraCovered
-        ? 'Pagado'
-        : (paidRegular > 0 || totalApplied > 0) ? 'Parcial' : 'Pendiente';
-
-      await updateDoc(ledgerRef, {
-        paidExtra: totalApplied,
-        paidRegular,
-        paid: paidRegular + totalApplied,
-        regularCovered,
-        extraCovered,
-        status,
-        comments: payment.comments
-          ? `${payment.comments} | Corrección comprobante ${receiptId}: $${correctedAmount.toFixed(2)} (${correctionDate})`
-          : `Corrección comprobante ${receiptId}: $${correctedAmount.toFixed(2)} (${correctionDate})`
-      });
-    }
   },
 
   /** Admin sube un comprobante para un pago ya registrado */
@@ -1910,91 +1818,38 @@ export const dataService = {
     return count;
   },
 
-  /**
-   * Recalcula una cuota extra seleccionada usando únicamente comprobantes aprobados.
-   * Sirve para corregir datos históricos creados por la lógica anterior que marcaba
-   * una cuota completa aunque el comprobante fuera parcial.
-   */
-  reconcileExtraFeeFromReceipts: async (
-    groupId: string,
-    description: string,
-    year: number
-  ): Promise<{ updated: number; skippedAmbiguous: number }> => {
+  /** Evidence review only. Differences are not assumed to be errors or manual cash. */
+  reconcileExtraFeeFromReceipts: async (groupId: string, description: string, year: number) => {
     const normalize = (value?: string) => (value || '').trim().toLocaleLowerCase('es-MX');
     const receipts = (await dataService.getPaymentReceipts(groupId)).filter(r =>
-      r.status === 'approved' &&
-      r.receiptType === 'concepto_adicional' &&
-      normalize(r.conceptDescription) === normalize(description) &&
-      (Number(r.appliedAmount ?? r.amount) || 0) > 0
-    );
-    const groupUsers = await dataService.getUsers(groupId);
-    let updated = 0;
+      r.status === 'approved' && r.receiptType === 'concepto_adicional');
+    const members = await dataService.getUsers(groupId);
+    const details: { uid: string; name: string; period: string; paid: number; receipts: number }[] = [];
     let skippedAmbiguous = 0;
-
-    for (const member of groupUsers) {
-      const memberReceipts = receipts.filter(r => r.userId === member.uid);
-      if (memberReceipts.length === 0) continue;
-      const payments = await dataService.getPayments(member.uid);
-      const matchingPayments = payments.filter(p =>
-        p.period.startsWith(String(year)) &&
-        p.extraFees?.some(fee => normalize(fee.description) === normalize(description))
-      );
-
-      for (const payment of matchingPayments) {
-        const fees = (payment.extraFees || []).map(fee => ({ ...fee }));
-        const index = fees.findIndex(fee => normalize(fee.description) === normalize(description));
-        if (index < 0) continue;
-        const targetFee = fees[index];
-
-        const matchingReceipts = memberReceipts.filter(r => {
-          if (r.extraFeeId && r.extraFeeId === targetFee.id) return true;
-          if (r.extraFeePeriod && r.extraFeePeriod === payment.period) return true;
-          if (r.periods?.includes(payment.period)) return true;
-          // Legacy receipts sometimes omitted the period. Infer only if unambiguous.
-          if ((!r.periods || r.periods.length === 0) && !r.extraFeePeriod && matchingPayments.length === 1) return true;
-          return false;
+    for (const member of members) {
+      const payments = (await dataService.getPayments(member.uid)).filter(p => p.period.startsWith(String(year)) && (!p.groupId || p.groupId === groupId));
+      const targets = payments.flatMap(p => p.extraFees?.length
+        ? p.extraFees.filter(f => normalize(f.description) === normalize(description)).map(f => ({ period: p.period, id: f.id, paid: Number(f.paid) || 0 }))
+        : normalize(p.extraDescription) === normalize(description) && Number(p.extraAmount) > 0
+          ? [{ period: p.period, id: 'legacy', paid: Number(p.paidExtra) || 0 }] : []);
+      for (const target of targets) {
+        let ambiguous = false;
+        const evidence = receipts.filter(r => {
+          if (r.userId !== member.uid) return false;
+          if (r.extraFeeId && r.extraFeeId !== target.id) return false;
+          if (!r.extraFeeId && normalize(r.conceptDescription) !== normalize(description)) return false;
+          const periods = r.extraFeePeriod ? [r.extraFeePeriod] : r.periods || [];
+          if (periods.length) return periods.includes(target.period);
+          const candidates = targets.filter(t => !r.extraFeeId || t.id === r.extraFeeId);
+          if (candidates.length !== 1) { ambiguous = true; return false; }
+          return candidates[0] === target;
         });
-
-        if (matchingReceipts.length === 0) {
-          const hasAmbiguous = memberReceipts.some(r => (!r.periods || r.periods.length === 0) && !r.extraFeePeriod) && matchingPayments.length > 1;
-          if (hasAmbiguous) skippedAmbiguous++;
-          continue;
-        }
-
-        const receiptTotal = matchingReceipts.reduce(
-          (sum, r) => sum + (Number(r.appliedAmount ?? r.amount) || 0),
-          0
-        );
-        const correctedPaid = Math.min(Number(targetFee.amount) || 0, receiptTotal);
-        if (Math.abs((Number(targetFee.paid) || 0) - correctedPaid) < 0.005) continue;
-
-        fees[index] = { ...targetFee, paid: correctedPaid };
-        const totalExtraAmount = fees.reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0);
-        const totalExtraPaid = fees.reduce((sum, fee) => sum + (Number(fee.paid) || 0), 0);
-        const paidRegular = payment.paidRegular !== undefined
-          ? (Number(payment.paidRegular) || 0)
-          : Math.min(Number(payment.paid) || 0, Number(payment.amount) || 0);
-        const regularCovered = !!payment.regularCovered || paidRegular >= (Number(payment.amount) || 0);
-        const extraCovered = fees.every(fee => !!fee.forgiven || (Number(fee.paid) || 0) >= (Number(fee.amount) || 0));
-        const status: Payment['status'] = regularCovered && extraCovered
-          ? 'Pagado'
-          : (paidRegular > 0 || totalExtraPaid > 0) ? 'Parcial' : 'Pendiente';
-
-        await updateDoc(doc(db, 'users', member.uid, 'ledger', payment.period), {
-          extraFees: fees,
-          extraAmount: totalExtraAmount,
-          paidExtra: totalExtraPaid,
-          paidRegular,
-          paid: paidRegular + totalExtraPaid,
-          regularCovered,
-          extraCovered,
-          status,
-        });
-        updated++;
+        if (ambiguous) { skippedAmbiguous++; continue; }
+        const receiptTotal = evidence.reduce((sum, r) => sum + (Number(r.appliedAmount ?? r.amount) || 0), 0);
+        if (Math.abs(target.paid - receiptTotal) >= 0.005) details.push({ uid: member.uid, name: member.name, period: target.period, paid: target.paid, receipts: receiptTotal });
       }
     }
-
-    return { updated, skippedAmbiguous };
+    return { updated: 0, skippedAmbiguous, discrepancies: details.length, details };
   },
 
   // --- DEBT NOTIFICATIONS ---
