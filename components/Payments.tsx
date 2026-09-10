@@ -51,6 +51,7 @@ const Payments: React.FC<Props> = ({ user }) => {
   const [receiptFiles, setReceiptFiles] = useState<File[]>([]);         // múltiples archivos
   const [receiptPreviews, setReceiptPreviews] = useState<string[]>([]);  // previews
   const [receiptAmount, setReceiptAmount] = useState('');
+  const [receiptComments, setReceiptComments] = useState('');
   const [submittingReceipt, setSubmittingReceipt] = useState(false);
   const [receiptMsg, setReceiptMsg] = useState<{text: string; type: 'success'|'error'} | null>(null);
 
@@ -176,7 +177,7 @@ const Payments: React.FC<Props> = ({ user }) => {
   }> = payments.flatMap(payment => {
     if (payment.extraFees && payment.extraFees.length > 0) {
       return payment.extraFees
-        .filter(fee => !fee.forgiven && Number(fee.paid || 0) < Number(fee.amount || 0))
+        .filter(fee => !fee.forgiven)
         .map(fee => ({
           period: payment.period,
           feeId: fee.id,
@@ -190,8 +191,7 @@ const Payments: React.FC<Props> = ({ user }) => {
     if (Number(payment.extraAmount) > 0) {
       const paid = Number(payment.paidExtra) || 0;
       const amount = Number(payment.extraAmount) || 0;
-      if (paid < amount) {
-        return [{
+      return [{
           period: payment.period,
           feeId: 'legacy',
           description: payment.extraDescription || 'Cuota Extra',
@@ -199,8 +199,7 @@ const Payments: React.FC<Props> = ({ user }) => {
           paid,
           balance: Math.max(0, amount - paid),
           legacy: true,
-        }];
-      }
+      }];
     }
     return [];
   }).sort((a, b) => b.period.localeCompare(a.period) || a.description.localeCompare(b.description));
@@ -286,14 +285,6 @@ const Payments: React.FC<Props> = ({ user }) => {
         setReceiptMsg({ text: 'Indica el monto exacto transferido para esta cuota extra.', type: 'error' });
         return;
       }
-      if (selectedExtraAvailableBalance <= 0) {
-        setReceiptMsg({ text: 'El saldo disponible ya está cubierto por pagos o comprobantes en revisión.', type: 'error' });
-        return;
-      }
-      if (declaredAmount > selectedExtraAvailableBalance + 0.009) {
-        setReceiptMsg({ text: `El monto excede el saldo disponible de $${selectedExtraAvailableBalance.toFixed(2)}.`, type: 'error' });
-        return;
-      }
     }
     if (!user.groupId) {
       setReceiptMsg({ text: 'Error: tu cuenta no está asociada a un grupo. Contacta al administrador.', type: 'error' });
@@ -311,6 +302,7 @@ const Payments: React.FC<Props> = ({ user }) => {
         amount: receiptAmount ? Number(receiptAmount) : undefined,
         receiptType,
         conceptDescription: receiptType === 'concepto_adicional' ? conceptDescription.trim() : undefined,
+        memberComments: receiptComments.trim() || undefined,
         extraFeeId: receiptType === 'concepto_adicional' ? selectedExtraFeeId : undefined,
         extraFeePeriod: receiptType === 'concepto_adicional' ? selectedExtraFeePeriod : undefined,
         status: 'pending',
@@ -322,6 +314,7 @@ const Payments: React.FC<Props> = ({ user }) => {
       setReceiptFiles([]);
       setReceiptPreviews([]);
       setReceiptAmount('');
+      setReceiptComments('');
       setReceiptType('cuota_mensual');
       setConceptDescription('');
       setSelectedExtraFeeId('');
@@ -741,7 +734,7 @@ const Payments: React.FC<Props> = ({ user }) => {
                       </div>
                       {pendingReportedForSelectedExtra > 0 && (
                         <p className="text-yellow-300 pt-1">
-                          ⏳ Hay ${pendingReportedForSelectedExtra.toFixed(2)} en comprobantes pendientes de revisión. Disponible para reportar ahora: ${selectedExtraAvailableBalance.toFixed(2)}.
+                          ⏳ Hay ${pendingReportedForSelectedExtra.toFixed(2)} en comprobantes pendientes. Puedes reportar el monto real transferido aunque supere el saldo; el excedente quedará como aportación adicional al mismo concepto.
                         </p>
                       )}
                     </div>
@@ -799,7 +792,6 @@ const Payments: React.FC<Props> = ({ user }) => {
                 </label>
                 <input
                   type="number" min="0" step="0.01"
-                  max={receiptType === 'concepto_adicional' && selectedExtraFeeOption ? selectedExtraAvailableBalance : undefined}
                   required={receiptType === 'concepto_adicional'}
                   value={receiptAmount}
                   onChange={e => setReceiptAmount(e.target.value)}
@@ -809,6 +801,17 @@ const Payments: React.FC<Props> = ({ user }) => {
                 {receiptType === 'cuota_mensual' && receiptPeriods.length > 1 && receiptAmount && (
                   <p className="text-xs text-gray-500 mt-1">💡 El monto se distribuirá cronológicamente: primero los meses más antiguos.</p>
                 )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Comentario / referencia para Tesorería</label>
+                <textarea
+                  value={receiptComments}
+                  onChange={e => setReceiptComments(e.target.value)}
+                  rows={2}
+                  placeholder="Ej. referencia SPEI, Mercado Pago, nota del abono..."
+                  className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white text-sm"
+                />
               </div>
 
               <div>
@@ -860,7 +863,7 @@ const Payments: React.FC<Props> = ({ user }) => {
                 ⚠️ El administrador revisará y aprobará el comprobante. Recibirás una notificación.
                 {receiptType === 'cuota_mensual'
                   ? ' Al ser aprobado, tu saldo mensual se actualizará automáticamente.'
-                  : ' Al ser aprobado, el monto se sumará únicamente a la cuota extra seleccionada; podrás subir otro comprobante por el saldo restante.'}
+                  : ' Al aprobarse se registrará el monto REAL recibido. Solo la parte pendiente se aplicará a la deuda; cualquier excedente permanecerá ligado a este mismo concepto como aportación adicional.'}
               </div>
 
               <div className="flex gap-3 pt-2">

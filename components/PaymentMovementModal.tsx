@@ -124,7 +124,7 @@ const PaymentMovementModal: React.FC<Props> = ({
   const editMetadata = async (movement: PaymentMovement) => {
     if (readOnly) return;
     const nextDate = window.prompt('Fecha del movimiento (YYYY-MM-DD):', movement.date) ?? movement.date;
-    const nextComments = window.prompt('Comentario:', movement.comments || '') ?? movement.comments || '';
+    const nextComments = window.prompt('Comentario:', movement.comments || '') ?? (movement.comments || '');
     try {
       await paymentMovementService.updateMovementMetadata(groupId, movement.id, {
         date: nextDate,
