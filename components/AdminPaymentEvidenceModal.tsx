@@ -70,9 +70,12 @@ const AdminPaymentEvidenceModal: React.FC<Props> = ({
     .filter(receipt => receipt.status === 'approved' && !receipt.ledgerIncluded && receipt.appliedAmount !== undefined)
     .reduce((sum, receipt) => sum + Math.max(0, Number(receipt.amount || 0) - Number(receipt.appliedAmount || 0)), 0);
 
-  const received = Math.max(0, Number(context.ledgerPaid || 0)) + approvedExcess;
   const target = Math.max(0, Number(context.targetAmount || 0));
-  const pending = Math.max(0, target - Math.max(0, Number(context.ledgerPaid || 0)));
+  const ledgerPaid = Math.max(0, Number(context.ledgerPaid || 0));
+  // Legacy/manual ledgers may already store the full overpayment. In that case
+  // the receipt excess is evidence of the same money and must not be added twice.
+  const received = ledgerPaid > target ? ledgerPaid : ledgerPaid + approvedExcess;
+  const pending = Math.max(0, target - ledgerPaid);
   const excess = Math.max(0, received - target);
 
   const handleFiles = (event: React.ChangeEvent<HTMLInputElement>) => {

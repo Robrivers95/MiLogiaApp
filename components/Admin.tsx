@@ -1152,7 +1152,7 @@ const Admin: React.FC<Props> = ({ user }) => {
       if (matrixFilter === 'regular') {
           const billed = Math.max(0, Number(payment.amount) || 0);
           const appliedPaid = Math.max(0, Number(payment.paidRegular ?? payment.paid ?? 0));
-          const actualPaid = appliedPaid + receiptExcess;
+          const actualPaid = appliedPaid > billed ? appliedPaid : appliedPaid + receiptExcess;
           const pending = Math.max(0, billed - appliedPaid);
           return { billed, appliedPaid, actualPaid, pending, excess: Math.max(0, actualPaid - billed), status: pending <= 0 ? 'Pagado' : appliedPaid > 0 ? 'Parcial' : 'Pendiente', receipts };
       }
@@ -1162,7 +1162,7 @@ const Admin: React.FC<Props> = ({ user }) => {
           if (fee) {
               const billed = Math.max(0, Number(fee.amount) || 0);
               const appliedPaid = Math.max(0, Number(fee.paid) || 0);
-              const actualPaid = appliedPaid + receiptExcess;
+              const actualPaid = appliedPaid > billed ? appliedPaid : appliedPaid + receiptExcess;
               const pending = fee.forgiven ? 0 : Math.max(0, billed - appliedPaid);
               return { billed, appliedPaid, actualPaid, pending, excess: Math.max(0, actualPaid - billed), status: fee.forgiven ? 'Perdonado' : pending <= 0 ? 'Pagado' : appliedPaid > 0 ? 'Parcial' : 'Pendiente', receipts };
           }
@@ -1170,7 +1170,7 @@ const Admin: React.FC<Props> = ({ user }) => {
           if (!legacyMatch) return { billed: 0, appliedPaid: 0, actualPaid: receiptExcess, pending: 0, excess: receiptExcess, status: 'Sin cuota', receipts };
           const billed = Math.max(0, Number(payment.extraAmount) || 0);
           const appliedPaid = Math.max(0, Number(payment.paidExtra) || 0);
-          const actualPaid = appliedPaid + receiptExcess;
+          const actualPaid = appliedPaid > billed ? appliedPaid : appliedPaid + receiptExcess;
           const pending = Math.max(0, billed - appliedPaid);
           return { billed, appliedPaid, actualPaid, pending, excess: Math.max(0, actualPaid - billed), status: pending <= 0 ? 'Pagado' : appliedPaid > 0 ? 'Parcial' : 'Pendiente', receipts };
       }
@@ -1185,7 +1185,7 @@ const Admin: React.FC<Props> = ({ user }) => {
           : Math.max(0, extraBilled - extraPaid));
       const billed = regularBilled + extraBilled;
       const appliedPaid = regularPaid + extraPaid;
-      const actualPaid = appliedPaid + receiptExcess;
+      const actualPaid = appliedPaid > billed ? appliedPaid : appliedPaid + receiptExcess;
       return { billed, appliedPaid, actualPaid, pending, excess: Math.max(0, actualPaid - billed), status: pending <= 0 ? 'Pagado' : appliedPaid > 0 ? 'Parcial' : 'Pendiente', receipts };
   };
 
