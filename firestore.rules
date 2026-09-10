@@ -79,6 +79,11 @@ service cloud.firestore {
         allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
       }
 
+      match /projects/{projectId} {
+        allow read: if isSignedIn();
+        allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
+      }
+
       match /notices/{noticeId} {
         allow read: if isSignedIn();
         allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));

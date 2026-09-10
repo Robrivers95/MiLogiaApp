@@ -6,13 +6,14 @@ import { doc, deleteDoc, collection, getDocs, getDoc } from 'firebase/firestore'
 import { db } from '../services/firebase';
 import { useReadOnly } from '../contexts/ReadOnlyContext';
 import AdminPaymentEvidenceModal, { type AdminPaymentEvidenceContext } from './AdminPaymentEvidenceModal';
+import AdminProjects from './AdminProjects';
 
 
 interface Props {
   user: User;
 }
 
-type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'notices' | 'tasks' | 'banks' | 'visits' | 'payment-matrix' | 'create-user' | 'manual-merge' | 'receipts' | 'debt-notify';
+type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'projects' | 'notices' | 'tasks' | 'banks' | 'visits' | 'payment-matrix' | 'create-user' | 'manual-merge' | 'receipts' | 'debt-notify';
 
 const Admin: React.FC<Props> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
@@ -2722,6 +2723,14 @@ const Admin: React.FC<Props> = ({ user }) => {
                   🏦 Tesorería
                 </button>
                 <button
+                  onClick={() => { setActiveTab('projects'); setShowMenu(false); }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
+                    activeTab === 'projects' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
+                  }`}
+                >
+                  📁 Proyectos
+                </button>
+                <button
                   onClick={() => { setActiveTab('banks'); setShowMenu(false); }}
                   className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
                     activeTab === 'banks' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
@@ -3984,6 +3993,11 @@ const Admin: React.FC<Props> = ({ user }) => {
               <div className="p-4 space-y-2">{tasks.length === 0 ? <p className="text-gray-400 text-center py-4">No hay tareas creadas</p> : tasks.map(task => <div key={task.id} className={(task.completed ? 'bg-logia-900/50' : 'bg-logia-900') + ' border border-logia-700 p-4 rounded flex items-start gap-3'}><input type="checkbox" checked={task.completed} onChange={() => handleToggleTask(task.id, task.completed)} disabled={isReadOnly} className="mt-1 w-5 h-5" /><div className="flex-1"><div className="flex flex-wrap items-center gap-2"><h5 className={'font-bold ' + (task.completed ? 'text-gray-500 line-through' : 'text-white')}>{task.title}</h5>{task.assignmentMode === 'team' && <span className="text-[10px] bg-purple-900/50 text-purple-300 border border-purple-600/40 rounded px-2 py-1">👥 Equipo</span>}</div>{task.description && <p className="text-sm text-gray-400 mt-1">{task.description}</p>}<p className="text-xs text-blue-300 mt-2">{task.assignmentMode === 'team' ? 'Equipo: ' + (task.assignedToNames || []).join(', ') : task.assignedToName ? '👤 ' + task.assignedToName : 'Sin asignar'}</p></div><div className="flex gap-2"><button onClick={() => handleEditTask(task)} disabled={isReadOnly || task.assignmentMode === 'team'} className="p-2 bg-logia-800 rounded border border-logia-700 disabled:opacity-30">✏️</button><button onClick={() => handleDeleteTask(task.id)} disabled={isReadOnly} className="p-2 bg-red-600 rounded">🗑️</button></div></div>)}</div>
             </div>
           </div>
+        )}
+
+        {/* PROJECT FINANCE TAB */}
+        {activeTab === 'projects' && (
+          <AdminProjects user={user} readOnly={isReadOnly} />
         )}
 
         {activeTab === 'treasury' && (
