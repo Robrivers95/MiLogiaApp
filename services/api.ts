@@ -1358,6 +1358,58 @@ export const dataService = {
     return ref.id;
   },
 
+  /** Admin registra una transacción/evidencia para cualquier miembro sin perder el monto real. */
+  createAdminPaymentReceipt: async (
+    imageFiles: File[],
+    receipt: Omit<PaymentReceipt, 'id' | 'status' | 'submittedAt'>,
+    reviewerUid: string,
+    alreadyIncluded: boolean = false
+  ): Promise<string> => {
+    if (!receipt.groupId) throw new Error('Sin grupo asignado.');
+    if (!receipt.userId) throw new Error('Selecciona un miembro.');
+
+    const ref = doc(collection(db, 'groups', receipt.groupId, 'paymentReceipts'));
+    const files = Array.isArray(imageFiles) ? imageFiles : [];
+    const uploadedUrls = await Promise.all(files.map(async (file, i) => {
+      const ext = file.type === 'application/pdf' ? 'pdf' : 'jpg';
+      const imgRef = storageRef(storage, `groups/${receipt.groupId}/receipts/${ref.id}_${i}.${ext}`);
+      await uploadBytes(imgRef, file);
+      return getDownloadURL(imgRef);
+    }));
+
+    const amount = Math.max(0, Number(receipt.amount) || 0);
+    const now = new Date().toISOString();
+    const directApproval = alreadyIncluded || amount <= 0;
+    const raw: PaymentReceipt = {
+      ...receipt,
+      id: ref.id,
+      amount,
+      receiptImageUrl: uploadedUrls[0] || '',
+      receiptImageUrls: uploadedUrls,
+      status: directApproval ? 'approved' : 'pending',
+      submittedAt: now,
+      ...(directApproval ? {
+        reviewedAt: now,
+        reviewedBy: reviewerUid,
+        appliedAmount: alreadyIncluded ? amount : 0,
+        unappliedAmount: 0,
+        ...(alreadyIncluded ? { ledgerIncluded: true } : {}),
+      } : {}),
+    };
+    const cleanData = Object.fromEntries(Object.entries(raw).filter(([, value]) => value !== undefined));
+    await setDoc(ref, cleanData);
+
+    if (!directApproval) {
+      try {
+        await dataService.approvePaymentReceipt(raw, reviewerUid);
+      } catch (error) {
+        await deleteDoc(ref).catch(() => {});
+        throw error;
+      }
+    }
+    return ref.id;
+  },
+
   getPaymentReceipts: async (groupId: string): Promise<PaymentReceipt[]> => {
     if (!groupId) return [];
     try {
@@ -1460,10 +1512,6 @@ export const dataService = {
           throw new Error('Esta cuota extra fue perdonada/cerrada y ya no acepta pagos.');
         }
         const balance = Math.max(0, targetFee.amount - targetFee.paid);
-        if (balance <= 0) {
-          throw new Error('Esta cuota extra ya está pagada al 100%.');
-        }
-
         appliedAmount = Math.min(declaredAmount, balance);
         fees[feeIndex] = { ...targetFee, paid: targetFee.paid + appliedAmount };
 
@@ -1495,7 +1543,6 @@ export const dataService = {
         }
         const currentPaidExtra = Number(payment.paidExtra) || 0;
         const balance = Math.max(0, legacyAmount - currentPaidExtra);
-        if (balance <= 0) throw new Error('Esta cuota extra ya está pagada al 100%.');
         appliedAmount = Math.min(declaredAmount, balance);
         const newPaidExtra = currentPaidExtra + appliedAmount;
         const extraCovered = newPaidExtra >= legacyAmount;
@@ -1576,11 +1623,14 @@ export const dataService = {
     }
 
     // Mark approved only after the ledger was updated successfully.
+    const declaredReceiptAmount = Math.max(0, Number(currentReceipt.amount) || 0);
+    const unappliedAmount = Math.max(0, declaredReceiptAmount - appliedAmount);
     await updateDoc(receiptRef, {
       status: 'approved',
       reviewedAt: new Date().toISOString(),
       reviewedBy: reviewerUid,
       appliedAmount,
+      unappliedAmount,
       ...(currentReceipt.extraFeeId ? { extraFeeId: currentReceipt.extraFeeId } : {}),
       ...(currentReceipt.extraFeePeriod ? { extraFeePeriod: currentReceipt.extraFeePeriod } : {}),
     });
@@ -1588,7 +1638,7 @@ export const dataService = {
     try {
       const periodsStr = (currentReceipt.periods || []).join(', ');
       const label = currentReceipt.receiptType === 'concepto_adicional'
-        ? `tu pago de "${currentReceipt.conceptDescription || 'cuota extra'}" por $${appliedAmount.toFixed(2)}`
+        ? `tu comprobante de "${currentReceipt.conceptDescription || 'cuota extra'}" por $${Number(currentReceipt.amount || 0).toFixed(2)} (aplicado $${appliedAmount.toFixed(2)})`
         : `los períodos ${periodsStr}`;
       await notificationService.createNotification(
         [currentReceipt.userId],
