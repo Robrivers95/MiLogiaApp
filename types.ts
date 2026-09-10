@@ -228,6 +228,25 @@ export interface TreasuryEntry {
   allocations: TreasuryAllocation[]; // Multi-source split
   createdBy: string;
   createdAt: number;
+  projectId?: string; // Proyecto financiero asociado, sin duplicar el movimiento
+  projectName?: string;
+  notes?: string;
+  receiptImageUrls?: string[];
+  updatedAt?: number;
+}
+
+export interface FinanceProject {
+  id: string;
+  groupId: string;
+  name: string;
+  description: string;
+  status: 'active' | 'closed';
+  startDate: string; // YYYY-MM-DD
+  endDate?: string;
+  linkedExtraConcepts: string[]; // Cuotas extraordinarias que alimentan ingresos del proyecto
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface VisitRequest {
