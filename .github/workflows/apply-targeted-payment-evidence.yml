@@ -1,0 +1,41 @@
+name: Apply targeted payment evidence
+
+on:
+  push:
+    branches: [fix/targeted-overpayment-and-transaction-notes]
+    paths:
+      - scripts/apply-targeted-payment-evidence.py
+      - components/AdminPaymentEvidenceModal.tsx
+      - .github/workflows/apply-targeted-payment-evidence.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/targeted-overpayment-and-transaction-notes
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Apply targeted source changes
+        run: python3 scripts/apply-targeted-payment-evidence.py
+      - name: Install dependencies
+        run: npm ci
+      - name: Accounting regression tests
+        run: npm run test:accounting
+      - name: Production build
+        run: npm run build
+      - name: Commit validated source changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add types.ts services/api.ts components/Payments.tsx components/Admin.tsx firestore.rules components/AdminPaymentEvidenceModal.tsx
+          git diff --cached --quiet || git commit -m "fix: preserve matrix UI and track payment excess evidence"
+          git push origin fix/targeted-overpayment-and-transaction-notes
