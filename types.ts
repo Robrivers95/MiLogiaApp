@@ -92,6 +92,8 @@ export interface PaymentReceipt {
   extraFeeId?: string;          // ID exacto de la cuota extra seleccionada
   extraFeePeriod?: string;      // YYYY-MM del ledger donde vive la cuota extra
   appliedAmount?: number;       // Monto realmente aplicado al saldo al aprobar
+  unappliedAmount?: number;     // Diferencia entre recibido y aplicado (excedente)
+  ledgerIncluded?: boolean;     // true si es desglose histórico ya incluido en el acumulado
   status: 'pending' | 'approved' | 'rejected';
   submittedAt: string;         // ISO
   reviewedAt?: string;         // ISO

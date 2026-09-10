@@ -176,7 +176,7 @@ const Payments: React.FC<Props> = ({ user }) => {
   }> = payments.flatMap(payment => {
     if (payment.extraFees && payment.extraFees.length > 0) {
       return payment.extraFees
-        .filter(fee => !fee.forgiven && Number(fee.paid || 0) < Number(fee.amount || 0))
+        .filter(fee => !fee.forgiven)
         .map(fee => ({
           period: payment.period,
           feeId: fee.id,
@@ -190,17 +190,15 @@ const Payments: React.FC<Props> = ({ user }) => {
     if (Number(payment.extraAmount) > 0) {
       const paid = Number(payment.paidExtra) || 0;
       const amount = Number(payment.extraAmount) || 0;
-      if (paid < amount) {
-        return [{
-          period: payment.period,
-          feeId: 'legacy',
-          description: payment.extraDescription || 'Cuota Extra',
-          amount,
-          paid,
-          balance: Math.max(0, amount - paid),
-          legacy: true,
-        }];
-      }
+      return [{
+        period: payment.period,
+        feeId: 'legacy',
+        description: payment.extraDescription || 'Cuota Extra',
+        amount,
+        paid,
+        balance: Math.max(0, amount - paid),
+        legacy: true,
+      }];
     }
     return [];
   }).sort((a, b) => b.period.localeCompare(a.period) || a.description.localeCompare(b.description));
@@ -284,14 +282,6 @@ const Payments: React.FC<Props> = ({ user }) => {
       const declaredAmount = Number(receiptAmount);
       if (!declaredAmount || declaredAmount <= 0) {
         setReceiptMsg({ text: 'Indica el monto exacto transferido para esta cuota extra.', type: 'error' });
-        return;
-      }
-      if (selectedExtraAvailableBalance <= 0) {
-        setReceiptMsg({ text: 'El saldo disponible ya está cubierto por pagos o comprobantes en revisión.', type: 'error' });
-        return;
-      }
-      if (declaredAmount > selectedExtraAvailableBalance + 0.009) {
-        setReceiptMsg({ text: `El monto excede el saldo disponible de $${selectedExtraAvailableBalance.toFixed(2)}.`, type: 'error' });
         return;
       }
     }
@@ -700,7 +690,7 @@ const Payments: React.FC<Props> = ({ user }) => {
                   </label>
                   {pendingExtraFeeOptions.length === 0 ? (
                     <div className="bg-green-900/20 border border-green-600/30 rounded p-3 text-sm text-green-300">
-                      ✅ No tienes cuotas extras con saldo pendiente.
+                      ✅ No tienes cuotas extras disponibles.
                     </div>
                   ) : (
                     <select
@@ -722,7 +712,7 @@ const Payments: React.FC<Props> = ({ user }) => {
                       }}
                       className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white"
                     >
-                      <option value="">Selecciona una cuota pendiente...</option>
+                      <option value="">Selecciona una cuota...</option>
                       {pendingExtraFeeOptions.map(option => (
                         <option key={`${option.period}-${option.feeId}`} value={`${option.period}|||${option.feeId}`}>
                           {option.description} · {formatPeriod(option.period)} · saldo ${option.balance.toFixed(2)}
@@ -741,7 +731,7 @@ const Payments: React.FC<Props> = ({ user }) => {
                       </div>
                       {pendingReportedForSelectedExtra > 0 && (
                         <p className="text-yellow-300 pt-1">
-                          ⏳ Hay ${pendingReportedForSelectedExtra.toFixed(2)} en comprobantes pendientes de revisión. Disponible para reportar ahora: ${selectedExtraAvailableBalance.toFixed(2)}.
+                          ⏳ Hay ${pendingReportedForSelectedExtra.toFixed(2)} en comprobantes pendientes de revisión. Reporta siempre el monto real transferido, aunque supere la meta.
                         </p>
                       )}
                     </div>
@@ -799,7 +789,6 @@ const Payments: React.FC<Props> = ({ user }) => {
                 </label>
                 <input
                   type="number" min="0" step="0.01"
-                  max={receiptType === 'concepto_adicional' && selectedExtraFeeOption ? selectedExtraAvailableBalance : undefined}
                   required={receiptType === 'concepto_adicional'}
                   value={receiptAmount}
                   onChange={e => setReceiptAmount(e.target.value)}
@@ -860,7 +849,7 @@ const Payments: React.FC<Props> = ({ user }) => {
                 ⚠️ El administrador revisará y aprobará el comprobante. Recibirás una notificación.
                 {receiptType === 'cuota_mensual'
                   ? ' Al ser aprobado, tu saldo mensual se actualizará automáticamente.'
-                  : ' Al ser aprobado, el monto se sumará únicamente a la cuota extra seleccionada; podrás subir otro comprobante por el saldo restante.'}
+                  : ' Al aprobarse se aplicará únicamente a la cuota extra seleccionada hasta cubrir su deuda; cualquier diferencia quedará registrada como excedente del mismo concepto.'}
               </div>
 
               <div className="flex gap-3 pt-2">

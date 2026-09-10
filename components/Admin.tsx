@@ -5,6 +5,7 @@ import { dataService, generateTriviaWithAI, authService, notificationService } f
 import { doc, deleteDoc, collection, getDocs, getDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useReadOnly } from '../contexts/ReadOnlyContext';
+import AdminPaymentEvidenceModal, { type AdminPaymentEvidenceContext } from './AdminPaymentEvidenceModal';
 
 
 interface Props {
@@ -179,6 +180,8 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [showMatrixReceiptsModal, setShowMatrixReceiptsModal] = useState(false);
   const [matrixReview, setMatrixReview] = useState<{ uid: string; name: string; period: string; paid: number; receipts: number }[] | null>(null);
   const [reconcilingMatrixConcept, setReconcilingMatrixConcept] = useState(false);
+  const [matrixViewModeAudit, setMatrixViewModeAudit] = useState<'status' | 'amount' | 'detail'>('amount');
+  const [paymentEvidenceContext, setPaymentEvidenceContext] = useState<AdminPaymentEvidenceContext | null>(null);
   // Cuota extra masiva
   const [showBulkExtraPanel, setShowBulkExtraPanel] = useState(false);
   const [bulkExtraDesc, setBulkExtraDesc] = useState('');
@@ -1123,6 +1126,101 @@ const Admin: React.FC<Props> = ({ user }) => {
   
   const normalizeConcept = (value?: string) => (value || '').trim().toLocaleLowerCase('es-MX');
 
+  const getReceiptsForMatrixCellAudit = (uid: string, period: string): PaymentReceipt[] => {
+      return (paymentReceipts as PaymentReceipt[]).filter(receipt => {
+          if (receipt.userId !== uid) return false;
+          const periods = receipt.extraFeePeriod ? [receipt.extraFeePeriod] : (receipt.periods || []);
+          if (!periods.includes(period)) return false;
+          if (matrixFilter === 'regular') return receipt.receiptType === 'cuota_mensual';
+          if (matrixFilter === 'extra' && matrixExtraDesc) {
+              if (receipt.receiptType !== 'concepto_adicional') return false;
+              return normalizeConcept(receipt.conceptDescription) === normalizeConcept(matrixExtraDesc);
+          }
+          return true;
+      }).sort((a, b) => (b.transferDate || b.submittedAt || '').localeCompare(a.transferDate || a.submittedAt || ''));
+  };
+
+  const getMatrixCellAudit = (uid: string, period: string) => {
+      const payment = (allUserLedgers[uid] || []).find(item => item.period === period);
+      const receipts = getReceiptsForMatrixCellAudit(uid, period);
+      const receiptExcess = receipts
+          .filter(receipt => receipt.status === 'approved' && !receipt.ledgerIncluded && receipt.appliedAmount !== undefined)
+          .reduce((sum, receipt) => sum + Math.max(0, Number(receipt.amount || 0) - Number(receipt.appliedAmount || 0)), 0);
+
+      if (!payment) return { billed: 0, appliedPaid: 0, actualPaid: receiptExcess, pending: 0, excess: receiptExcess, status: 'Sin cuota', receipts };
+
+      if (matrixFilter === 'regular') {
+          const billed = Math.max(0, Number(payment.amount) || 0);
+          const appliedPaid = Math.max(0, Number(payment.paidRegular ?? payment.paid ?? 0));
+          const actualPaid = appliedPaid + receiptExcess;
+          const pending = Math.max(0, billed - appliedPaid);
+          return { billed, appliedPaid, actualPaid, pending, excess: Math.max(0, actualPaid - billed), status: pending <= 0 ? 'Pagado' : appliedPaid > 0 ? 'Parcial' : 'Pendiente', receipts };
+      }
+
+      if (matrixFilter === 'extra' && matrixExtraDesc) {
+          const fee = payment.extraFees?.find(item => normalizeConcept(item.description) === normalizeConcept(matrixExtraDesc));
+          if (fee) {
+              const billed = Math.max(0, Number(fee.amount) || 0);
+              const appliedPaid = Math.max(0, Number(fee.paid) || 0);
+              const actualPaid = appliedPaid + receiptExcess;
+              const pending = fee.forgiven ? 0 : Math.max(0, billed - appliedPaid);
+              return { billed, appliedPaid, actualPaid, pending, excess: Math.max(0, actualPaid - billed), status: fee.forgiven ? 'Perdonado' : pending <= 0 ? 'Pagado' : appliedPaid > 0 ? 'Parcial' : 'Pendiente', receipts };
+          }
+          const legacyMatch = !payment.extraFees?.length && Number(payment.extraAmount) > 0 && normalizeConcept(payment.extraDescription || 'Cuota Extra') === normalizeConcept(matrixExtraDesc);
+          if (!legacyMatch) return { billed: 0, appliedPaid: 0, actualPaid: receiptExcess, pending: 0, excess: receiptExcess, status: 'Sin cuota', receipts };
+          const billed = Math.max(0, Number(payment.extraAmount) || 0);
+          const appliedPaid = Math.max(0, Number(payment.paidExtra) || 0);
+          const actualPaid = appliedPaid + receiptExcess;
+          const pending = Math.max(0, billed - appliedPaid);
+          return { billed, appliedPaid, actualPaid, pending, excess: Math.max(0, actualPaid - billed), status: pending <= 0 ? 'Pagado' : appliedPaid > 0 ? 'Parcial' : 'Pendiente', receipts };
+      }
+
+      const fees = payment.extraFees || [];
+      const regularBilled = Math.max(0, Number(payment.amount) || 0);
+      const regularPaid = Math.max(0, Number(payment.paidRegular ?? payment.paid ?? 0));
+      const extraBilled = fees.length ? fees.reduce((sum, fee) => sum + Math.max(0, Number(fee.amount) || 0), 0) : Math.max(0, Number(payment.extraAmount) || 0);
+      const extraPaid = fees.length ? fees.reduce((sum, fee) => sum + Math.max(0, Number(fee.paid) || 0), 0) : Math.max(0, Number(payment.paidExtra) || 0);
+      const pending = Math.max(0, regularBilled - regularPaid) + (fees.length
+          ? fees.reduce((sum, fee) => sum + (fee.forgiven ? 0 : Math.max(0, Number(fee.amount || 0) - Number(fee.paid || 0))), 0)
+          : Math.max(0, extraBilled - extraPaid));
+      const billed = regularBilled + extraBilled;
+      const appliedPaid = regularPaid + extraPaid;
+      const actualPaid = appliedPaid + receiptExcess;
+      return { billed, appliedPaid, actualPaid, pending, excess: Math.max(0, actualPaid - billed), status: pending <= 0 ? 'Pagado' : appliedPaid > 0 ? 'Parcial' : 'Pendiente', receipts };
+  };
+
+  const openPaymentEvidenceAudit = (uid: string, userName: string, payment: Payment, feeType: 'regular' | 'extra', feeId?: string, concept?: string) => {
+      if (feeType === 'regular') {
+          setPaymentEvidenceContext({
+              userId: uid,
+              userName,
+              period: payment.period,
+              feeType: 'regular',
+              concept: 'Cuota mensual',
+              targetAmount: Number(payment.amount) || 0,
+              ledgerPaid: Number(payment.paidRegular ?? payment.paid ?? 0) || 0,
+          });
+          return;
+      }
+      const fee = payment.extraFees?.find(item => feeId ? item.id === feeId : normalizeConcept(item.description) === normalizeConcept(concept));
+      const legacy = !payment.extraFees?.length && Number(payment.extraAmount) > 0;
+      setPaymentEvidenceContext({
+          userId: uid,
+          userName,
+          period: payment.period,
+          feeType: 'extra',
+          feeId: fee?.id || (legacy ? 'legacy' : feeId),
+          concept: fee?.description || payment.extraDescription || concept || 'Cuota Extra',
+          targetAmount: Number(fee?.amount ?? payment.extraAmount ?? 0) || 0,
+          ledgerPaid: Number(fee?.paid ?? payment.paidExtra ?? 0) || 0,
+      });
+  };
+
+  const refreshPaymentEvidenceAudit = async () => {
+      await Promise.all([loadPaymentReceipts(), loadAllLedgers(), loadUsers(), loadTreasury(), loadDashboardStats()]);
+      if (editingUserLedger) setEditPayments(await dataService.getPayments(editingUserLedger));
+  };
+
   const getMatrixFilteredReceipts = (): PaymentReceipt[] => {
       if (matrixFilter !== 'extra' || !matrixExtraDesc) return [];
       return (paymentReceipts as PaymentReceipt[])
@@ -1565,6 +1663,7 @@ const Admin: React.FC<Props> = ({ user }) => {
       const payments = await dataService.getPayments(uid);
       setEditPayments(payments);
       setEditingUserLedger(uid);
+      await loadPaymentReceipts();
   };
   const handleSavePaymentRow = async (p: Payment) => {
       if (isReadOnly || !editingUserLedger) return;
@@ -4622,6 +4721,16 @@ const Admin: React.FC<Props> = ({ user }) => {
                       </div>
                     )}
 
+                    <div className="mb-4 rounded-lg border border-logia-700 bg-logia-900/60 p-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-bold uppercase text-gray-400 mr-1">Vista de cada cuadro</span>
+                            <button onClick={() => setMatrixViewModeAudit('status')} className={`px-3 py-1.5 rounded text-xs font-bold border ${matrixViewModeAudit === 'status' ? 'bg-indigo-700 border-indigo-500 text-white' : 'bg-logia-800 border-logia-700 text-gray-300'}`}>✓ Estado</button>
+                            <button onClick={() => setMatrixViewModeAudit('amount')} className={`px-3 py-1.5 rounded text-xs font-bold border ${matrixViewModeAudit === 'amount' ? 'bg-green-700 border-green-500 text-white' : 'bg-logia-800 border-logia-700 text-gray-300'}`}>$ Montos</button>
+                            <button onClick={() => setMatrixViewModeAudit('detail')} className={`px-3 py-1.5 rounded text-xs font-bold border ${matrixViewModeAudit === 'detail' ? 'bg-purple-700 border-purple-500 text-white' : 'bg-logia-800 border-logia-700 text-gray-300'}`}>▦ Detalle</button>
+                            <span className="text-[11px] text-gray-500">El excedente se muestra aparte y nunca reduce la deuda por debajo de $0.</span>
+                        </div>
+                    </div>
+
                     {/* ── PANEL: Cuota Extra Masiva ── */}
                     <div className="border border-logia-700 rounded-lg overflow-hidden mb-4">
                         <button
@@ -4945,14 +5054,51 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                 }
                                             }
                                             
+                                            const matrixAudit = getMatrixCellAudit(u.uid, period);
+                                            const selectedExtraFeeAudit = matrixFilter === 'extra' && matrixExtraDesc
+                                                ? paymentData?.extraFees?.find(fee => normalizeConcept(fee.description) === normalizeConcept(matrixExtraDesc))
+                                                : undefined;
+                                            const selectedLegacyAudit = matrixFilter === 'extra' && matrixExtraDesc && !paymentData?.extraFees?.length && Number(paymentData?.extraAmount || 0) > 0 &&
+                                                normalizeConcept(paymentData?.extraDescription || 'Cuota Extra') === normalizeConcept(matrixExtraDesc);
+                                            const openEvidence = () => {
+                                                if (!paymentData) return;
+                                                if (matrixFilter === 'extra' && matrixExtraDesc && (selectedExtraFeeAudit || selectedLegacyAudit)) {
+                                                    openPaymentEvidenceAudit(u.uid, u.name, paymentData, 'extra', selectedExtraFeeAudit?.id || (selectedLegacyAudit ? 'legacy' : undefined), matrixExtraDesc);
+                                                } else {
+                                                    openPaymentEvidenceAudit(u.uid, u.name, paymentData, 'regular');
+                                                }
+                                            };
                                             return (
                                                 <td 
                                                     key={idx} 
-                                                    className={`p-2 text-center border border-logia-700 transition-colors ${cellClass}`}
-                                                    onClick={() => paymentData && handleOpenMatrixModal(u.uid, u.name, period)}
-                                                    title={cellTitle}
+                                                    className={`p-2 text-center border border-logia-700 transition-colors min-w-[92px] ${cellClass}`}
+                                                    onClick={() => {
+                                                        if (!paymentData) return;
+                                                        if (matrixFilter === 'extra' && matrixExtraDesc && (selectedExtraFeeAudit || selectedLegacyAudit)) openEvidence();
+                                                        else handleOpenMatrixModal(u.uid, u.name, period);
+                                                    }}
+                                                    title={`${cellTitle} · Aportado real $${matrixAudit.actualPaid.toFixed(2)} · Deuda $${matrixAudit.pending.toFixed(2)}${matrixAudit.excess > 0 ? ` · Excedente $${matrixAudit.excess.toFixed(2)}` : ''}`}
                                                 >
-                                                    {cellText}
+                                                    {matrixViewModeAudit === 'status' ? (
+                                                        <div className="font-bold text-base">{cellText}</div>
+                                                    ) : matrixViewModeAudit === 'amount' ? (
+                                                        <div className="leading-tight">
+                                                            <div className="font-bold">${matrixAudit.actualPaid.toFixed(0)}</div>
+                                                            <div className="text-[9px] opacity-80">deuda ${matrixAudit.pending.toFixed(0)}</div>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="text-[9px] leading-tight text-left">
+                                                            <div>Cargo <strong>${matrixAudit.billed.toFixed(0)}</strong></div>
+                                                            <div>Aportó <strong>${matrixAudit.actualPaid.toFixed(0)}</strong></div>
+                                                            <div>Deuda <strong>${matrixAudit.pending.toFixed(0)}</strong></div>
+                                                        </div>
+                                                    )}
+                                                    {matrixAudit.excess > 0 && <div className="text-[9px] text-orange-200 font-bold mt-1">Extra +${matrixAudit.excess.toFixed(0)}</div>}
+                                                    {matrixAudit.receipts.length > 0 && (
+                                                        <button type="button" onClick={event => { event.stopPropagation(); openEvidence(); }} className="mt-1 text-[9px] bg-black/20 hover:bg-black/30 rounded px-1.5 py-0.5" title="Ver comprobantes y transacciones">
+                                                            🧾 {matrixAudit.receipts.length}
+                                                        </button>
+                                                    )}
                                                 </td>
                                             );
                                         })}
@@ -5676,6 +5822,18 @@ const Admin: React.FC<Props> = ({ user }) => {
         </div>
       )}
 
+      {paymentEvidenceContext && (
+        <AdminPaymentEvidenceModal
+          groupId={user.groupId}
+          adminUid={user.uid}
+          context={paymentEvidenceContext}
+          receipts={paymentReceipts as PaymentReceipt[]}
+          readOnly={isReadOnly}
+          onClose={() => setPaymentEvidenceContext(null)}
+          onChanged={refreshPaymentEvidenceAudit}
+        />
+      )}
+
       {/* REJECT RECEIPT MODAL */}
       {showRejectModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
@@ -6112,6 +6270,11 @@ const Admin: React.FC<Props> = ({ user }) => {
                                      )}
 
                                      <div className="flex gap-1 mt-3 md:mt-0">
+                                         <button
+                                            onClick={() => editingUserLedger && openPaymentEvidenceAudit(editingUserLedger, users.find(item => item.uid === editingUserLedger)?.name || 'Miembro', p, 'regular')}
+                                            className="bg-indigo-700 hover:bg-indigo-600 text-white p-1 rounded text-xs px-2 h-8 flex items-center"
+                                            title="Abonos, fechas y comprobantes de la cuota mensual"
+                                         >🧾</button>
                                          <button 
                                             onClick={() => handleSavePaymentRow(p)} 
                                             disabled={isReadOnly}
@@ -6203,6 +6366,11 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                                  />
                                                              </div>
                                                              <div className="flex gap-1">
+                                                                 <button
+                                                                     onClick={() => editingUserLedger && openPaymentEvidenceAudit(editingUserLedger, users.find(item => item.uid === editingUserLedger)?.name || 'Miembro', p, 'extra', fee.id, fee.description)}
+                                                                     className="bg-purple-700 hover:bg-purple-600 text-white p-1 rounded text-xs"
+                                                                     title="Abonos, fechas, comentarios y comprobantes"
+                                                                 >🧾</button>
                                                                  <button
                                                                      onClick={() => handleEditIndividualExtraFee(p.period, fee.id, fee.description, fee.amount)}
                                                                      disabled={isReadOnly}
