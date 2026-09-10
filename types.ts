@@ -77,6 +77,40 @@ export interface Notice {
   createdBy: string;
 }
 
+export interface PaymentMovementApplication {
+  period: string;
+  feeType: 'regular' | 'extra';
+  feeId?: string;
+  concept: string;
+  appliedAmount: number;
+}
+
+export interface PaymentMovement {
+  id: string;
+  groupId: string;
+  userId: string;
+  userName: string;
+  date: string; // YYYY-MM-DD: fecha real del banco/efectivo
+  kind?: 'payment' | 'note';
+  amount: number; // dinero/aportación realmente recibida; puede superar la deuda
+  appliedAmount: number; // parte atribuida al cargo/meta
+  excessAmount: number; // aportación sobre la meta/deuda
+  ledgerOffsetAmount: number; // parte ya representada en el acumulado legacy
+  ledgerDeltaAmount: number; // incremento hecho al ledger por este movimiento
+  applications: PaymentMovementApplication[];
+  comments?: string;
+  receiptUrls?: string[];
+  receiptId?: string;
+  source: 'admin' | 'member_receipt';
+  reconciliationStatus?: 'pending' | 'matched' | 'difference';
+  bankReference?: string;
+  reconciledAt?: string | null;
+  reconciledBy?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface PaymentReceipt {
   id: string;
   groupId: string;
@@ -92,6 +126,9 @@ export interface PaymentReceipt {
   extraFeeId?: string;          // ID exacto de la cuota extra seleccionada
   extraFeePeriod?: string;      // YYYY-MM del ledger donde vive la cuota extra
   appliedAmount?: number;       // Monto realmente aplicado al saldo al aprobar
+  unappliedAmount?: number;     // Parte recibida que excede la deuda/meta
+  movementId?: string;          // Movimiento bancario/caja generado al aprobar
+  memberComments?: string;      // Nota enviada junto con el comprobante
   status: 'pending' | 'approved' | 'rejected';
   submittedAt: string;         // ISO
   reviewedAt?: string;         // ISO
@@ -220,12 +257,21 @@ export interface TreasuryEntry {
   groupId: string;
   date: string; // YYYY-MM-DD
   type: TransactionType;
-  category: 'saco_beneficencia' | 'cuota_extra' | 'evento' | 'donacion' | 'gasto_operativo' | 'gasto_social' | 'compra_material' | 'otro';
+  category: 'saco_beneficencia' | 'cuota_regular' | 'cuota_extra' | 'evento' | 'donacion' | 'gasto_operativo' | 'gasto_social' | 'compra_material' | 'otro';
   description: string;
   amount: number;
   allocations: TreasuryAllocation[]; // Multi-source split
   createdBy: string;
   createdAt: number;
+  quotaType?: 'regular' | 'extra' | 'unclassified' | 'manual';
+  quotaConcept?: string;
+  period?: string;
+  memberId?: string;
+  memberName?: string;
+  receiptUrls?: string[];
+  paymentMovementId?: string;
+  bankReference?: string;
+  reconciliationStatus?: 'pending' | 'matched' | 'difference';
 }
 
 export interface VisitRequest {

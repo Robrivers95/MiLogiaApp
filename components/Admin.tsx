@@ -1,10 +1,13 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, Payment, IndividualExtraFee, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Trivia, VisitRequest, Group, BankBalance, ExtraFee, PaymentReceipt } from '../types';
+import { User, Payment, IndividualExtraFee, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Trivia, VisitRequest, Group, BankBalance, ExtraFee, PaymentReceipt, PaymentMovement } from '../types';
 import { dataService, generateTriviaWithAI, authService, notificationService } from '../services/api';
 import { doc, deleteDoc, collection, getDocs, getDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useReadOnly } from '../contexts/ReadOnlyContext';
+import PaymentMovementModal, { type PaymentMovementContext } from './PaymentMovementModal';
+import { paymentMovementService } from '../services/paymentMovements';
+import { buildContributionSummary } from '../services/paymentMovementAccounting';
 
 
 interface Props {
@@ -179,6 +182,8 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [showMatrixReceiptsModal, setShowMatrixReceiptsModal] = useState(false);
   const [matrixReview, setMatrixReview] = useState<{ uid: string; name: string; period: string; paid: number; receipts: number }[] | null>(null);
   const [reconcilingMatrixConcept, setReconcilingMatrixConcept] = useState(false);
+  const [paymentMovements, setPaymentMovements] = useState<PaymentMovement[]>([]);
+  const [paymentMovementContext, setPaymentMovementContext] = useState<PaymentMovementContext | null>(null);
   // Cuota extra masiva
   const [showBulkExtraPanel, setShowBulkExtraPanel] = useState(false);
   const [bulkExtraDesc, setBulkExtraDesc] = useState('');
@@ -344,6 +349,7 @@ const Admin: React.FC<Props> = ({ user }) => {
       if (activeTab === 'payment-matrix') {
           loadAllLedgers();
           loadPaymentReceipts();
+          loadPaymentMovements();
       }
       if (activeTab === 'manual-merge') {
           loadTempUsers();
@@ -358,7 +364,8 @@ const Admin: React.FC<Props> = ({ user }) => {
       await Promise.all([
           loadUsers(),
           loadPriceHistory(),
-          loadTreasury()
+          loadTreasury(),
+          loadPaymentMovements()
       ]);
       setLoading(false);
   };
@@ -395,6 +402,15 @@ const Admin: React.FC<Props> = ({ user }) => {
     } catch (e) {
         console.error("Error loading temp users", e);
         showMessage("Error cargando usuarios temporales", 'error');
+    }
+  };
+
+  const loadPaymentMovements = async () => {
+    if (!user.groupId) return;
+    try {
+      setPaymentMovements(await paymentMovementService.getMovements(user.groupId));
+    } catch (e) {
+      console.error('Error loading payment movements', e);
     }
   };
 
@@ -1561,10 +1577,59 @@ const Admin: React.FC<Props> = ({ user }) => {
           showMessage("Error actualizando perfil", 'error');
       }
   };
+  const openPaymentMovementContext = (
+      uid: string,
+      memberName: string,
+      payment: Payment,
+      feeType: 'regular' | 'extra',
+      feeId?: string,
+      concept?: string
+  ) => {
+      if (feeType === 'regular') {
+          setPaymentMovementContext({
+              userId: uid,
+              userName: memberName,
+              period: payment.period,
+              feeType: 'regular',
+              concept: 'Cuota mensual',
+              targetAmount: Number(payment.amount) || 0,
+              ledgerPaid: Number(payment.paidRegular ?? payment.paid ?? 0) || 0,
+          });
+          return;
+      }
+      const fee = payment.extraFees?.find(item => feeId ? item.id === feeId : item.description === concept);
+      const legacy = !payment.extraFees?.length && Number(payment.extraAmount) > 0;
+      setPaymentMovementContext({
+          userId: uid,
+          userName: memberName,
+          period: payment.period,
+          feeType: 'extra',
+          feeId: fee?.id || (legacy ? 'legacy' : feeId),
+          concept: fee?.description || payment.extraDescription || concept || 'Cuota Extra',
+          targetAmount: Number(fee?.amount ?? payment.extraAmount ?? 0) || 0,
+          ledgerPaid: Number(fee?.paid ?? payment.paidExtra ?? 0) || 0,
+      });
+  };
+
+  const refreshPaymentMovementData = async () => {
+      await Promise.all([
+          loadPaymentMovements(),
+          loadAllLedgers(),
+          loadPaymentReceipts(),
+          loadTreasury(),
+          loadUsers(),
+          loadDashboardStats(),
+      ]);
+      if (editingUserLedger) {
+          setEditPayments(await dataService.getPayments(editingUserLedger));
+      }
+  };
+
   const handleOpenPayments = async (uid: string) => {
       const payments = await dataService.getPayments(uid);
       setEditPayments(payments);
       setEditingUserLedger(uid);
+      await loadPaymentMovements();
   };
   const handleSavePaymentRow = async (p: Payment) => {
       if (isReadOnly || !editingUserLedger) return;
@@ -3894,7 +3959,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                     <button onClick={() => { loadTreasury(); loadDashboardStats(); }} className="text-blue-300">🔄 Actualizar resumen</button>
                     <button onClick={() => { setReceiptFilter('approved'); setActiveTab('receipts'); loadPaymentReceipts(); }} className="text-yellow-300">🧾 Transferencias aprobadas / corregir fecha</button>
                   </div>
-                  Los pagos de miembros ya están incluidos en este balance. Registra aquí únicamente otros ingresos y egresos para evitar duplicarlos. Las filas de cuotas son acumulados mensuales; sus fechas no representan cada depósito bancario.
+                  Los pagos de miembros ya están incluidos en este balance. Los nuevos abonos aparecen por transacción con su fecha real; los importes antiguos que todavía no se han desglosado se identifican como “Acumulado histórico sin desglose”. Registra aquí únicamente otros ingresos y egresos para evitar duplicarlos.
                 </div>
                 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -4945,14 +5010,52 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                 }
                                             }
                                             
+                                            const selectedMatrixExtra = matrixFilter === 'extra' && matrixExtraDesc
+                                                ? paymentData?.extraFees?.find(item => item.description === matrixExtraDesc)
+                                                : undefined;
+                                            const selectedMatrixLegacy = matrixFilter === 'extra' && matrixExtraDesc && !paymentData?.extraFees?.length && Number(paymentData?.extraAmount || 0) > 0 &&
+                                                (paymentData?.extraDescription || 'Cuota Extra') === matrixExtraDesc;
+                                            const matrixContribution = paymentData && matrixFilter === 'extra' && matrixExtraDesc && (selectedMatrixExtra || selectedMatrixLegacy)
+                                                ? buildContributionSummary({
+                                                    targetAmount: Number(selectedMatrixExtra?.amount ?? paymentData.extraAmount ?? 0),
+                                                    ledgerPaid: Number(selectedMatrixExtra?.paid ?? paymentData.paidExtra ?? 0),
+                                                    movements: paymentMovements,
+                                                    receipts: paymentReceipts as PaymentReceipt[],
+                                                    context: {
+                                                        userId: u.uid,
+                                                        period,
+                                                        feeType: 'extra',
+                                                        feeId: selectedMatrixExtra?.id || (selectedMatrixLegacy ? 'legacy' : undefined),
+                                                        concept: matrixExtraDesc,
+                                                    },
+                                                })
+                                                : null;
                                             return (
                                                 <td 
                                                     key={idx} 
                                                     className={`p-2 text-center border border-logia-700 transition-colors ${cellClass}`}
-                                                    onClick={() => paymentData && handleOpenMatrixModal(u.uid, u.name, period)}
-                                                    title={cellTitle}
+                                                    onClick={() => {
+                                                        if (!paymentData) return;
+                                                        if (matrixFilter === 'extra' && matrixExtraDesc && (selectedMatrixExtra || selectedMatrixLegacy)) {
+                                                            openPaymentMovementContext(u.uid, u.name, paymentData, 'extra', selectedMatrixExtra?.id || (selectedMatrixLegacy ? 'legacy' : undefined), matrixExtraDesc);
+                                                        } else {
+                                                            handleOpenMatrixModal(u.uid, u.name, period);
+                                                        }
+                                                    }}
+                                                    title={matrixContribution
+                                                        ? `Aportado $${matrixContribution.received.toFixed(2)} · Meta $${matrixContribution.target.toFixed(2)} · Extra $${matrixContribution.excess.toFixed(2)}`
+                                                        : cellTitle}
                                                 >
-                                                    {cellText}
+                                                    <div className="font-bold">{cellText}</div>
+                                                    {matrixContribution && (
+                                                        <div className="mt-1 text-[9px] leading-tight whitespace-nowrap">
+                                                            <div>Aportó <strong>${matrixContribution.received.toFixed(0)}</strong></div>
+                                                            <div className="opacity-80">Meta ${matrixContribution.target.toFixed(0)}</div>
+                                                            {matrixContribution.excess > 0 && (
+                                                                <div className="text-orange-200 font-bold">Extra +${matrixContribution.excess.toFixed(0)}</div>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                 </td>
                                             );
                                         })}
@@ -5512,6 +5615,19 @@ const Admin: React.FC<Props> = ({ user }) => {
         )}
 
       </div>
+
+      {paymentMovementContext && (
+        <PaymentMovementModal
+          groupId={user.groupId}
+          adminUid={user.uid}
+          context={paymentMovementContext}
+          movements={paymentMovements}
+          receipts={paymentReceipts as PaymentReceipt[]}
+          readOnly={isReadOnly}
+          onClose={() => setPaymentMovementContext(null)}
+          onChanged={refreshPaymentMovementData}
+        />
+      )}
 
       {/* FILTERED EXTRA-FEE RECEIPTS MODAL */}
       {showMatrixReceiptsModal && matrixFilter === 'extra' && matrixExtraDesc && (
@@ -6112,6 +6228,13 @@ const Admin: React.FC<Props> = ({ user }) => {
                                      )}
 
                                      <div className="flex gap-1 mt-3 md:mt-0">
+                                         <button
+                                            onClick={() => editingUserLedger && openPaymentMovementContext(editingUserLedger, users.find(item => item.uid === editingUserLedger)?.name || 'Miembro', p, 'regular')}
+                                            className="bg-indigo-700 hover:bg-indigo-600 text-white p-1 rounded text-xs px-2 h-8 flex items-center"
+                                            title="Abonos y comprobantes de la cuota mensual"
+                                         >
+                                             🧾
+                                         </button>
                                          <button 
                                             onClick={() => handleSavePaymentRow(p)} 
                                             disabled={isReadOnly}
@@ -6190,7 +6313,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                                  <p className="text-xs text-gray-400">${fee.amount.toFixed(2)}</p>
                                                              </div>
                                                              <div className="flex flex-col">
-                                                                 <label className="text-[9px] text-gray-500 uppercase">Pagado</label>
+                                                                 <label className="text-[9px] text-gray-500 uppercase">Acumulado / ajuste</label>
                                                                  <input 
                                                                      type="number"
                                                                      value={fee.paid}
@@ -6203,6 +6326,13 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                                  />
                                                              </div>
                                                              <div className="flex gap-1">
+                                                                 <button
+                                                                     onClick={() => editingUserLedger && openPaymentMovementContext(editingUserLedger, users.find(item => item.uid === editingUserLedger)?.name || 'Miembro', p, 'extra', fee.id, fee.description)}
+                                                                     className="bg-purple-700 hover:bg-purple-600 text-white p-1 rounded text-xs"
+                                                                     title="Abonos, fechas, comentarios y comprobantes"
+                                                                 >
+                                                                     🧾
+                                                                 </button>
                                                                  <button
                                                                      onClick={() => handleEditIndividualExtraFee(p.period, fee.id, fee.description, fee.amount)}
                                                                      disabled={isReadOnly}
