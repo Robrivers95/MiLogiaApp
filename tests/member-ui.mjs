@@ -1,0 +1,56 @@
+import assert from 'node:assert/strict';
+import { mkdirSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+const { chromium } = await import(process.env.LOGIA_PLAYWRIGHT_MODULE || 'playwright');
+const server=spawn(process.execPath,['node_modules/vite/bin/vite.js','--host','127.0.0.1','--port','5179'],{stdio:'ignore'});
+let browser;
+try {
+  for(let attempt=0;attempt<100;attempt++){try{await fetch('http://127.0.0.1:5179/tests/member-ui.html');break;}catch{await new Promise(resolve=>setTimeout(resolve,100));}}
+  browser=await chromium.launch({headless:true});
+  const page=await browser.newPage({viewport:{width:1440,height:1000}});
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.goto('http://127.0.0.1:5179/tests/member-ui.html');
+  await page.getByText('1–25 de 137 miembros').waitFor();
+  await page.waitForFunction(()=>getComputedStyle(document.querySelector('table')).display==='table' && getComputedStyle(document.body).backgroundColor==='rgb(15, 23, 42)');
+  assert.equal(await page.getByRole('table').isVisible(),true);
+  await page.getByRole('button',{name:'Ver ficha de Miembro 000'}).click();
+  assert.equal(await page.evaluate(()=>window.__historyRequests),0,'selecting a member must not eagerly read ledgers');
+  await page.getByRole('button',{name:'Historial de cuotas',exact:true}).click();
+  await page.getByText('Evento legado',{exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>window.__historyRequests),1);
+  assert.equal(await page.locator('.member-detail').evaluate(element=>getComputedStyle(element).position),'sticky');
+  mkdirSync('test-results',{recursive:true});
+  await page.screenshot({path:'test-results/members-desktop.png'});
+  await page.getByRole('button',{name:'Cerrar ficha'}).click();
+  await page.getByRole('button',{name:'Siguiente',exact:true}).click();
+  await page.getByText('26–50 de 137 miembros').waitFor();
+  await page.getByPlaceholder('Nombre, correo, grado o cargo').fill('Miembro 136');
+  await page.getByText('1–1 de 1 miembros').waitFor();
+  await page.getByRole('button',{name:'Exportar CSV',exact:true}).click();
+  assert.equal(await page.evaluate(()=>window.__exportedCount),1);
+  await page.getByPlaceholder('Nombre, correo, grado o cargo').fill('');
+  for(const width of [768,390,320]) {
+    await page.setViewportSize({width,height:844});
+    assert.equal(await page.getByRole('table').isVisible(),width>=768);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`directory must fit width ${width}`);
+    if(width<768) {
+      await page.screenshot({path:`test-results/members-list-${width}.png`});
+      await page.getByRole('button',{name:/Miembro 000/}).click();
+      assert.equal(await page.locator('.member-detail').evaluate(element=>getComputedStyle(element).position),'fixed');
+      assert.ok(await page.locator('.member-detail').evaluate(element=>element.scrollWidth<=innerWidth),`detail must fit width ${width}`);
+      await page.screenshot({path:`test-results/members-mobile-${width}.png`});
+      await page.getByRole('button',{name:'Dar de baja',exact:true}).click();
+      await page.getByRole('button',{name:'Reactivar miembro',exact:true}).waitFor();
+      await page.getByRole('button',{name:'Reactivar miembro',exact:true}).click();
+      await page.getByRole('button',{name:'Dar de baja',exact:true}).waitFor();
+      await page.getByRole('button',{name:'Cerrar ficha'}).click();
+    }
+  }
+  await page.goto('http://127.0.0.1:5179/tests/member-ui.html?readonly=1');
+  await page.getByRole('button',{name:/Miembro 000/}).click();
+  assert.equal(await page.getByRole('button',{name:'Editar perfil',exact:true}).isDisabled(),true);
+  assert.equal(await page.getByRole('button',{name:'Gestionar pagos',exact:true}).isDisabled(),true);
+  assert.equal(await page.getByRole('button',{name:'Dar de baja',exact:true}).isDisabled(),true);
+  assert.deepEqual(errors,[]);
+  console.log('Member UI passed: 137 members, desktop/tablet/mobile 1440/768/390/320px, selection, lazy history, pagination, search, export, status changes and read-only permissions.');
+} finally { await browser?.close();server.kill('SIGTERM'); }

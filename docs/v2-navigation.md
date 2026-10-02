@@ -31,3 +31,11 @@ Para volver a V1 en Hosting, hacer checkout de `v1-beta`, instalar con `npm ci`,
 ## Validación
 
 Ejecutar `npm run build`, `npm run test:accounting`, `node tests/project-finance-accounting.mjs` y `node tests/run-directory.mjs`.
+
+## Arquitectura adaptable de miembros
+
+`MemberManagement` muestra una tabla desde 768 px y una lista compacta en pantallas menores. `MemberDetail` muestra la misma ficha en un panel lateral desde 1024 px y ocupa la pantalla en dispositivos menores. El directorio concentra la búsqueda, filtros, orden y páginas; la ficha reúne perfil, rol, pagos, anticipos, estado y vinculación.
+
+Los componentes reciben datos y acciones por props y no importan Firebase. `Admin` conserva la integración con los servicios y los formularios existentes. El historial se carga al abrir su pestaña y descarta respuestas si cambia el miembro seleccionado. Se conserva la selección aunque un cambio de estado retire al miembro del filtro actual. Los saldos pendientes de carga no aparecen como cero. El estado se cambia desde la ficha, con el proceso existente de fecha de baja/reingreso, y no desde el editor del perfil.
+
+`memberPresentation` usa la normalización contable existente para mostrar cuotas antiguas, extraordinarias individuales y cuotas perdonadas sin escribir ni modificar los registros.
