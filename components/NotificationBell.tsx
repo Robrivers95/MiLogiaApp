@@ -25,7 +25,7 @@ const TYPE_TO_VIEW: Record<string, string> = {
   payment: 'payments',
   payment_receipt: 'payments',
   attendance: 'attendance',
-  trivia: 'trivia',
+  trivia: 'library',
   profile_edit: 'profile',
 };
 

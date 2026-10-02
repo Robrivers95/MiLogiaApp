@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { User, Task } from '../types';
 import { dataService } from '../services/api';
-import InstallPWA from './InstallPWA';
+
 
 interface Props {
   user: User;
@@ -54,8 +54,7 @@ const Dashboard: React.FC<Props> = ({ user }) => {
         </div>
       </div>
 
-      {/* Install PWA Banner - Floating at bottom */}
-      <InstallPWA userId={user.uid} />
+
 
       {isMaster && (
           <div className="bg-indigo-900/30 border border-indigo-500/30 p-4 rounded-lg">
