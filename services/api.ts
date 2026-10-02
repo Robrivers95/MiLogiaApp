@@ -850,7 +850,7 @@ export const dataService = {
     }
   },
 
-  getPayments: async (uid: string): Promise<Payment[]> => {
+  getPayments: async (uid: string, strict = false): Promise<Payment[]> => {
     if (!uid) return [];
     try {
         const snapshot = await getDocs(collection(db, "users", uid, "ledger"));
@@ -871,6 +871,7 @@ export const dataService = {
             } as Payment;
         });
     } catch (e) {
+        if (strict) throw e;
         return [];
     }
   },
@@ -1423,7 +1424,7 @@ export const dataService = {
     }
   },
 
-  getUserPaymentReceipts: async (userId: string, groupId: string): Promise<PaymentReceipt[]> => {
+  getUserPaymentReceipts: async (userId: string, groupId: string, strict = false): Promise<PaymentReceipt[]> => {
     if (!userId || !groupId) return [];
     try {
       const q = query(
@@ -1434,6 +1435,7 @@ export const dataService = {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as PaymentReceipt));
       return list.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
     } catch (e) {
+      if (strict) throw e;
       return [];
     }
   },

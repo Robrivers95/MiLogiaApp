@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { searchMembers, memberPage } from '../services/memberDirectory';
-import { paymentHistoryRows, memberStatus, accountStatus } from '../services/memberPresentation';
-import { User, Payment } from '../types';
+import { paymentHistoryRows, memberEvidence, memberStatus, accountStatus } from '../services/memberPresentation';
+import { User, Payment, PaymentReceipt } from '../types';
 import { adminAreas, findAdminArea, AdminTab } from '../components/adminNavigation';
 const users = Array.from({ length: 137 }, (_, i) => ({ uid: `u${i}`, name: `Miembro ${String(i).padStart(3, '0')}`, email: `m${i}@example.test`, active: true, role: 'member', groupId: 'test', joinDate: `2026-09-${String(i % 28 + 1).padStart(2, '0')}`, profileEditable: true } as User));
 users[42] = { ...users[42], name: 'José Ríos', degree: 'maestro', lodgeRole: 'tesorero' };
@@ -34,3 +34,16 @@ assert.equal(legacy.paidRegular, undefined, 'history presentation must not mutat
 assert.equal(memberStatus({ ...users[0], active: false, leaveDate: '2026-09-01' }), 'Inactivo');
 assert.equal(memberStatus({ ...users[0], active: false }), 'Pendiente');
 assert.equal(accountStatus({ ...users[0], uid: 'temp_1' }), 'Sin cuenta vinculada');
+
+const receipt = {id:'proof',periods:['2026-08','2026-09'],transferDate:'2026-09-15',status:'pending',receiptType:'cuota_mensual',amount:999,receiptImageUrl:'https://example.test/a.pdf',receiptImageUrls:['https://example.test/a.pdf','https://example.test/b.jpg']} as PaymentReceipt;
+const proofLedger = {...legacy,adminReceiptUrl:'https://example.test/admin.jpg',receiptImageBase64:'data:image/png;base64,test'};
+const before = JSON.stringify([proofLedger,receipt]);
+const evidence = memberEvidence([proofLedger],[receipt]);
+assert.equal(evidence.length,2);
+assert.equal(evidence[0].urls.length,2,'deduplicate legacy first URL without dropping other attachments');
+assert.deepEqual(evidence[0].periods,['2026-08','2026-09']);
+assert.equal(evidence[1].urls.length,2,'include both admin attachment formats');
+assert.equal(paymentHistoryRows([proofLedger])[1].balance,30,'pending evidence must not reduce debt');
+assert.equal(before,JSON.stringify([proofLedger,receipt]));
+assert.equal(memberEvidence([],[{...receipt,status:'rejected',receiptImageUrl:'',receiptImageUrls:[]}])[0].status,'rejected');
+console.log('Member evidence tests passed: multiple periods/files, both admin formats, statuses, no duplicate accounting or mutation.');

@@ -56,7 +56,8 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [memberQuery, setMemberQuery] = useState('');
   const [memberSort, setMemberSort] = useState<MemberSort>('name');
   const userLoadSequence = React.useRef(0);
-  const loadMemberHistory = React.useCallback((uid: string) => dataService.getPayments(uid), []);
+  const loadMemberHistory = React.useCallback((uid: string) => dataService.getPayments(uid, true), []);
+  const loadMemberReceipts = React.useCallback((uid: string) => dataService.getUserPaymentReceipts(uid, user.groupId, true), [user.groupId]);
 
   const [filterStatus, setFilterStatus] = useState('active'); // Default to active users only
 
@@ -2761,6 +2762,7 @@ const Admin: React.FC<Props> = ({ user }) => {
           }}
           actions={{ edit: setEditingUserProfile, payments: uid => { void handleOpenPayments(uid).catch(() => showMessage('No se pudieron cargar los pagos', 'error')); }, advance: handleOpenAdvancedPayment, role: handleChangeRole, status: handleToggleActive, link: () => setActiveTab('manual-merge') }}
           loadHistory={loadMemberHistory}
+          loadReceipts={loadMemberReceipts}
           onCreate={() => setActiveTab('create-user')} onRequests={() => setActiveTab('requests')} pendingCount={pendingUsers.length}
           onExport={handleDownloadCSV} onRefresh={loadUsers}
         />}
