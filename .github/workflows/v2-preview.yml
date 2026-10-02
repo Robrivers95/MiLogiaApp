@@ -13,7 +13,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  deployment-identity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Identify deployment account
+        env:
+          DEPLOYMENT_CREDENTIAL: ${{ secrets.FIREBASE_SERVICE_ACCOUNT2 }}
+        run: |
+          python3 - <<'PYCODE'
+          import json, os
+          account = json.loads(os.environ['DEPLOYMENT_CREDENTIAL'])
+          print('Deployment service account: ' + account['client_email'])
+          print('Credential project: ' + account.get('project_id', 'unknown'))
+          PYCODE
   preview:
+    needs: deployment-identity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,3 +52,4 @@ jobs:
           channelId: v2-beta
           expires: 30d
           projectId: registrologia
+
