@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { Payment, User } from '../types';
+import type { Payment, PaymentReceipt, User } from '../types';
 import type { MemberSort } from '../services/memberDirectory';
 import { memberPage } from '../services/memberDirectory';
 import { accountStatus, degreeLabel, memberMoney, memberStatus, MemberStats, roleLabel } from '../services/memberPresentation';
@@ -8,10 +8,10 @@ export interface MemberFilters { query: string; sort: MemberSort; role: string; 
 interface Props {
   members: User[]; allMembers: User[]; currentUser: User; stats: Record<string, MemberStats>; statsLoading: boolean; readOnly: boolean;
   filters: MemberFilters; onFilters: (change: Partial<MemberFilters>) => void;
-  actions: MemberActions; loadHistory: (uid: string) => Promise<Payment[]>;
+  actions: MemberActions; loadHistory: (uid: string) => Promise<Payment[]>; loadReceipts: (uid: string) => Promise<PaymentReceipt[]>;
   onCreate: () => void; onRequests: () => void; pendingCount: number; onExport: () => Promise<void>; onRefresh: () => Promise<void>;
 }
-export default function MemberManagement({ members, allMembers, currentUser, stats, statsLoading, readOnly, filters, onFilters, actions, loadHistory, onCreate, onRequests, pendingCount, onExport, onRefresh }: Props) {
+export default function MemberManagement({ members, allMembers, currentUser, stats, statsLoading, readOnly, filters, onFilters, actions, loadHistory, loadReceipts, onCreate, onRequests, pendingCount, onExport, onRefresh }: Props) {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(25);
   const [financial, setFinancial] = useState(false);
@@ -53,7 +53,7 @@ export default function MemberManagement({ members, allMembers, currentUser, sta
         <div className="flex flex-wrap justify-between items-center gap-3 py-4 text-xs text-gray-400" aria-live="polite"><span>{members.length ? (directory.current-1)*size+1 : 0}–{Math.min(directory.current*size,members.length)} de {members.length} miembros</span><label>Por página <select value={size} onChange={event=>setSize(Number(event.target.value))} className="rounded-lg bg-logia-800 border border-logia-700 p-3"><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></label><div className="flex gap-2 items-center"><button disabled={directory.current===1} onClick={()=>setPage(directory.current-1)} className="rounded-lg border border-logia-700 px-3 py-3 disabled:opacity-30">Anterior</button><span>{directory.current} / {directory.pages}</span><button disabled={directory.current===directory.pages} onClick={()=>setPage(directory.current+1)} className="rounded-lg border border-logia-700 px-3 py-3 disabled:opacity-30">Siguiente</button></div></div>
         <p className="text-xs text-gray-500">El CSV incluye todos los resultados, aunque estén en otras páginas. Buscar y cambiar de página solo afecta al directorio.</p>
       </div>
-      {selected && <MemberDetail member={selected} currentUser={currentUser} stats={stats[selected.uid]} statsLoading={statsLoading} readOnly={readOnly} actions={actions} loadHistory={loadHistory} revision={revision} onClose={close} />}
+      {selected && <MemberDetail member={selected} currentUser={currentUser} stats={stats[selected.uid]} statsLoading={statsLoading} readOnly={readOnly} actions={actions} loadHistory={loadHistory} loadReceipts={loadReceipts} revision={revision} financialScope={filters.start || filters.end ? `${filters.start || 'inicio'} a ${filters.end || 'actualidad'}` : 'todo el historial'} onClose={close} />}
     </div>
   </section>;
 }
