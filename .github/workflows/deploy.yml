@@ -1,61 +1,39 @@
-name: Deploy to Firebase Hosting
+name: Build and deploy Mi Logia
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mi-logia-live
+  cancel-in-progress: false
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-
-      - name: Show environment
-        run: |
-          node -v
-          npm -v
-          echo "Listing repo root files:"
-          ls -la
-          echo "package.json:"
-          cat package.json
-          echo "package-lock.json exists:"; [ -f package-lock.json ] && echo yes || echo no
-
-      - name: Install dependencies (verbose)
-        run: |
-          echo "If package-lock.json exists use 'npm ci', otherwise use 'npm install'"
-          if [ -f package-lock.json ]; then
-            echo "package-lock.json found — running npm ci"
-            npm ci --loglevel=verbose || {
-              echo "npm ci failed";
-              [ -f npm-debug.log ] && cat npm-debug.log || true;
-              ls -la node_modules || true;
-              exit 1;
-            }
-          else
-            echo "No package-lock.json — running npm install"
-            npm install --loglevel=verbose || {
-              echo "npm install failed";
-              [ -f npm-debug.log ] && cat npm-debug.log || true;
-              ls -la node_modules || true;
-              exit 1;
-            }
-          fi
-
-      - name: Build project
-        run: npm run build --if-present
-
-      - name: Deploy to Firebase Hosting
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Accounting regression tests
+        run: npm run test:accounting
+      - name: Project regression tests
+        run: node tests/project-finance-accounting.mjs
+      - name: Directory and navigation tests
+        run: node tests/run-directory.mjs
+      - name: Production build
+        run: npm run build
+      - name: Publish live
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT2 }}
           channelId: live
           projectId: registrologia

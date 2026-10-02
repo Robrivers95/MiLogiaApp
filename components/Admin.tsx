@@ -7,13 +7,16 @@ import { db } from '../services/firebase';
 import { useReadOnly } from '../contexts/ReadOnlyContext';
 import AdminPaymentEvidenceModal, { type AdminPaymentEvidenceContext } from './AdminPaymentEvidenceModal';
 import AdminProjects from './AdminProjects';
+import AdminNavigation from './AdminNavigation';
+import { AdminTab as Tab } from './adminNavigation';
+import { searchMembers, memberPage, MemberSort } from '../services/memberDirectory';
 
 
 interface Props {
   user: User;
 }
 
-type Tab = 'dashboard' | 'requests' | 'users' | 'fees' | 'attendance' | 'trivia' | 'treasury' | 'projects' | 'notices' | 'tasks' | 'banks' | 'visits' | 'payment-matrix' | 'create-user' | 'manual-merge' | 'receipts' | 'debt-notify';
+
 
 const Admin: React.FC<Props> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
@@ -48,7 +51,16 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [filterStart, setFilterStart] = useState('');
   const [filterEnd, setFilterEnd] = useState('');
   const [filterRole, setFilterRole] = useState('all');
+  const [directoryFinancial, setDirectoryFinancial] = useState(false);
+  const [loadingMemberStats, setLoadingMemberStats] = useState(false);
+  const [memberQuery, setMemberQuery] = useState('');
+  const [memberSort, setMemberSort] = useState<MemberSort>('name');
+  const [directoryPage, setDirectoryPage] = useState(1);
+  const [directorySize, setDirectorySize] = useState(25);
+  const userLoadSequence = React.useRef(0);
+
   const [filterStatus, setFilterStatus] = useState('active'); // Default to active users only
+  useEffect(() => { setDirectoryPage(1); }, [memberQuery, memberSort, directorySize, filterRole, filterStatus]);
 
   // Clock State
   const [mxTime, setMxTime] = useState('');
@@ -242,9 +254,6 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [editPriceData, setEditPriceData] = useState<PriceHistoryEntry>({ startDate: '', amount: 0 });
   const [originalEditDate, setOriginalEditDate] = useState('');
 
-  // Hamburger Menu State
-  const [showMenu, setShowMenu] = useState(false);
-  
   // Migration State (v3.4.2)
   const [isMigrating, setIsMigrating] = useState(false);
   const [migrationResult, setMigrationResult] = useState<{
@@ -368,8 +377,11 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const loadUsers = async () => {
+    const sequence = ++userLoadSequence.current;
+    setLoadingMemberStats(true);
     try {
         const data = await dataService.getUsers(user.groupId);
+        if (sequence !== userLoadSequence.current) return;
         // Sort: Inactive first, then by name
         data.sort((a, b) => {
            if (a.active !== b.active) return a.active ? 1 : -1;
@@ -378,15 +390,20 @@ const Admin: React.FC<Props> = ({ user }) => {
         setUsers(data);
         
         const stats: any = {};
-        for (const u of data) {
-            const s = await dataService.getUserFinancialStats(u.uid, filterStart, filterEnd);
-            stats[u.uid] = s;
-        }
-        setUserStats(stats);
+        let next = 0;
+        await Promise.all(Array.from({ length: Math.min(6, data.length) }, async () => {
+            while (next < data.length && sequence === userLoadSequence.current) {
+                const u = data[next++];
+                stats[u.uid] = await dataService.getUserFinancialStats(u.uid, filterStart, filterEnd);
+            }
+        }));
+        if (sequence === userLoadSequence.current) setUserStats(stats);
 
     } catch (e) {
         console.error("Error loading users", e);
         showMessage("Error cargando usuarios. Revisa Reglas.", 'error');
+    } finally {
+        if (sequence === userLoadSequence.current) setLoadingMemberStats(false);
     }
   };
 
@@ -956,6 +973,8 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const filteredUsers = getFilteredUsers();
+  const directoryMembers = searchMembers(filteredUsers, memberQuery, memberSort, userStats);
+  const directory = memberPage(directoryMembers, directoryPage, directorySize);
   const grandTotalDebt = filteredUsers.reduce((sum, u) => sum + Number(userStats[u.uid]?.totalDebt || 0), 0);
   
   // ... (Keep existing helpers: loadPriceHistory, showMessage, handleToggleActive, etc.)
@@ -1006,7 +1025,7 @@ const Admin: React.FC<Props> = ({ user }) => {
           const csvRows: string[] = [];
           
           // Para cada usuario, obtener sus pagos y crear filas por cada concepto
-          for (const u of filteredUsers) {
+          for (const u of directoryMembers) {
               try {
                   // Obtener los pagos del usuario
                   const payments = await dataService.getPayments(u.uid);
@@ -2620,229 +2639,11 @@ const Admin: React.FC<Props> = ({ user }) => {
 
   return (
     <div className="pb-24">
-      {/* HEADER */}
-      <div className="bg-logia-800 p-4 border-b border-logia-700 flex justify-between items-center sticky top-0 z-20 shadow-md">
-        <div className="flex items-center gap-2">
-            <button 
-                onClick={() => setShowMenu(!showMenu)}
-                className="bg-logia-700 hover:bg-logia-600 p-2 rounded text-white text-2xl"
-                title="Menú"
-            >
-                ☰
-            </button>
-            <h2 className="text-xl md:text-2xl font-bold text-white">Admin</h2>
-            <button onClick={() => setShowRules(true)} className="ml-2 bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-xs font-bold text-gray-200 border border-gray-600 flex items-center gap-1">
-                🛡️ Reglas
-            </button>
-            <button onClick={refreshAllData} className="bg-logia-700 hover:bg-logia-600 p-2 rounded text-white text-sm" title="Refrescar Datos">
-                🔄
-            </button>
-        </div>
-        <div className="flex flex-col items-end">
-             {/* Pending Badge */}
-            <div className="text-xl md:text-3xl font-mono text-white font-bold tracking-widest leading-none">
-                {mxTime || "--:--:--"}
-            </div>
-            <div className="text-[8px] md:text-[10px] text-gray-400 uppercase tracking-widest">Hora CDMX</div>
-        </div>
+      <AdminNavigation activeTab={activeTab} onSelect={setActiveTab} pendingCount={pendingUsers.length} readOnly={isReadOnly} />
+      <div className="flex flex-wrap justify-between gap-2 px-4 py-2 border-b border-logia-700 text-xs text-gray-400">
+        <span>{activeUsers} miembros activos · {mxTime || '--:--'} CDMX</span>
+        <div className="flex gap-4"><button onClick={refreshAllData} disabled={loading} className="text-indigo-300 disabled:opacity-50">{loading ? 'Actualizando…' : 'Actualizar datos'}</button><button onClick={() => setShowRules(true)}>Reglas y ayuda</button></div>
       </div>
-
-      {/* HAMBURGER MENU */}
-      {showMenu && (
-        <>
-          {/* Overlay */}
-          <div 
-            className="fixed inset-0 bg-black/50 z-30"
-            onClick={() => setShowMenu(false)}
-          />
-          
-          {/* Menu Panel */}
-          <div className="fixed left-0 top-0 h-full w-80 bg-logia-900 border-r border-logia-700 shadow-2xl z-40 overflow-y-auto">
-            <div className="p-4 border-b border-logia-700 flex justify-between items-center">
-              <h3 className="text-lg font-bold text-white">Menú de Administración</h3>
-              <button 
-                onClick={() => setShowMenu(false)}
-                className="text-gray-400 hover:text-white text-2xl"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="p-4 space-y-4">
-              {/* Dashboard & Requests */}
-              <div>
-                <h4 className="text-xs uppercase text-gray-500 font-bold mb-2">General</h4>
-                <button
-                  onClick={() => { setActiveTab('dashboard'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors flex items-center gap-2 ${
-                    activeTab === 'dashboard' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  📊 Resumen
-                </button>
-                <button
-                  onClick={() => { setActiveTab('requests'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors flex items-center gap-2 mt-2 relative ${
-                    activeTab === 'requests' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  📩 Solicitudes
-                  {pendingUsers.length > 0 && (
-                    <span className="ml-auto bg-red-600 text-white text-[10px] px-2 py-0.5 rounded-full">
-                      {pendingUsers.length}
-                    </span>
-                  )}
-                </button>
-              </div>
-
-              {/* Financial */}
-              <div>
-                <h4 className="text-xs uppercase text-gray-500 font-bold mb-2">💰 Finanzas</h4>
-                <button
-                  onClick={() => { setActiveTab('fees'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors ${
-                    activeTab === 'fees' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  💳 Cuotas
-                </button>
-                <button
-                  onClick={() => { setActiveTab('payment-matrix'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
-                    activeTab === 'payment-matrix' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  📊 Matriz de Pagos
-                </button>
-                <button
-                  onClick={() => { setActiveTab('treasury'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
-                    activeTab === 'treasury' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  🏦 Tesorería
-                </button>
-                <button
-                  onClick={() => { setActiveTab('projects'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
-                    activeTab === 'projects' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  📁 Proyectos
-                </button>
-                <button
-                  onClick={() => { setActiveTab('banks'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
-                    activeTab === 'banks' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  🏛️ Bancos
-                </button>
-              </div>
-
-              {/* Members & Activities */}
-              <div>
-                <h4 className="text-xs uppercase text-gray-500 font-bold mb-2">👥 Miembros</h4>
-                <button
-                  onClick={() => { setActiveTab('users'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors ${
-                    activeTab === 'users' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  👤 Gestión de Miembros
-                </button>
-                <button
-                  onClick={() => { setActiveTab('attendance'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
-                    activeTab === 'attendance' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  📅 Asistencia
-                </button>
-                <button
-                  onClick={() => { setActiveTab('create-user'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
-                    activeTab === 'create-user' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  ➕ Crear Usuario
-                </button>
-                <button
-                  onClick={() => { setActiveTab('manual-merge'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
-                    activeTab === 'manual-merge' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  🔗 Vincular Usuarios
-                </button>
-              </div>
-
-              {/* Communication & Activities */}
-              <div>
-                <h4 className="text-xs uppercase text-gray-500 font-bold mb-2">📢 Comunicación</h4>
-                <button
-                  onClick={() => { setActiveTab('notices'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors ${
-                    activeTab === 'notices' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  📰 Avisos
-                </button>
-                <button
-                  onClick={() => { setActiveTab('tasks'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
-                    activeTab === 'tasks' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  ✅ Tareas
-                </button>
-                <button
-                  onClick={() => { setActiveTab('visits'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
-                    activeTab === 'visits' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  🤝 Visitas
-                </button>
-              </div>
-
-              {/* Pagos - nuevo */}
-              <div>
-                <h4 className="text-xs uppercase text-gray-500 font-bold mb-2">💸 Comprobantes</h4>
-                <button
-                  onClick={() => { setActiveTab('receipts'); loadPaymentReceipts(); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors ${
-                    activeTab === 'receipts' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  🧾 Revisar Comprobantes
-                </button>
-                <button
-                  onClick={() => { setActiveTab('debt-notify'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors mt-2 ${
-                    activeTab === 'debt-notify' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  🔔 Notificaciones de Deuda
-                </button>
-              </div>
-
-              {/* Games */}
-              <div>
-                <h4 className="text-xs uppercase text-gray-500 font-bold mb-2">🎮 Actividades</h4>
-                <button
-                  onClick={() => { setActiveTab('trivia'); setShowMenu(false); }}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-bold transition-colors ${
-                    activeTab === 'trivia' ? 'bg-logia-accent text-white' : 'bg-logia-800 text-gray-300 hover:bg-logia-700'
-                  }`}
-                >
-                  🧠 Trivia
-                </button>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
 
       {/* NOTIFICATIONS */}
       {msg && (
@@ -2985,11 +2786,20 @@ const Admin: React.FC<Props> = ({ user }) => {
                         🔄 Actualizar
                     </button>
                     <button onClick={handleDownloadCSV} className="px-3 py-1 bg-green-700 rounded text-xs hover:bg-green-600">
-                        📥 Exportar CSV
+                        Exportar resultados CSV
                     </button>
                 </div>
              </div>
-             {/* ... (Filters, Stats, Table) ... */}
+             <div className="flex flex-wrap gap-2">
+               <button onClick={() => setActiveTab('create-user')} className="bg-indigo-600 rounded-lg px-3 py-2 text-sm">Crear miembro</button>
+               <button onClick={() => setActiveTab('manual-merge')} className="border border-logia-700 rounded-lg px-3 py-2 text-sm">Vincular cuenta</button>
+               <button onClick={() => setActiveTab('requests')} className="border border-logia-700 rounded-lg px-3 py-2 text-sm">Solicitudes ({pendingUsers.length})</button>
+             </div>
+             <div className="bg-logia-800 rounded-lg border border-logia-700 p-3 grid sm:grid-cols-3 gap-3">
+               <label className="sm:col-span-2 text-xs text-gray-400">Buscar miembro<input type="search" value={memberQuery} onChange={e => setMemberQuery(e.target.value)} placeholder="Nombre, correo, grado o cargo" className="block mt-1 w-full bg-logia-900 border border-logia-700 rounded p-2 text-sm text-white" /></label>
+               <label className="text-xs text-gray-400">Ordenar<select value={memberSort} onChange={e => setMemberSort(e.target.value as MemberSort)} className="block mt-1 w-full bg-logia-900 border border-logia-700 rounded p-2 text-sm text-white"><option value="name">Nombre A–Z</option><option value="debt">Mayor adeudo</option><option value="newest">Registro más reciente</option></select></label>
+             </div>
+
              <div className="bg-logia-800 p-3 rounded-lg border border-logia-700 grid grid-cols-2 md:grid-cols-4 gap-3">
                  <div>
                      <label className="text-[10px] text-gray-400 uppercase">Desde (Mes)</label>
@@ -3018,8 +2828,9 @@ const Admin: React.FC<Props> = ({ user }) => {
                  </div>
              </div>
              
+             <div className="flex flex-wrap gap-3 items-center text-xs text-gray-400"><label className="flex items-center gap-2"><input type="checkbox" checked={directoryFinancial} onChange={e => setDirectoryFinancial(e.target.checked)} />Mostrar columnas financieras</label>{loadingMemberStats && <span role="status">Actualizando saldos…</span>}</div>
              <div className="overflow-x-auto bg-logia-800 rounded-xl border border-logia-700 shadow-lg">
-                 <table className="w-full text-left text-sm text-gray-300 min-w-[1000px]">
+                 <table className={`w-full text-left text-sm text-gray-300 ${directoryFinancial ? 'min-w-[1000px]' : 'min-w-[560px]'}`}>
                      <thead className="bg-logia-900 text-xs uppercase text-gray-500 font-bold">
                          <tr>
                              <th className="p-3 w-10"></th>
@@ -3027,16 +2838,16 @@ const Admin: React.FC<Props> = ({ user }) => {
                              <th className="p-3 hidden">Grado / Cargo</th>
                              <th className="p-3 hidden">Trabajo</th>
                              <th className="p-3">Rol App</th>
-                             <th className="p-3 text-right">Cuota Mensual</th>
-                             <th className="p-3 text-right">Cuota Extra</th>
-                             <th className="p-3 text-right">Pagado Mensual</th>
-                             <th className="p-3 text-right">Pagado Extra</th>
+                             {directoryFinancial && <th className="p-3 text-right">Cuota Mensual</th>}
+                             {directoryFinancial && <th className="p-3 text-right">Cuota Extra</th>}
+                             {directoryFinancial && <th className="p-3 text-right">Pagado Mensual</th>}
+                             {directoryFinancial && <th className="p-3 text-right">Pagado Extra</th>}
                              <th className="p-3 text-right">Deuda Total</th>
                              <th className="p-3 text-center">Acciones</th>
                          </tr>
                      </thead>
                      <tbody className="divide-y divide-logia-700">
-                         {filteredUsers.map(u => {
+                         {directory.rows.map(u => {
                              const stats = userStats[u.uid] || { 
                                  totalPaid: 0, 
                                  totalDebt: 0, 
@@ -3136,18 +2947,18 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                  <option value="viewer">Observador</option>
                                              </select>
                                          </td>
-                                         <td className="p-3 text-right font-mono text-gray-300">
+                                         {directoryFinancial && <td className="p-3 text-right font-mono text-gray-300">
                                              ${stats.totalBilledRegular || 0}
-                                         </td>
-                                         <td className="p-3 text-right font-mono text-gray-300">
+                                         </td>}
+                                         {directoryFinancial && <td className="p-3 text-right font-mono text-gray-300">
                                              ${stats.totalBilledExtra || 0}
-                                         </td>
-                                         <td className="p-3 text-right font-mono text-green-400">
+                                         </td>}
+                                         {directoryFinancial && <td className="p-3 text-right font-mono text-green-400">
                                              ${stats.totalPaidRegular || 0}
-                                         </td>
-                                         <td className="p-3 text-right font-mono text-green-400">
+                                         </td>}
+                                         {directoryFinancial && <td className="p-3 text-right font-mono text-green-400">
                                              ${stats.totalPaidExtra || 0}
-                                         </td>
+                                         </td>}
                                          <td className="p-3 text-right font-mono font-bold text-red-400">
                                              ${stats.totalDebt}
                                          </td>
@@ -3183,7 +2994,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                      {/* Expanded Detail Section - Excel-style table */}
                                      {isExpanded && (
                                          <tr className="bg-logia-900">
-                                             <td colSpan={11} className="p-0">
+                                             <td colSpan={directoryFinancial ? 9 : 5} className="p-0">
                                                  <div className="p-4 border-t-2 border-indigo-600">
                                                      <h4 className="text-sm font-bold text-indigo-400 mb-3 flex items-center gap-2">
                                                          <span>📊</span> Detalle de Cuotas - {u.name}
@@ -3245,6 +3056,13 @@ const Admin: React.FC<Props> = ({ user }) => {
                      </tbody>
                  </table>
              </div>
+             {directoryMembers.length === 0 && <p className="text-center py-6 text-gray-400">No hay miembros con estos filtros.</p>}
+             <div className="flex flex-wrap justify-between items-center gap-3 text-xs text-gray-400" aria-live="polite">
+               <span>{directoryMembers.length ? (directory.current - 1) * directorySize + 1 : 0}–{Math.min(directory.current * directorySize, directoryMembers.length)} de {directoryMembers.length} miembros</span>
+               <label>Por página <select value={directorySize} onChange={e => setDirectorySize(Number(e.target.value))} className="bg-logia-800 border border-logia-700 rounded p-2"><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></label>
+               <div className="flex gap-3 items-center"><button disabled={directory.current === 1} onClick={() => setDirectoryPage(directory.current - 1)} className="border border-logia-700 rounded px-3 py-2 disabled:opacity-30">Anterior</button><span>{directory.current} / {directory.pages}</span><button disabled={directory.current === directory.pages} onClick={() => setDirectoryPage(directory.current + 1)} className="border border-logia-700 rounded px-3 py-2 disabled:opacity-30">Siguiente</button></div>
+             </div>
+             <p className="text-xs text-gray-500">La búsqueda y la página solo cambian este directorio. La matriz, los totales y las acciones masivas conservan su alcance.</p>
             </div>
         )}
 

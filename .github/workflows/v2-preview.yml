@@ -1,0 +1,55 @@
+name: Validate and preview V2 Beta
+
+on:
+  push:
+    branches: [feature/v2-intuitive-navigation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mi-logia-v2-preview
+  cancel-in-progress: true
+
+jobs:
+  deployment-identity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Identify deployment account
+        env:
+          DEPLOYMENT_CREDENTIAL: ${{ secrets.FIREBASE_SERVICE_ACCOUNT2 }}
+        run: |
+          python3 - <<'PYCODE'
+          import json, os
+          account = json.loads(os.environ['DEPLOYMENT_CREDENTIAL'])
+          print('Deployment service account: ' + account['client_email'])
+          print('Credential project: ' + account.get('project_id', 'unknown'))
+          PYCODE
+  preview:
+    needs: deployment-identity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Accounting regression tests
+        run: npm run test:accounting
+      - name: Project regression tests
+        run: node tests/project-finance-accounting.mjs
+      - name: Directory and navigation tests
+        run: node tests/run-directory.mjs
+      - name: Build
+        run: npm run build
+      - name: Deploy separate V2 Beta preview
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT2 }}
+          channelId: v2-beta
+          expires: 30d
+          projectId: registrologia
+
