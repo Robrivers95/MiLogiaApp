@@ -22,7 +22,7 @@ try {
   await page.getByText('En revisión',{exact:true}).waitFor();
   await page.getByText('Adjunto registrado por administración',{exact:false}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Ver comprobante 1',exact:true}).count(),2);
-  await page.getByRole('button',{name:'Ver comprobante 1',exact:true}).first().click();
+  await page.locator('article').filter({hasText:'En revisión'}).getByRole('button',{name:'Ver comprobante 1',exact:true}).click();
   assert.equal(await page.locator('iframe[title="Comprobante PDF"]').getAttribute('src'),'https://example.test/proof.pdf');
   await page.getByRole('button',{name:'Cerrar comprobante',exact:true}).click();
   await page.getByRole('button',{name:'Ver comprobante 2',exact:true}).click();
