@@ -18,7 +18,7 @@ try {
   await page.getByRole('button',{name:'Historial de cuotas',exact:true}).click();
   await page.getByText('Evento legado',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>window.__historyRequests),1);
-  assert.equal(await page.locator('.member-detail').evaluate(element=>getComputedStyle(element).position),'static');
+  assert.equal(await page.locator('.member-detail').evaluate(element=>getComputedStyle(element).position),'sticky');
   mkdirSync('test-results',{recursive:true});
   await page.screenshot({path:'test-results/members-desktop.png'});
   await page.getByRole('button',{name:'Cerrar ficha'}).click();

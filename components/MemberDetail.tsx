@@ -31,7 +31,7 @@ export default function MemberDetail({ member, currentUser, stats, statsLoading,
   let historyError = error;
   try { history = paymentHistoryRows(payments); } catch { historyError = 'Hay un registro con montos inválidos. Revisa los pagos de este miembro.'; }
   const displayMoney = (value?: number) => statsLoading ? 'Actualizando…' : value == null ? 'Sin calcular' : memberMoney(value);
-  return <aside className="member-detail fixed inset-0 z-40 bg-logia-900 overflow-y-auto lg:static lg:z-auto lg:rounded-xl lg:border lg:border-logia-700 lg:bg-logia-800 min-w-0" aria-label="Ficha del miembro">
+  return <aside className="member-detail fixed inset-0 z-40 bg-logia-900 overflow-y-auto lg:sticky lg:top-24 lg:self-start lg:max-h-[calc(100dvh-7rem)] lg:z-auto lg:rounded-xl lg:border lg:border-logia-700 lg:bg-logia-800 min-w-0" aria-label="Ficha del miembro">
     <div className="sticky top-0 bg-logia-800 border-b border-logia-700 p-4 flex gap-3 justify-between items-start z-10">
       <div className="min-w-0"><p className="text-xs text-indigo-300">Ficha del miembro</p><h3 className="text-lg font-bold break-words">{member.name}</h3><p className="text-xs text-gray-400 break-all">{member.email}</p></div>
       <button onClick={onClose} className="shrink-0 p-3 rounded-lg border border-logia-700" aria-label="Cerrar ficha">Cerrar</button>
