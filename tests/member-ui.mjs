@@ -22,6 +22,9 @@ try {
   await page.getByText('En revisión',{exact:true}).waitFor();
   await page.getByText('Adjunto registrado por administración',{exact:false}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Ver comprobante 1',exact:true}).count(),2);
+  await page.getByRole('button',{name:'Ver comprobante 1',exact:true}).first().click();
+  assert.equal(await page.locator('iframe[title="Comprobante PDF"]').getAttribute('src'),'https://example.test/proof.pdf');
+  await page.getByRole('button',{name:'Cerrar comprobante',exact:true}).click();
   await page.getByRole('button',{name:'Ver comprobante 2',exact:true}).click();
   await page.getByRole('dialog',{name:'Visor de comprobante'}).waitFor();
   await page.getByRole('button',{name:'Cerrar comprobante',exact:true}).click();
@@ -52,6 +55,7 @@ try {
       await page.screenshot({path:`test-results/members-mobile-${width}.png`});
       await page.getByRole('button',{name:'Comprobantes',exact:true}).click();
       await page.getByText('En revisión',{exact:true}).waitFor();
+      await page.screenshot({path:`test-results/member-evidence-list-${width}.png`});
       await page.getByRole('button',{name:'Ver comprobante 2',exact:true}).click();
       assert.ok(await page.getByRole('dialog').evaluate(element=>element.scrollWidth<=innerWidth));
       await page.screenshot({path:`test-results/member-evidence-${width}.png`});
