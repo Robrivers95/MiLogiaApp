@@ -9,7 +9,8 @@ import AdminPaymentEvidenceModal, { type AdminPaymentEvidenceContext } from './A
 import AdminProjects from './AdminProjects';
 import AdminNavigation from './AdminNavigation';
 import { AdminTab as Tab } from './adminNavigation';
-import { searchMembers, memberPage, MemberSort } from '../services/memberDirectory';
+import MemberManagement from './MemberManagement';
+import { searchMembers, MemberSort } from '../services/memberDirectory';
 
 
 interface Props {
@@ -51,16 +52,13 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [filterStart, setFilterStart] = useState('');
   const [filterEnd, setFilterEnd] = useState('');
   const [filterRole, setFilterRole] = useState('all');
-  const [directoryFinancial, setDirectoryFinancial] = useState(false);
   const [loadingMemberStats, setLoadingMemberStats] = useState(false);
   const [memberQuery, setMemberQuery] = useState('');
   const [memberSort, setMemberSort] = useState<MemberSort>('name');
-  const [directoryPage, setDirectoryPage] = useState(1);
-  const [directorySize, setDirectorySize] = useState(25);
   const userLoadSequence = React.useRef(0);
+  const loadMemberHistory = React.useCallback((uid: string) => dataService.getPayments(uid), []);
 
   const [filterStatus, setFilterStatus] = useState('active'); // Default to active users only
-  useEffect(() => { setDirectoryPage(1); }, [memberQuery, memberSort, directorySize, filterRole, filterStatus]);
 
   // Clock State
   const [mxTime, setMxTime] = useState('');
@@ -244,8 +242,6 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [editingUserProfile, setEditingUserProfile] = useState<User | null>(null);
   
   // Expandible Users Table State (v3.3.0)
-  const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set());
-  const [userPaymentsCache, setUserPaymentsCache] = useState<Record<string, Payment[]>>({});
   const [showRules, setShowRules] = useState(false);
   const [screenshotUser, setScreenshotUser] = useState<User | null>(null);
   
@@ -974,7 +970,6 @@ const Admin: React.FC<Props> = ({ user }) => {
 
   const filteredUsers = getFilteredUsers();
   const directoryMembers = searchMembers(filteredUsers, memberQuery, memberSort, userStats);
-  const directory = memberPage(directoryMembers, directoryPage, directorySize);
   const grandTotalDebt = filteredUsers.reduce((sum, u) => sum + Number(userStats[u.uid]?.totalDebt || 0), 0);
   
   // ... (Keep existing helpers: loadPriceHistory, showMessage, handleToggleActive, etc.)
@@ -1693,7 +1688,6 @@ const Admin: React.FC<Props> = ({ user }) => {
           const payments = await dataService.getPayments(editingUserLedger);
           setEditPayments(payments);
           await Promise.all([loadUsers(), loadAllLedgers(), loadTreasury(), loadDashboardStats()]);
-          setUserPaymentsCache({});
       } catch (e) {
           console.error(e);
           showMessage("Error guardando pago", 'error');
@@ -2536,27 +2530,6 @@ const Admin: React.FC<Props> = ({ user }) => {
       setShowAdvancedPaymentModal(true);
   };
   
-  const toggleUserExpand = async (uid: string) => {
-      const newSet = new Set(expandedUsers);
-      if (newSet.has(uid)) {
-          newSet.delete(uid);
-      } else {
-          newSet.add(uid);
-          // Load payments if not already cached
-          if (!userPaymentsCache[uid]) {
-              try {
-                  const payments = await dataService.getPayments(uid);
-                  setUserPaymentsCache(prev => ({ ...prev, [uid]: payments }));
-              } catch (e) {
-                  console.error('Error loading payments for user:', e);
-                  showMessage('Error cargando pagos del usuario', 'error');
-                  return;
-              }
-          }
-      }
-      setExpandedUsers(newSet);
-  };
-
   const handleSaveAdvancedPayment = async () => {
       if (!advancedPaymentUser || !advancedPaymentStartPeriod || advancedPaymentMonths < 1) {
           showMessage("Completa todos los campos", 'error');
@@ -2775,296 +2748,22 @@ const Admin: React.FC<Props> = ({ user }) => {
             </div>
         )}
 
-        {/* --- USERS TAB (MIEMBROS ACTIVOS) --- */}
-        {activeTab === 'users' && (
-            <div className="space-y-4">
-               {/* ... (Same user management UI) ... */}
-               <div className="flex justify-between items-center">
-                <h3 className="text-lg font-bold text-white">Gestión de Miembros</h3>
-                <div className="flex gap-2">
-                    <button onClick={() => { loadUsers(); setUserPaymentsCache({}); setExpandedUsers(new Set()); }} className="px-3 py-1 bg-logia-900 hover:bg-logia-700 rounded text-xs border border-logia-700 text-gray-300">
-                        🔄 Actualizar
-                    </button>
-                    <button onClick={handleDownloadCSV} className="px-3 py-1 bg-green-700 rounded text-xs hover:bg-green-600">
-                        Exportar resultados CSV
-                    </button>
-                </div>
-             </div>
-             <div className="flex flex-wrap gap-2">
-               <button onClick={() => setActiveTab('create-user')} className="bg-indigo-600 rounded-lg px-3 py-2 text-sm">Crear miembro</button>
-               <button onClick={() => setActiveTab('manual-merge')} className="border border-logia-700 rounded-lg px-3 py-2 text-sm">Vincular cuenta</button>
-               <button onClick={() => setActiveTab('requests')} className="border border-logia-700 rounded-lg px-3 py-2 text-sm">Solicitudes ({pendingUsers.length})</button>
-             </div>
-             <div className="bg-logia-800 rounded-lg border border-logia-700 p-3 grid sm:grid-cols-3 gap-3">
-               <label className="sm:col-span-2 text-xs text-gray-400">Buscar miembro<input type="search" value={memberQuery} onChange={e => setMemberQuery(e.target.value)} placeholder="Nombre, correo, grado o cargo" className="block mt-1 w-full bg-logia-900 border border-logia-700 rounded p-2 text-sm text-white" /></label>
-               <label className="text-xs text-gray-400">Ordenar<select value={memberSort} onChange={e => setMemberSort(e.target.value as MemberSort)} className="block mt-1 w-full bg-logia-900 border border-logia-700 rounded p-2 text-sm text-white"><option value="name">Nombre A–Z</option><option value="debt">Mayor adeudo</option><option value="newest">Registro más reciente</option></select></label>
-             </div>
-
-             <div className="bg-logia-800 p-3 rounded-lg border border-logia-700 grid grid-cols-2 md:grid-cols-4 gap-3">
-                 <div>
-                     <label className="text-[10px] text-gray-400 uppercase">Desde (Mes)</label>
-                     <input type="month" value={filterStart} onChange={e => setFilterStart(e.target.value)} className="w-full bg-logia-900 border border-logia-700 rounded p-1 text-sm text-white" />
-                 </div>
-                 <div>
-                     <label className="text-[10px] text-gray-400 uppercase">Hasta (Mes)</label>
-                     <input type="month" value={filterEnd} onChange={e => setFilterEnd(e.target.value)} className="w-full bg-logia-900 border border-logia-700 rounded p-1 text-sm text-white" />
-                 </div>
-                 <div>
-                     <label className="text-[10px] text-gray-400 uppercase">Rol</label>
-                     <select value={filterRole} onChange={e => setFilterRole(e.target.value)} className="w-full bg-logia-900 border border-logia-700 rounded p-1 text-sm text-white">
-                         <option value="all">Todos</option>
-                         <option value="member">Miembros</option>
-                         <option value="admin">Admins</option>
-                         <option value="viewer">Observadores</option>
-                     </select>
-                 </div>
-                 <div>
-                     <label className="text-[10px] text-gray-400 uppercase">Estado</label>
-                     <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="w-full bg-logia-900 border border-logia-700 rounded p-1 text-sm text-white">
-                         <option value="active">Activos (Default)</option>
-                         <option value="all">Todos (Inc. Pendientes)</option>
-                         <option value="inactive">Inactivos</option>
-                     </select>
-                 </div>
-             </div>
-             
-             <div className="flex flex-wrap gap-3 items-center text-xs text-gray-400"><label className="flex items-center gap-2"><input type="checkbox" checked={directoryFinancial} onChange={e => setDirectoryFinancial(e.target.checked)} />Mostrar columnas financieras</label>{loadingMemberStats && <span role="status">Actualizando saldos…</span>}</div>
-             <div className="overflow-x-auto bg-logia-800 rounded-xl border border-logia-700 shadow-lg">
-                 <table className={`w-full text-left text-sm text-gray-300 ${directoryFinancial ? 'min-w-[1000px]' : 'min-w-[560px]'}`}>
-                     <thead className="bg-logia-900 text-xs uppercase text-gray-500 font-bold">
-                         <tr>
-                             <th className="p-3 w-10"></th>
-                             <th className="p-3">Nombre / Email</th>
-                             <th className="p-3 hidden">Grado / Cargo</th>
-                             <th className="p-3 hidden">Trabajo</th>
-                             <th className="p-3">Rol App</th>
-                             {directoryFinancial && <th className="p-3 text-right">Cuota Mensual</th>}
-                             {directoryFinancial && <th className="p-3 text-right">Cuota Extra</th>}
-                             {directoryFinancial && <th className="p-3 text-right">Pagado Mensual</th>}
-                             {directoryFinancial && <th className="p-3 text-right">Pagado Extra</th>}
-                             <th className="p-3 text-right">Deuda Total</th>
-                             <th className="p-3 text-center">Acciones</th>
-                         </tr>
-                     </thead>
-                     <tbody className="divide-y divide-logia-700">
-                         {directory.rows.map(u => {
-                             const stats = userStats[u.uid] || { 
-                                 totalPaid: 0, 
-                                 totalDebt: 0, 
-                                 totalBilledRegular: 0, 
-                                 totalBilledExtra: 0,
-                                 totalPaidRegular: 0,
-                                 totalPaidExtra: 0
-                             };
-                             const isExpanded = expandedUsers.has(u.uid);
-                             const userPayments = userPaymentsCache[u.uid] || [];
-                             
-                             // Build detailed payment breakdown for expanded view
-                             const paymentDetails: Array<{
-                                 period: string; 
-                                 periodDisplay: string;
-                                 concept: string; 
-                                 amount: number; 
-                                 paid: number;
-                                 balance: number;
-                             }> = [];
-                             
-                             if (isExpanded && userPayments.length > 0) {
-                                 // Sort by period descending
-                                 const sortedPayments = [...userPayments].sort((a, b) => b.period.localeCompare(a.period));
-                                 
-                                 sortedPayments.forEach(p => {
-                                     const [year, month] = p.period.split('-');
-                                     const monthName = new Date(parseInt(year), parseInt(month) - 1, 1)
-                                         .toLocaleString('es', { month: 'long' });
-                                     const periodDisplay = `${monthName.charAt(0).toUpperCase() + monthName.slice(1)} ${year}`;
-                                     
-                                     // Add regular fee
-                                     const regularAmount = Number(p.amount) || 0;
-                                     const paidRegular = Number(p.paidRegular) || 0;
-                                     paymentDetails.push({
-                                         period: p.period,
-                                         periodDisplay,
-                                         concept: 'Cuota Regular',
-                                         amount: regularAmount,
-                                         paid: paidRegular,
-                                         balance: regularAmount - paidRegular
-                                     });
-                                     
-                                     // Add individual extra fees
-                                     if (p.extraFees && Array.isArray(p.extraFees) && p.extraFees.length > 0) {
-                                         p.extraFees.forEach(fee => {
-                                             paymentDetails.push({
-                                                 period: p.period,
-                                                 periodDisplay,
-                                                 concept: fee.description,
-                                                 amount: fee.amount,
-                                                 paid: fee.paid,
-                                                 balance: fee.amount - fee.paid
-                                             });
-                                         });
-                                     }
-                                 });
-                             }
-                             
-                             return (
-                                 <React.Fragment key={u.uid}>
-                                     {/* Main Row */}
-                                     <tr className={`hover:bg-logia-700/50 transition-colors ${!u.active ? 'bg-red-900/10 opacity-70' : ''}`}>
-                                         <td className="p-3">
-                                             <button 
-                                                 onClick={() => toggleUserExpand(u.uid)}
-                                                 className="text-indigo-400 hover:text-indigo-300 font-bold"
-                                                 title="Ver detalle de cuotas extras"
-                                             >
-                                                 {isExpanded ? '▼' : '▶'}
-                                             </button>
-                                         </td>
-                                         <td className="p-3">
-                                             <div className="font-bold text-white flex items-center gap-2">
-                                                 {u.name}
-                                                 {!u.active && <span className="text-[10px] bg-gray-700 text-gray-200 px-1.5 rounded">{u.leaveDate ? `INACTIVO · ${u.leaveDate}` : 'PENDIENTE'}</span>}
-                                             </div>
-                                             <div className="text-xs text-gray-500">{u.email}</div>
-                                         </td>
-                                         <td className="p-3 hidden">
-                                             <div className="text-indigo-300">{u.degree ? `${u.degree} (${u.numericDegree || '-'})` : '-'}</div>
-                                             <div className="text-xs text-gray-400">{u.lodgeRole || 'Sin cargo'}</div>
-                                         </td>
-                                         <td className="p-3 text-xs hidden">
-                                             <div className="text-white">{u.job || '-'}</div>
-                                             <div className="text-gray-500 truncate max-w-[100px]" title={u.workAddress}>{u.workAddress || ''}</div>
-                                         </td>
-                                         <td className="p-3">
-                                             <select 
-                                                value={u.role} 
-                                                onChange={(e) => handleChangeRole(u.uid, e.target.value as Role)}
-                                                disabled={isReadOnly || u.uid === user.uid}
-                                                className="bg-logia-900 border border-logia-700 rounded p-1 text-xs outline-none"
-                                             >
-                                                 <option value="member">Miembro</option>
-                                                 <option value="admin">Admin</option>
-                                                 <option value="viewer">Observador</option>
-                                             </select>
-                                         </td>
-                                         {directoryFinancial && <td className="p-3 text-right font-mono text-gray-300">
-                                             ${stats.totalBilledRegular || 0}
-                                         </td>}
-                                         {directoryFinancial && <td className="p-3 text-right font-mono text-gray-300">
-                                             ${stats.totalBilledExtra || 0}
-                                         </td>}
-                                         {directoryFinancial && <td className="p-3 text-right font-mono text-green-400">
-                                             ${stats.totalPaidRegular || 0}
-                                         </td>}
-                                         {directoryFinancial && <td className="p-3 text-right font-mono text-green-400">
-                                             ${stats.totalPaidExtra || 0}
-                                         </td>}
-                                         <td className="p-3 text-right font-mono font-bold text-red-400">
-                                             ${stats.totalDebt}
-                                         </td>
-                                         <td className="p-3 flex justify-center gap-2">
-                                             {!u.active ? (
-                                                  <>
-                                                    <button onClick={() => handleToggleActive(u.uid, u.active)} title="Reactivar miembro" className="px-3 py-1.5 bg-green-600 rounded hover:bg-green-500 text-white font-bold text-xs">
-                                                        ✅ REACTIVAR
-                                                    </button>
-                                                    <button onClick={() => setEditingUserProfile(u)} title="Editar fechas y perfil" className="p-1.5 bg-blue-600 rounded hover:bg-blue-500 text-white">
-                                                        ✏️
-                                                    </button>
-                                                  </>
-                                              ) : (
-                                                 <>
-                                                    <button onClick={() => handleToggleActive(u.uid, u.active)} title="Desactivar / Dar de Baja" className="p-1.5 bg-logia-900 border border-logia-700 rounded hover:bg-red-900/30 text-gray-400">
-                                                        🚫
-                                                    </button>
-                                                    <button onClick={() => handleOpenPayments(u.uid)} title="Gestionar Pagos" className="p-1.5 bg-yellow-600 rounded hover:bg-yellow-500 text-white">
-                                                        💰
-                                                    </button>
-                                                    <button onClick={() => handleOpenAdvancedPayment(u)} title="Pagos Anticipados (Multi-mes)" className="p-1.5 bg-purple-600 rounded hover:bg-purple-500 text-white">
-                                                        📅
-                                                    </button>
-                                                    <button onClick={() => setEditingUserProfile(u)} title="Editar Perfil" className="p-1.5 bg-blue-600 rounded hover:bg-blue-500 text-white">
-                                                        ✏️
-                                                    </button>
-                                                 </>
-                                             )}
-                                         </td>
-                                     </tr>
-                                     
-                                     {/* Expanded Detail Section - Excel-style table */}
-                                     {isExpanded && (
-                                         <tr className="bg-logia-900">
-                                             <td colSpan={directoryFinancial ? 9 : 5} className="p-0">
-                                                 <div className="p-4 border-t-2 border-indigo-600">
-                                                     <h4 className="text-sm font-bold text-indigo-400 mb-3 flex items-center gap-2">
-                                                         <span>📊</span> Detalle de Cuotas - {u.name}
-                                                     </h4>
-                                                     
-                                                     {paymentDetails.length > 0 ? (
-                                                         <div className="overflow-x-auto">
-                                                             <table className="w-full text-xs border border-logia-700 rounded">
-                                                                 <thead className="bg-logia-800">
-                                                                     <tr className="border-b border-logia-700">
-                                                                         <th className="p-2 text-left text-gray-400 font-bold uppercase w-32">Período</th>
-                                                                         <th className="p-2 text-left text-gray-400 font-bold uppercase">Concepto</th>
-                                                                         <th className="p-2 text-right text-gray-400 font-bold uppercase w-28">Facturado</th>
-                                                                         <th className="p-2 text-right text-gray-400 font-bold uppercase w-28">Pagado</th>
-                                                                         <th className="p-2 text-right text-gray-400 font-bold uppercase w-28">Deuda</th>
-                                                                     </tr>
-                                                                 </thead>
-                                                                 <tbody className="divide-y divide-logia-700">
-                                                                     {paymentDetails.map((detail, idx) => (
-                                                                         <tr key={`${u.uid}-detail-${idx}`} className="hover:bg-logia-800/50">
-                                                                             <td className="p-2 text-indigo-300 font-mono">
-                                                                                 {detail.periodDisplay}
-                                                                             </td>
-                                                                             <td className="p-2 text-gray-300">
-                                                                                 {detail.concept === 'Cuota Regular' ? (
-                                                                                     <span className="text-blue-400 font-medium">📅 {detail.concept}</span>
-                                                                                 ) : (
-                                                                                     <span className="text-yellow-400">⭐ {detail.concept}</span>
-                                                                                 )}
-                                                                             </td>
-                                                                             <td className="p-2 text-right font-mono text-gray-300">
-                                                                                 ${detail.amount.toFixed(2)}
-                                                                             </td>
-                                                                             <td className="p-2 text-right font-mono text-green-400">
-                                                                                 ${detail.paid.toFixed(2)}
-                                                                             </td>
-                                                                             <td className="p-2 text-right font-mono font-bold">
-                                                                                 <span className={detail.balance > 0 ? 'text-red-400' : 'text-green-400'}>
-                                                                                     ${detail.balance.toFixed(2)}
-                                                                                 </span>
-                                                                             </td>
-                                                                         </tr>
-                                                                     ))}
-                                                                 </tbody>
-                                                             </table>
-                                                         </div>
-                                                     ) : (
-                                                         <p className="text-gray-500 text-xs italic py-4">
-                                                             No hay registros de pagos para este miembro
-                                                         </p>
-                                                     )}
-                                                 </div>
-                                             </td>
-                                         </tr>
-                                     )}
-                                 </React.Fragment>
-                             );
-                         })}
-                     </tbody>
-                 </table>
-             </div>
-             {directoryMembers.length === 0 && <p className="text-center py-6 text-gray-400">No hay miembros con estos filtros.</p>}
-             <div className="flex flex-wrap justify-between items-center gap-3 text-xs text-gray-400" aria-live="polite">
-               <span>{directoryMembers.length ? (directory.current - 1) * directorySize + 1 : 0}–{Math.min(directory.current * directorySize, directoryMembers.length)} de {directoryMembers.length} miembros</span>
-               <label>Por página <select value={directorySize} onChange={e => setDirectorySize(Number(e.target.value))} className="bg-logia-800 border border-logia-700 rounded p-2"><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></label>
-               <div className="flex gap-3 items-center"><button disabled={directory.current === 1} onClick={() => setDirectoryPage(directory.current - 1)} className="border border-logia-700 rounded px-3 py-2 disabled:opacity-30">Anterior</button><span>{directory.current} / {directory.pages}</span><button disabled={directory.current === directory.pages} onClick={() => setDirectoryPage(directory.current + 1)} className="border border-logia-700 rounded px-3 py-2 disabled:opacity-30">Siguiente</button></div>
-             </div>
-             <p className="text-xs text-gray-500">La búsqueda y la página solo cambian este directorio. La matriz, los totales y las acciones masivas conservan su alcance.</p>
-            </div>
-        )}
+        {activeTab === 'users' && <MemberManagement
+          members={directoryMembers} allMembers={users} currentUser={user} stats={userStats} statsLoading={loadingMemberStats} readOnly={isReadOnly}
+          filters={{ query: memberQuery, sort: memberSort, role: filterRole, status: filterStatus, start: filterStart, end: filterEnd }}
+          onFilters={change => {
+            if (change.query !== undefined) setMemberQuery(change.query);
+            if (change.sort !== undefined) setMemberSort(change.sort);
+            if (change.role !== undefined) setFilterRole(change.role);
+            if (change.status !== undefined) setFilterStatus(change.status);
+            if (change.start !== undefined) setFilterStart(change.start);
+            if (change.end !== undefined) setFilterEnd(change.end);
+          }}
+          actions={{ edit: setEditingUserProfile, payments: uid => { void handleOpenPayments(uid).catch(() => showMessage('No se pudieron cargar los pagos', 'error')); }, advance: handleOpenAdvancedPayment, role: handleChangeRole, status: handleToggleActive, link: () => setActiveTab('manual-merge') }}
+          loadHistory={loadMemberHistory}
+          onCreate={() => setActiveTab('create-user')} onRequests={() => setActiveTab('requests')} pendingCount={pendingUsers.length}
+          onExport={handleDownloadCSV} onRefresh={loadUsers}
+        />}
 
         {/* --- FEES, ATTENDANCE, TRIVIA, TREASURY are largely unchanged but included implicitly --- */}
         {activeTab === 'fees' && (
@@ -5909,7 +5608,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                       </div>
                       <div>
                           <label className="text-xs text-gray-400 uppercase">Fecha de baja</label>
-                          <input type="date" value={editingUserProfile.leaveDate || ''} onChange={e => setEditingUserProfile({...editingUserProfile, leaveDate: e.target.value || undefined})} className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-sm" />
+                          <input type="date" value={editingUserProfile.leaveDate || ''} readOnly className="w-full bg-logia-900 border border-logia-700 rounded p-2 text-white text-sm" />
                       </div>
                       <div>
                           <label className="text-xs text-gray-400 uppercase">Último Reingreso (Cobro)</label>
@@ -5921,9 +5620,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                       <p className="text-sm font-bold text-white">Estado del miembro</p>
                       <p className="text-xs text-gray-500">Los inactivos conservan todo su historial y no aparecen como solicitudes.</p>
                     </div>
-                    <button type="button" onClick={() => setEditingUserProfile({...editingUserProfile, active: !editingUserProfile.active})} className={editingUserProfile.active ? 'px-3 py-2 rounded bg-green-700 text-white text-xs font-bold' : 'px-3 py-2 rounded bg-gray-700 text-white text-xs font-bold'}>
-                      {editingUserProfile.active ? 'ACTIVO' : 'INACTIVO'}
-                    </button>
+                    <span className="text-xs text-gray-300">{editingUserProfile.active ? 'ACTIVO' : 'INACTIVO'} · Cambiar desde la ficha del miembro</span>
                   </div>
                  {/* ...rest of fields... */}
                  <div className="grid grid-cols-2 gap-4">

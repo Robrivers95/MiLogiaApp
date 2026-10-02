@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { searchMembers, memberPage } from '../services/memberDirectory';
-import { User } from '../types';
+import { paymentHistoryRows, memberStatus, accountStatus } from '../services/memberPresentation';
+import { User, Payment } from '../types';
 import { adminAreas, findAdminArea, AdminTab } from '../components/adminNavigation';
 const users = Array.from({ length: 137 }, (_, i) => ({ uid: `u${i}`, name: `Miembro ${String(i).padStart(3, '0')}`, email: `m${i}@example.test`, active: true, role: 'member', groupId: 'test', joinDate: `2026-09-${String(i % 28 + 1).padStart(2, '0')}`, profileEditable: true } as User));
 users[42] = { ...users[42], name: 'José Ríos', degree: 'maestro', lodgeRole: 'tesorero' };
@@ -22,3 +23,14 @@ const expected: AdminTab[] = ['dashboard', 'requests', 'users', 'fees', 'attenda
 assert.deepEqual(adminAreas.flatMap(a => a.items.map(i => i.id)).sort(), expected.sort());
 for (const tab of expected) assert.ok(findAdminArea(tab));
 console.log('Directory and navigation tests passed: 137 members, search, sort, all pages and all 17 screens.');
+
+const legacy = { period: '2026-09', amount: 100, extraAmount: 50, extraDescription: 'Evento', paid: 120 } as Payment;
+const rows = paymentHistoryRows([legacy]);
+assert.deepEqual(rows.map(row => [row.concept, row.paid, row.balance]), [['Cuota mensual', 100, 0], ['Evento', 20, 30]]);
+const individual = { ...legacy, paid: 130, extraFees: [{ id: 'fee', description: 'Evento', amount: 50, paid: 30, forgiven: true }] } as Payment;
+assert.equal(paymentHistoryRows([individual])[1].balance, 0);
+assert.equal(paymentHistoryRows([individual])[1].forgiven, true);
+assert.equal(legacy.paidRegular, undefined, 'history presentation must not mutate legacy data');
+assert.equal(memberStatus({ ...users[0], active: false, leaveDate: '2026-09-01' }), 'Inactivo');
+assert.equal(memberStatus({ ...users[0], active: false }), 'Pendiente');
+assert.equal(accountStatus({ ...users[0], uid: 'temp_1' }), 'Sin cuenta vinculada');
