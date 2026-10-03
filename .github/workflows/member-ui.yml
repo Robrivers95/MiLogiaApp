@@ -6,6 +6,9 @@ on:
     paths:
       - 'components/Member*.tsx'
       - 'components/Admin.tsx'
+      - 'components/ExistingFeeAssignment.tsx'
+      - 'components/Payments.tsx'
+      - 'services/extraFeeLifecycle.ts'
       - 'services/member*.ts'
       - 'tests/member*'
       - '.github/workflows/member-ui.yml'

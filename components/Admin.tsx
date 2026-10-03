@@ -1,3 +1,5 @@
+import ExistingFeeAssignment from './ExistingFeeAssignment';
+import { existingFeeTemplates } from '../services/extraFeeLifecycle';
 
 import React, { useState, useEffect } from 'react';
 import { User, Payment, IndividualExtraFee, PriceHistoryEntry, Role, MasonicDegree, LodgeRole, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Trivia, VisitRequest, Group, BankBalance, ExtraFee, PaymentReceipt } from '../types';
@@ -195,6 +197,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [matrixViewModeAudit, setMatrixViewModeAudit] = useState<'status' | 'amount' | 'detail'>('amount');
   const [paymentEvidenceContext, setPaymentEvidenceContext] = useState<AdminPaymentEvidenceContext | null>(null);
   // Cuota extra masiva
+  const [showExistingFeeAssignment, setShowExistingFeeAssignment] = useState(false);
   const [showBulkExtraPanel, setShowBulkExtraPanel] = useState(false);
   const [bulkExtraDesc, setBulkExtraDesc] = useState('');
   const [bulkExtraAmount, setBulkExtraAmount] = useState('');
@@ -4119,7 +4122,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                         const cellPad = 2;
                                         if (!p) { ctx.fillStyle = '#374151'; }
                                         else if (p.regularCovered) {
-                                            const hasExtra = (p.extraFees?.length && p.extraFees.some(ef => ef.paid < ef.amount)) || (p.extraAmount && (p.paidExtra||0) < p.extraAmount);
+                                            const hasExtra = (p.extraFees?.length && p.extraFees.some(ef => !ef.forgiven && ef.paid < ef.amount)) || (p.extraAmount && (p.paidExtra||0) < p.extraAmount);
                                             ctx.fillStyle = hasExtra ? '#ca8a04' : '#16a34a';
                                         }
                                         else if ((p.paidRegular ?? 0) > 0) { ctx.fillStyle = '#b45309'; }
@@ -4263,6 +4266,20 @@ const Admin: React.FC<Props> = ({ user }) => {
                             <span className="text-[11px] text-gray-500">El excedente se muestra aparte y nunca reduce la deuda por debajo de $0.</span>
                         </div>
                     </div>
+
+                    {!isReadOnly && <button onClick={async () => { if (!showExistingFeeAssignment) { await loadExtraFees(); await loadAllLedgers(); } setShowExistingFeeAssignment(value => !value); }} className="mb-4 rounded-lg border border-indigo-700 p-3 text-indigo-200 text-sm">Asignar cuota existente a otro miembro</button>}
+                    {showExistingFeeAssignment && !isReadOnly && <ExistingFeeAssignment
+                      templates={existingFeeTemplates(allUserLedgers, extraFees, matrixYear)} members={users} ledgers={allUserLedgers} initialConcept={matrixExtraDesc}
+                      onClose={() => setShowExistingFeeAssignment(false)}
+                      onAssign={async (template, uids) => {
+                        const result = {created:0,skipped:0,failed:[] as string[]};
+                        for (const uid of uids) {
+                          try { const created = await dataService.assignExistingExtraFee(user.groupId, uid, template, user.uid); if (created) result.created++; else result.skipped++; }
+                          catch { result.failed.push(users.find(member => member.uid === uid)?.name || uid); }
+                        }
+                        await Promise.all([loadAllLedgers(), loadUsers(), loadExtraFees()]);
+                        return result;
+                      }} />}
 
                     {/* ── PANEL: Cuota Extra Masiva ── */}
                     <div className="border border-logia-700 rounded-lg overflow-hidden mb-4">
@@ -4549,7 +4566,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                 } else if (ef) {
                                                     if (ef.forgiven) {
                                                         cellClass = 'bg-gray-700/60 text-gray-400 cursor-pointer hover:brightness-110';
-                                                        cellTitle = `Perdonado — no pagó $${ef.amount}${ef.forgivenNote ? ` · ${ef.forgivenNote}` : ''}`;
+                                                        cellTitle = `Perdonado — abonado $${ef.paid}, adeudo $0${ef.forgivenNote ? ` · ${ef.forgivenNote}` : ''}`;
                                                         cellText = '○';
                                                     } else {
                                                         const effectivePaid = Number(ef.paid) || 0;
@@ -4577,7 +4594,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                                                     const paidReg = Number(paymentData.paidRegular ?? paymentData.paid ?? 0);
                                                     const isPartial = !isPaid && paidReg > 0;
                                                     const extraDebt = paymentData.extraFees?.length
-                                                        ? paymentData.extraFees.reduce((s, ef) => s + Math.max(0, ef.amount - ef.paid), 0)
+                                                        ? paymentData.extraFees.reduce((s, ef) => s + (ef.forgiven ? 0 : Math.max(0, ef.amount - ef.paid)), 0)
                                                         : paymentData.extraAmount ? Math.max(0, paymentData.extraAmount - (paymentData.paidExtra || 0)) : 0;
                                                     const hasExtra = (paymentData.extraFees?.length || 0) > 0 || (paymentData.extraAmount || 0) > 0;
                                                     if (isPaid && (!hasExtra || extraDebt <= 0)) { cellClass = 'bg-green-600 text-white cursor-pointer hover:brightness-110'; cellTitle = 'Pagado (todo)'; cellText = '✓'; }

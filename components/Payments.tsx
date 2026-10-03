@@ -1,3 +1,4 @@
+import { feeOptions } from '../services/extraFeeLifecycle';
 import React, { useEffect, useState } from 'react';
 import { User, Payment, IndividualExtraFee, PaymentReceipt } from '../types';
 import { dataService } from '../services/api';
@@ -164,44 +165,8 @@ const Payments: React.FC<Props> = ({ user }) => {
     })
     .map(p => p.period);
 
-  // Cuotas extra pendientes: el comprobante queda ligado a una cuota exacta.
-  const pendingExtraFeeOptions: Array<{
-    period: string;
-    feeId: string;
-    description: string;
-    amount: number;
-    paid: number;
-    balance: number;
-    legacy: boolean;
-  }> = payments.flatMap(payment => {
-    if (payment.extraFees && payment.extraFees.length > 0) {
-      return payment.extraFees
-        .filter(fee => !fee.forgiven)
-        .map(fee => ({
-          period: payment.period,
-          feeId: fee.id,
-          description: fee.description,
-          amount: Number(fee.amount) || 0,
-          paid: Number(fee.paid) || 0,
-          balance: Math.max(0, (Number(fee.amount) || 0) - (Number(fee.paid) || 0)),
-          legacy: false,
-        }));
-    }
-    if (Number(payment.extraAmount) > 0) {
-      const paid = Number(payment.paidExtra) || 0;
-      const amount = Number(payment.extraAmount) || 0;
-      return [{
-        period: payment.period,
-        feeId: 'legacy',
-        description: payment.extraDescription || 'Cuota Extra',
-        amount,
-        paid,
-        balance: Math.max(0, amount - paid),
-        legacy: true,
-      }];
-    }
-    return [];
-  }).sort((a, b) => b.period.localeCompare(a.period) || a.description.localeCompare(b.description));
+  // Incluye cuotas cubiertas/perdonadas para recibir aportaciones voluntarias.
+  const pendingExtraFeeOptions = feeOptions(payments);
 
   const selectedExtraFeeOption = pendingExtraFeeOptions.find(
     option => option.feeId === selectedExtraFeeId && option.period === selectedExtraFeePeriod
@@ -715,7 +680,7 @@ const Payments: React.FC<Props> = ({ user }) => {
                       <option value="">Selecciona una cuota...</option>
                       {pendingExtraFeeOptions.map(option => (
                         <option key={`${option.period}-${option.feeId}`} value={`${option.period}|||${option.feeId}`}>
-                          {option.description} · {formatPeriod(option.period)} · saldo ${option.balance.toFixed(2)}
+                          {option.description} · {formatPeriod(option.period)} · saldo ${option.balance.toFixed(2)}{option.forgiven ? ' · Perdonada: acepta abonos' : option.balance === 0 ? ' · Cubierta: acepta abonos' : ''}
                         </option>
                       ))}
                     </select>
@@ -729,6 +694,7 @@ const Payments: React.FC<Props> = ({ user }) => {
                         <span className="text-gray-400">Pagado<br/><strong className="text-green-400">${selectedExtraFeeOption.paid.toFixed(2)}</strong></span>
                         <span className="text-gray-400">Pendiente<br/><strong className="text-red-400">${selectedExtraFeeOption.balance.toFixed(2)}</strong></span>
                       </div>
+                      {(selectedExtraFeeOption.forgiven || selectedExtraFeeOption.balance === 0) && <p className="text-green-300 pt-2">Puedes abonar voluntariamente. El importe se registrará en esta cuota; su adeudo permanece en $0.</p>}
                       {pendingReportedForSelectedExtra > 0 && (
                         <p className="text-yellow-300 pt-1">
                           ⏳ Hay ${pendingReportedForSelectedExtra.toFixed(2)} en comprobantes pendientes de revisión. Reporta siempre el monto real transferido, aunque supere la meta.
