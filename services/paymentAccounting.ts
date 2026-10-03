@@ -7,11 +7,11 @@ const money = (value: unknown): number => {
 };
 
 /** Correct only this receipt's contribution; other manual/approved payments survive. */
-export function correctAppliedPayment(total: number, cap: number, previousApplied: number, correctedApplied: number): number {
+export function correctAppliedPayment(total: number, cap: number, previousApplied: number, correctedApplied: number, allowExcess = false): number {
   [total, cap, previousApplied, correctedApplied].forEach(money);
   if (previousApplied > total || correctedApplied <= 0) throw new Error('El monto aplicado no es consistente con el saldo; revisa el registro.');
   const result = Math.round((total - previousApplied + correctedApplied) * 100) / 100;
-  if (result > cap) throw new Error('La corrección excede la cuota. Revisa los otros abonos antes de continuar.');
+  if (!allowExcess && result > cap) throw new Error('La corrección excede la cuota. Revisa los otros abonos antes de continuar.');
   return result;
 }
 

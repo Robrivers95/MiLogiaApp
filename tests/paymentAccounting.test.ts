@@ -17,3 +17,37 @@ const forgiven = normalizePayment({ ...base, paidRegular: 400, extraFees: [{ id:
 assert.equal(forgiven.paid, 1400); // forgiveness is never cash income
 assert.equal(forgiven.status, 'Pagado');
 console.log('Payment accounting regression tests passed');
+
+import { applyExtraReceipt, assignExistingFee, existingFeeTemplates, feeOptions, hasAssignedFee } from '../services/extraFeeLifecycle';
+import { paymentHistoryRows } from '../services/memberPresentation';
+import type { PaymentReceipt } from '../types';
+const closed = {...base, amount:0,extraFees:[{id:'event',description:'Evento',amount:2000,paid:0,createdAt:'',forgiven:true,forgivenNote:'Cierre'}]};
+const evidence = {id:'r',amount:1000,extraFeeId:'event',conceptDescription:'Evento'} as PaymentReceipt;
+const contribution=applyExtraReceipt(closed,evidence);
+assert.equal(contribution.payment.extraFees![0].paid,1000);
+assert.equal(contribution.payment.extraFees![0].forgiven,true);
+assert.equal(contribution.payment.extraFees![0].forgivenNote,'Cierre');
+assert.equal(paymentHistoryRows([contribution.payment])[1].balance,0);
+assert.equal(contribution.payment.paid,1000);
+assert.equal(feeOptions([closed])[0].balance,0);
+assert.equal(feeOptions([closed])[0].forgiven,true);
+assert.equal(applyExtraReceipt(contribution.payment,{...evidence,amount:5000}).payment.paidExtra,6000,'voluntary donations are not capped');
+const covered={...closed,extraFees:[{...closed.extraFees[0],forgiven:false,paid:2000}]};
+assert.equal(applyExtraReceipt(covered,evidence).payment.paidExtra,3000,'fully covered fee accepts later voluntary payments');
+assert.equal(applyExtraReceipt({...closed,extraFees:[{...closed.extraFees[0],forgiven:false}]},{...evidence,amount:2500}).appliedAmount,2000,'active fee keeps existing allocation/excess behavior');
+assert.throws(()=>applyExtraReceipt(closed,{...evidence,extraFeeId:'wrong'}));
+assert.throws(()=>applyExtraReceipt(closed,{...evidence,amount:NaN}));
+assert.equal(closed.extraFees[0].paid,0,'never mutate previous records');
+const template={key:'2026-09|cena|500',period:'2026-09',description:'Cena',amount:500,forgiven:false};
+const legacy={...base,paid:500,extraAmount:200,extraDescription:'Anterior'};
+const assigned=assignExistingFee(legacy,template,'admin','2026-10-03')!;
+assert.equal(assigned.extraFees![0].paid,100,'preserve legacy cash allocations when adding another fee');
+assert.equal(assigned.paidRegular,400);assert.equal(assigned.extraFees!.length,2);
+assert.equal(assignExistingFee(assigned,template,'admin','2026-10-03'),null,'duplicate assignment is a no-op');
+assert.equal(hasAssignedFee([assigned],{...template,description:' CENA ',amount:700}),true,'same concept is not assigned twice after amount edits');
+const exempt=assignExistingFee(undefined,{...template,forgiven:true},'admin','2026-10-03')!;
+assert.equal(exempt.amount,0);assert.equal(paymentHistoryRows([exempt])[1].balance,0);
+assert.equal(applyExtraReceipt(exempt,{...evidence,extraFeeId:exempt.extraFees![0].id,conceptDescription:'Cena'}).payment.paid,1000);
+assert.equal(existingFeeTemplates({member:[closed]},[],2026)[0].forgiven,true);
+assert.equal(existingFeeTemplates({member:[closed],other:[covered]},[],2026)[0].forgiven,false);
+console.log('Extra fee lifecycle passed: forgiven/covered contributions, zero debt, legacy preservation, late/duplicate assignment.');

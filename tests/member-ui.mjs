@@ -27,6 +27,7 @@ try {
   await page.getByRole('button',{name:'Cerrar comprobante',exact:true}).click();
   await page.getByRole('button',{name:'Ver comprobante 2',exact:true}).click();
   await page.getByRole('dialog',{name:'Visor de comprobante'}).waitFor();
+  for(let iteration=0;iteration<5;iteration++){await page.evaluate(()=>window.__rerender());await page.waitForTimeout(200);assert.equal(await page.getByRole('dialog',{name:'Visor de comprobante'}).isVisible(),true,'parent updates must not dismiss evidence');}
   await page.getByRole('button',{name:'Cerrar comprobante',exact:true}).click();
   await page.getByRole('button',{name:'Historial de cuotas',exact:true}).click();
   await page.getByText('Evento legado',{exact:true}).waitFor();
@@ -82,6 +83,30 @@ try {
   await page.getByRole('button',{name:'Comprobantes',exact:true}).click();
   await page.getByText('No se pudieron cargar los comprobantes. Reintenta la consulta.').waitFor();
   assert.equal(await page.getByText('No hay comprobantes asociados a esta consulta.').count(),0);
+  for(const width of [1440,390,320]) {
+    await page.setViewportSize({width,height:844});
+    await page.goto('http://127.0.0.1:5179/tests/member-ui.html?assignment=1');
+    await page.getByRole('heading',{name:'Asignar cuota existente'}).waitFor();
+    assert.equal(await page.getByLabel('Asignar sin adeudo (perdonada; acepta abonos voluntarios)').isChecked(),true);
+    await page.getByPlaceholder('Nombre o correo').fill('Miembro 001');
+    await page.getByLabel(/Miembro 001/).check();
+    await page.getByRole('button',{name:'Asignar a 1 miembro(s)',exact:true}).click();
+    await page.getByText('1 asignados · 0 ya tenían la cuota',{exact:true}).waitFor();
+    assert.equal(await page.evaluate(()=>window.__assignmentLedgers.test_1[0].extraFees[0].forgiven),true);
+    assert.equal(await page.getByLabel(/Miembro 001/).count(),0,'assigned member leaves candidate list');
+    const dropdown=page.getByLabel('Cuota y período');
+    const value=await dropdown.locator('option').filter({hasText:'Cena'}).getAttribute('value');
+    await dropdown.selectOption(value);
+    assert.equal(await page.getByLabel('Asignar sin adeudo (perdonada; acepta abonos voluntarios)').isChecked(),false);
+    await page.getByPlaceholder('Nombre o correo').fill('Miembro 002');
+    await page.getByLabel(/Miembro 002/).check();
+    await page.getByRole('button',{name:'Asignar a 1 miembro(s)',exact:true}).click();
+    await page.getByText('1 asignados · 0 ya tenían la cuota',{exact:true}).waitFor();
+    assert.equal(await page.evaluate(()=>window.__assignmentLedgers.test_2[0].amount),0);
+    assert.equal(await page.evaluate(()=>window.__assignmentLedgers.test_2[0].extraFees[0].amount),500);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`assignment fits ${width}`);
+    await page.screenshot({path:`test-results/existing-fee-assignment-${width}.png`});
+  }
   assert.deepEqual(errors,[]);
-  console.log('Member UI passed: 137 members, desktop/tablet/mobile 1440/768/390/320px, selection, lazy history, pagination, search, export, status changes and read-only permissions.');
+  console.log('Member UI passed: 137 members, desktop/tablet/mobile 1440/768/390/320px, selection, lazy history, pagination, search, export, status changes, read-only permissions, evidence persistence on parent updates and late fee assignment.');
 } finally { await browser?.close();server.kill('SIGTERM'); }

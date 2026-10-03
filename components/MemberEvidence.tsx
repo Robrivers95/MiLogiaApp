@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { memberMoney, memberEvidence } from '../services/memberPresentation';
 export default function MemberEvidence({ items }: { items: ReturnType<typeof memberEvidence> }) {
   const [preview, setPreview] = useState<{url: string; label: string} | null>(null);
-  useEffect(() => { setPreview(null); }, [items]);
   useEffect(() => {
     if (!preview) return;
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopImmediatePropagation(); setPreview(null); } };

@@ -92,6 +92,7 @@ export interface PaymentReceipt {
   extraFeeId?: string;          // ID exacto de la cuota extra seleccionada
   extraFeePeriod?: string;      // YYYY-MM del ledger donde vive la cuota extra
   appliedAmount?: number;       // Monto realmente aplicado al saldo al aprobar
+  voluntaryContribution?: boolean; // Abono aceptado en cuota cubierta o perdonada
   unappliedAmount?: number;     // Diferencia entre recibido y aplicado (excedente)
   ledgerIncluded?: boolean;     // true si es desglose histórico ya incluido en el acumulado
   status: 'pending' | 'approved' | 'rejected';
@@ -127,6 +128,7 @@ export interface IndividualExtraFee {
   paid: number; // Amount paid for this specific extra fee
   createdAt: string; // ISO Date when this was added
   createdBy?: string; // UID of who created it
+  sourceFeeId?: string; // ID de la cuota original al asignarla posteriormente
   forgiven?: boolean;    // true = deuda perdonada/cerrada (no se cobra más)
   forgivenAt?: string;   // ISO cuando se perdonó
   forgivenBy?: string;   // UID del admin que lo perdonó

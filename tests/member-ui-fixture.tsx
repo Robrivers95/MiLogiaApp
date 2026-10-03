@@ -1,4 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import ExistingFeeAssignment from '../components/ExistingFeeAssignment';
+import { existingFeeTemplates, assignExistingFee } from '../services/extraFeeLifecycle';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import MemberManagement, { MemberFilters } from '../components/MemberManagement';
 import { searchMembers } from '../services/memberDirectory';
@@ -15,9 +17,15 @@ const loadReceipts = async (uid: string) => {
 };
 function Fixture() {
  const [members,setMembers]=useState(initialMembers);
+ const [,setTick]=useState(0);
+ useEffect(()=>{(window as any).__rerender=()=>setTick(value=>value+1);return ()=>{delete (window as any).__rerender;};},[]);
+ const [assignmentLedgers,setAssignmentLedgers]=useState<Record<string,Payment[]>>({test_0:[{period:'2026-09',amount:0,paid:0,status:'Pagado',comments:'',extraFees:[{id:'event',description:'Evento perdonado',amount:2000,paid:0,forgiven:true,createdAt:''},{id:'dinner',description:'Cena',amount:500,paid:0,createdAt:''}]}]});
+
  const [filters,setFilters]=useState<MemberFilters>({query:'',sort:'name',role:'all',status:'active',start:'',end:''});
  const results=useMemo(()=>searchMembers(members.filter(member=>(filters.status==='all'||(filters.status==='active'?member.active:!member.active))&&(filters.role==='all'||member.role===filters.role)),filters.query,filters.sort,stats),[members,filters]);
  const currentUser={...members[136],role:'admin'} as User;
+ if(new URLSearchParams(location.search).has('assignment')) return <div className="p-4 max-w-3xl mx-auto"><ExistingFeeAssignment templates={existingFeeTemplates(assignmentLedgers,[],2026)} members={members} ledgers={assignmentLedgers} initialConcept="Evento perdonado" onClose={()=>{}} onAssign={async(template,uids)=>{const updated={...assignmentLedgers};let created=0,skipped=0;for(const uid of uids){const payment=assignExistingFee(updated[uid]?.find(row=>row.period===template.period),template,'admin','2026-10-03');if(payment){updated[uid]=[payment];created++;}else skipped++;}setAssignmentLedgers(updated);(window as any).__assignmentLedgers=updated;return {created,skipped,failed:[]};}} /></div>;
+
  return <div className="p-4 max-w-7xl mx-auto"><MemberManagement members={results} allMembers={members} currentUser={currentUser} stats={stats} statsLoading={false} readOnly={new URLSearchParams(location.search).has('readonly')} filters={filters} onFilters={change=>setFilters(previous=>({...previous,...change}))} actions={{edit:()=>{},payments:()=>{},advance:()=>{},link:()=>{},role:(uid,role)=>setMembers(previous=>previous.map(member=>member.uid===uid?{...member,role}:member)),status:async(uid)=>setMembers(previous=>previous.map(member=>member.uid===uid?{...member,active:!member.active,leaveDate:'2026-10-02'}:member))}} loadHistory={loadHistory} loadReceipts={loadReceipts} onCreate={()=>{}} onRequests={()=>{}} pendingCount={0} onExport={async()=>{(window as any).__exportedCount=results.length;}} onRefresh={async()=>{}} /></div>;
 }
 createRoot(document.getElementById('root')!).render(<Fixture />);

@@ -29,6 +29,8 @@ jobs:
         run: node tests/project-finance-accounting.mjs
       - name: Directory and navigation tests
         run: node tests/run-directory.mjs
+      - name: Extra fee integration tests
+        run: node tests/extra-fee-integration.mjs
       - name: Production build
         run: npm run build
       - name: Publish live
