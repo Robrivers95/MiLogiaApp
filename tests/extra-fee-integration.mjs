@@ -7,7 +7,7 @@ const clone=value=>structuredClone(value);
 const ref=(...args)=>{const path=args.slice(1).join('/');return {path,id:path.split('/').at(-1)};};
 const snap=reference=>({id:reference.id,exists:()=>store.has(reference.path),data:()=>clone(store.get(reference.path))});
 const firestore={doc:ref,collection:ref,query:(reference,...conditions)=>({...reference,conditions}),where:(...condition)=>condition,
- getDocs:async reference=>({docs:[...store.keys()].filter(path=>path.startsWith(`${reference.path}/`) && !path.slice(reference.path.length+1).includes('/') && (reference.conditions || []).every(([field,operator,value])=>store.get(path)[field]===value)).map(path=>snap({path,id:path.split('/').at(-1)}))}),
+ getDocs:async reference=>{const docs=[...store.keys()].filter(path=>path.startsWith(`${reference.path}/`) && !path.slice(reference.path.length+1).includes('/') && (reference.conditions || []).every(([field,operator,value])=>store.get(path)[field]===value)).map(path=>snap({path,id:path.split('/').at(-1)}));return {docs,forEach:callback=>docs.forEach(callback)};},
  getDoc:async reference=>snap(reference),updateDoc:async(reference,value)=>store.set(reference.path,{...store.get(reference.path),...clone(value)}),
  runTransaction:async(_db,callback)=>{const next=lock.then(async()=>{const writes=[];const transaction={get:async reference=>snap(reference),set:(reference,value)=>writes.push([reference.path,clone(value)]),update:(reference,value)=>writes.push([reference.path,{...store.get(reference.path),...clone(value)}])};const result=await callback(transaction);if(failCommit){failCommit=false;throw new Error('simulated commit failure');}for(const [path,value] of writes)store.set(path,value);return result;});lock=next.catch(()=>{});return next;}};
 const mocks={firestore,auth:{currentUser:{uid:'admin'}},db:{},storage:{}};
@@ -50,3 +50,19 @@ store.set('users/admin',{role:'admin',active:true,groupId:'logia'});store.set('u
 const reminders=await dataService.prepareWhatsAppReminders('logia');assert.equal(reminders.groupName,'Logia Prueba');assert.equal(reminders.recipients.length,1,'forgiven debt is excluded and other Logias stay isolated');assert.equal(reminders.recipients[0].member.uid,'new');assert.equal(reminders.recipients[0].reminder.total,500);
 store.set('groups/logia',{active:false});await assert.rejects(dataService.prepareWhatsAppReminders('logia'),/activa/);
 console.log('WhatsApp real API guards passed: strict admin-only, consent/contact saving, own-group debts and suspended Logia.');
+const february={key:'2026-02|evento anual|700',period:'2026-02',description:'Evento anual',amount:700,forgiven:false,registryId:'feb-event',assignmentPeriod:'2027-09'};
+store.set('extraFees/feb-event',{groupId:'logia',period:'2026-02',description:'Evento anual',amount:700,appliedToUsers:[]});
+for(const uid of ['late-a','late-b','late-c']) {
+ store.set(`users/${uid}`,{groupId:'logia',name:uid,active:true,role:'member'});
+ assert.equal(await dataService.assignExistingExtraFee('logia',uid,february,'admin'),true);
+ assert.equal(store.has(`users/${uid}/ledger/2026-02`),false,'do not charge source month');
+ const payments=await dataService.getPayments(uid,true);
+ assert.equal(payments[0].period,'2027-09');assert.equal(payments[0].extraFees[0].sourceFeeId,'feb-event');
+ const totals=await dataService.getUserFinancialStats(uid,undefined,undefined,true);
+ assert.equal(totals.totalDebt,700,'new assignments appear in member financial summary');
+ assert.equal(totals.totalBilledExtra,700);
+ assert.equal(await dataService.assignExistingExtraFee('logia',uid,{...february,assignmentPeriod:'2028-01'},'admin'),false,'same source fee cannot be duplicated in another year');
+}
+assert.equal(store.get('extraFees/feb-event').appliedToUsers.length,3);
+await assert.rejects(dataService.assignExistingExtraFee('logia','late-a',{...february,assignmentPeriod:''},'admin'),/mes y año/);
+console.log('Late fee assignment passed: February source -> September of another year, three members visible through real history/stats, original month unchanged, cross-period duplicates blocked.');

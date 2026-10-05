@@ -3,7 +3,7 @@ import { User, Payment, IndividualExtraFee, Trivia, TriviaAnswer, Fee, Attendanc
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { auth, db, storage } from './firebase';
 import { canUseWhatsApp, currentReminderPeriod, debtReminder, normalizeWhatsAppPhone, WhatsAppPreparation, WhatsAppRecipient } from './whatsappReminders';
-import { assignExistingFee, applyExtraReceipt, ExistingFeeTemplate } from './extraFeeLifecycle';
+import { assignmentPeriod, assignExistingFee, hasAssignedFee, applyExtraReceipt, ExistingFeeTemplate } from './extraFeeLifecycle';
 import { normalizePayment, correctAppliedPayment } from './paymentAccounting';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { 
@@ -495,7 +495,7 @@ export const dataService = {
     await updateDoc(docRef, { priceHistory: newHistory });
   },
 
-  getUserFinancialStats: async (uid: string, startPeriod?: string, endPeriod?: string) => {
+  getUserFinancialStats: async (uid: string, startPeriod?: string, endPeriod?: string, strict = false) => {
     try {
         const q = collection(db, "users", uid, "ledger");
         const snap = await getDocs(q);
@@ -559,6 +559,7 @@ export const dataService = {
         };
     } catch (error) {
         console.error('Error calculating user financial stats', error);
+        if (strict) throw error;
         return {
             totalPaid: 0,
             totalDebt: 0,
@@ -1741,7 +1742,9 @@ export const dataService = {
   },
 
   assignExistingExtraFee: async (groupId: string, uid: string, template: ExistingFeeTemplate, creatorUid: string): Promise<boolean> => {
-    const ledgerRef = doc(db, 'users', uid, 'ledger', template.period);
+    const period = assignmentPeriod(template);
+    if (hasAssignedFee(await dataService.getPayments(uid, true), template)) return false;
+    const ledgerRef = doc(db, 'users', uid, 'ledger', period);
     const registryRef = template.registryId ? doc(db, 'extraFees', template.registryId) : null;
     return runTransaction(db, async transaction => {
       const memberSnap = await transaction.get(doc(db, 'users', uid));
@@ -1752,8 +1755,9 @@ export const dataService = {
       if (registrySnap?.exists()) {
         const original = registrySnap.data();
         if (original.period !== template.period || original.description !== template.description || Number(original.amount) !== template.amount) throw new Error('La cuota cambió. Actualiza la matriz antes de asignarla.');
+        if ((original.appliedToUsers || []).includes(uid)) return false;
       }
-      const source = ledgerSnap.exists() ? { ...ledgerSnap.data(), period:template.period } as Payment : undefined;
+      const source = ledgerSnap.exists() ? { ...ledgerSnap.data(), period } as Payment : undefined;
       if (source?.groupId && source.groupId !== groupId) throw new Error('El registro pertenece a otra Logia.');
       const updated = assignExistingFee(source, template, creatorUid, new Date().toISOString());
       if (!updated) return false;

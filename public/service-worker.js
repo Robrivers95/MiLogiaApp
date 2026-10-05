@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mi-logia-v2-beta-whatsapp-master-20261005';
+const CACHE_NAME = 'mi-logia-v2-beta-fee-period-20261005';
 const urlsToCache = [
   '/',
   '/index.html',

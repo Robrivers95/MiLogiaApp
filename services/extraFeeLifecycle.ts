@@ -1,12 +1,17 @@
 import type { Payment, PaymentReceipt, IndividualExtraFee, ExtraFee } from '../types';
 import { normalizePayment } from './paymentAccounting';
 const conceptKey = (value: string) => value.trim().toLocaleLowerCase('es-MX');
-export interface ExistingFeeTemplate { key: string; period: string; description: string; amount: number; forgiven: boolean; registryId?: string; }
+export interface ExistingFeeTemplate { key: string; period: string; description: string; amount: number; forgiven: boolean; registryId?: string; assignmentPeriod?: string; }
+export function assignmentPeriod(template: ExistingFeeTemplate) {
+  const period = template.assignmentPeriod ?? template.period;
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw new Error('Selecciona un mes y año válidos para asignar la cuota.');
+  return period;
+}
 export function feeOptions(payments: Payment[]) {
   return payments.flatMap(source => {
     const payment = normalizePayment(source);
     const fees = payment.extraFees?.length ? payment.extraFees : payment.extraAmount ? [{id:'legacy',description:payment.extraDescription || 'Cuota Extra',amount:payment.extraAmount,paid:payment.paidExtra || 0,createdAt:''}] : [];
-    return fees.map(fee => ({period:payment.period,feeId:fee.id,description:fee.description,amount:fee.amount,paid:fee.paid,balance:fee.forgiven ? 0 : Math.max(0,fee.amount-fee.paid),forgiven:!!fee.forgiven,legacy:fee.id==='legacy'}));
+    return fees.map(fee => ({period:payment.period,feeId:fee.id,sourceFeeId:('sourceFeeId' in fee ? fee.sourceFeeId : undefined),description:fee.description,amount:fee.amount,paid:fee.paid,balance:fee.forgiven ? 0 : Math.max(0,fee.amount-fee.paid),forgiven:!!fee.forgiven,legacy:fee.id==='legacy'}));
   }).sort((a,b)=>b.period.localeCompare(a.period)||a.description.localeCompare(b.description));
 }
 export function existingFeeTemplates(ledgers: Record<string, Payment[]>, registry: ExtraFee[], year: number) {
@@ -22,13 +27,14 @@ export function existingFeeTemplates(ledgers: Record<string, Payment[]>, registr
   return [...templates.values()].sort((a,b)=>b.period.localeCompare(a.period)||a.description.localeCompare(b.description));
 }
 export function hasAssignedFee(payments: Payment[], template: ExistingFeeTemplate) {
-  return feeOptions(payments).some(fee=>fee.period===template.period && conceptKey(fee.description)===conceptKey(template.description));
+  return feeOptions(payments).some(fee=>(template.registryId && fee.sourceFeeId===template.registryId) || fee.feeId===`assigned-${encodeURIComponent(template.key)}` || ((fee.period===template.period || fee.period===assignmentPeriod(template)) && conceptKey(fee.description)===conceptKey(template.description)));
 }
 export function assignExistingFee(source: Payment | undefined, template: ExistingFeeTemplate, creatorUid: string, now: string): Payment | null {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(template.period) || !Number.isFinite(template.amount) || template.amount <= 0 || !template.description.trim()) throw new Error('La cuota no es válida.');
-  if (source && source.period !== template.period) throw new Error('El período no coincide.');
+  const period = assignmentPeriod(template);
+  if (source && source.period !== period) throw new Error('El período no coincide.');
   if (source && hasAssignedFee([source], template)) return null;
-  const payment = normalizePayment(source || {period:template.period,amount:0,paid:0,status:'Pendiente',comments:''});
+  const payment = normalizePayment(source || {period,amount:0,paid:0,status:'Pendiente',comments:''});
   // Preserve a legacy extra before appending: never lose its payments or substitute its amount.
   const fees: IndividualExtraFee[] = payment.extraFees?.length ? [...payment.extraFees] : payment.extraAmount ? [{id:`legacy-${template.period}`,description:payment.extraDescription || 'Cuota Extra',amount:payment.extraAmount,paid:payment.paidExtra || 0,createdAt:now}] : [];
   fees.push({id:`assigned-${encodeURIComponent(template.key)}`,description:template.description,amount:template.amount,paid:0,createdAt:now,createdBy:creatorUid,...(template.registryId ? {sourceFeeId:template.registryId} : {}),...(template.forgiven ? {forgiven:true,forgivenAt:now,forgivenBy:creatorUid,forgivenNote:'Asignada sin adeudo'} : {})});
