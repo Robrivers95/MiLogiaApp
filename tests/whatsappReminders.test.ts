@@ -3,7 +3,11 @@ import { canUseWhatsApp,currentReminderPeriod,debtReminder,normalizeWhatsAppPhon
 import type { User, Payment } from '../types';
 const user={uid:'u',name:'José Ríos',role:'admin',active:true,groupId:'one'} as User;
 assert.equal(canUseWhatsApp(user),true);
-for(const role of ['viewer','member','master'] as const) assert.equal(canUseWhatsApp({...user,role}),false);
+assert.equal(canUseWhatsApp({...user,role:'master'}),true);
+assert.equal(canUseWhatsApp({...user,role:'master',active:false}),true,'Master uses global role, consistent with app access');
+assert.equal(canUseWhatsApp({...user,role:'master',groupId:''}),false);
+assert.equal(canUseWhatsApp({...user,role:'master'},true),false);
+for(const role of ['viewer','member'] as const) assert.equal(canUseWhatsApp({...user,role}),false);
 assert.equal(canUseWhatsApp(user,true),false);assert.equal(canUseWhatsApp({...user,active:false}),false);
 assert.equal(normalizeWhatsAppPhone('81 1234 5678'),'528112345678');
 assert.equal(normalizeWhatsAppPhone('+52 1 81 1234 5678'),'528112345678');

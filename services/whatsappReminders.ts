@@ -1,7 +1,7 @@
 import type { Payment, User } from '../types';
 import { paymentHistoryRows, memberMoney } from './memberPresentation';
 
-export const canUseWhatsApp = (user: User, suspended = false) => user.role === 'admin' && user.active && !!user.groupId && !suspended;
+export const canUseWhatsApp = (user: User, suspended = false) => (user.role === 'master' || (user.role === 'admin' && user.active)) && !!user.groupId && !suspended;
 export function currentReminderPeriod(date = new Date()): string {
   const parts = new Intl.DateTimeFormat('en', { timeZone:'America/Monterrey', year:'numeric', month:'2-digit' }).formatToParts(date);
   return `${parts.find(part=>part.type==='year')!.value}-${parts.find(part=>part.type==='month')!.value}`;

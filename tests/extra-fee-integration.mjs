@@ -38,7 +38,14 @@ store.set('users/admin',{role:'admin',active:true,groupId:'logia'});store.set('g
 store.set('users/member',{uid:'member',name:'Miembro',role:'member',active:true,groupId:'logia'});
 await dataService.saveWhatsAppContact('logia','member','8112345678',true);assert.equal(store.get('users/member').phoneNumber,'528112345678');assert.equal(store.get('users/member').whatsappRemindersAllowed,true);
 await assert.rejects(dataService.saveWhatsAppContact('logia','other','8112345678',true),/Logia/);
-for(const role of ['viewer','member','master']){store.set('users/admin',{role,active:true,groupId:'logia'});await assert.rejects(dataService.saveWhatsAppContact('logia','member','8112345678',true),/administradores/);await assert.rejects(dataService.prepareWhatsAppReminders('logia'),/administradores/);}
+for(const role of ['viewer','member']){store.set('users/admin',{role,active:true,groupId:'logia'});await assert.rejects(dataService.saveWhatsAppContact('logia','member','8112345678',true),/administradores/);await assert.rejects(dataService.prepareWhatsAppReminders('logia'),/administradores/);}
+store.set('users/admin',{role:'admin',active:true,groupId:'other'});
+await assert.rejects(dataService.saveWhatsAppContact('logia','member','8112345678',true),/administradores/);
+store.set('users/admin',{role:'master',active:true,groupId:''});
+await dataService.saveWhatsAppContact('logia','member','8187654321',true);
+assert.equal(store.get('users/member').phoneNumber,'528187654321','Master can save in selected lodge without belonging to it');
+await dataService.prepareWhatsAppReminders('logia');
+await assert.rejects(dataService.saveWhatsAppContact('logia','other','8112345678',true),/Logia/);
 store.set('users/admin',{role:'admin',active:true,groupId:'logia'});store.set('users/new',{uid:'new',name:'Nuevo',role:'member',active:true,groupId:'logia'});
 const reminders=await dataService.prepareWhatsAppReminders('logia');assert.equal(reminders.groupName,'Logia Prueba');assert.equal(reminders.recipients.length,1,'forgiven debt is excluded and other Logias stay isolated');assert.equal(reminders.recipients[0].member.uid,'new');assert.equal(reminders.recipients[0].reminder.total,500);
 store.set('groups/logia',{active:false});await assert.rejects(dataService.prepareWhatsAppReminders('logia'),/activa/);

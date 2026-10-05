@@ -9,9 +9,9 @@ try {
   browser=await chromium.launch({headless:true});const page=await browser.newPage();const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.addInitScript(()=>{window.__opened=[];window.open=(url)=>{window.__opened.push(url);return null;};});
   mkdirSync('test-results',{recursive:true});
-  for(const width of [1440,390,320]){
+  for(const role of ['admin','master']) for(const width of [1440,390,320]){
     await page.setViewportSize({width,height:844});
-    await page.goto('http://127.0.0.1:5180/tests/member-ui.html?whatsapp=1');
+    await page.goto(`http://127.0.0.1:5180/tests/member-ui.html?whatsapp=1&role=${role}`);
     const prefix='Hola hermano, ¿me das una fecha de compromiso?\nGracias & saludos.';
     await page.getByLabel('Mensaje previo para todos (opcional)',{exact:true}).fill(prefix);
     await page.getByRole('button',{name:'Preparar cobros por WhatsApp',exact:true}).click();
@@ -39,9 +39,9 @@ try {
     assert.equal(await page.evaluate(()=>window.__saved.permitted),true);
     await page.getByLabel('WhatsApp del miembro',{exact:true}).fill('8111111111');assert.equal(await page.getByRole('button',{name:'Abrir WhatsApp de Ana López',exact:true}).isDisabled(),true,'unsaved edits cannot open another destination');
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`WhatsApp flow fits ${width}`);
-    await page.screenshot({path:`test-results/whatsapp-${width}.png`});
+    await page.screenshot({path:`test-results/whatsapp-${role}-${width}.png`});
   }
-  for(const role of ['viewer','member','master']){
+  for(const role of ['viewer','member']){
     await page.goto(`http://127.0.0.1:5180/tests/member-ui.html?whatsapp=1&role=${role}`);
     assert.equal(await page.getByRole('button',{name:'Preparar cobros por WhatsApp',exact:true}).isDisabled(),true);
     assert.equal(await page.getByLabel('Mensaje previo para todos (opcional)',{exact:true}).count(),0);
