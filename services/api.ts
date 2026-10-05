@@ -2,6 +2,7 @@
 import { User, Payment, IndividualExtraFee, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee, AppNotification, NotificationType, PaymentReceipt } from '../types';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { auth, db, storage } from './firebase';
+import { canUseWhatsApp, currentReminderPeriod, debtReminder, normalizeWhatsAppPhone, WhatsAppPreparation, WhatsAppRecipient } from './whatsappReminders';
 import { assignExistingFee, applyExtraReceipt, ExistingFeeTemplate } from './extraFeeLifecycle';
 import { normalizePayment, correctAppliedPayment } from './paymentAccounting';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -231,6 +232,7 @@ export const authService = {
       }
       if (tempUser.phoneNumber && !realUser.phoneNumber) {
         updates.phoneNumber = tempUser.phoneNumber;
+        updates.whatsappRemindersAllowed = tempUser.whatsappRemindersAllowed === true;
       }
 
       if (Object.keys(updates).length > 0) {
@@ -327,6 +329,42 @@ const isBillableForPeriod = (u: User, period: string) => {
 };
 
 export const dataService = {
+  assertWhatsAppAdmin: async (groupId: string): Promise<User> => {
+    if (!auth.currentUser?.uid || !groupId) throw new Error('Necesitas iniciar sesión como administrador.');
+    const actorSnap = await getDoc(doc(db, 'users', auth.currentUser.uid));
+    const actor = actorSnap.exists() ? { ...actorSnap.data(), uid: actorSnap.id } as User : null;
+    if (!actor || !canUseWhatsApp(actor) || actor.groupId !== groupId) throw new Error('Solo los administradores de esta Logia pueden usar WhatsApp.');
+    const group = await getDoc(doc(db, 'groups', groupId));
+    if (!group.exists() || group.data().active === false) throw new Error('La Logia no está activa.');
+    return actor;
+  },
+  saveWhatsAppContact: async (groupId: string, uid: string, phone: string, permitted: boolean): Promise<void> => {
+    const normalized = normalizeWhatsAppPhone(phone);
+    if (permitted && !normalized) throw new Error('Guarda un teléfono antes de autorizar recordatorios.');
+    await dataService.assertWhatsAppAdmin(groupId);
+    const target = doc(db, 'users', uid);
+    const member = await getDoc(target);
+    if (!member.exists() || member.data().groupId !== groupId) throw new Error('El miembro no pertenece a esta Logia.');
+    await updateDoc(target, { phoneNumber: normalized, whatsappRemindersAllowed: permitted });
+  },
+  prepareWhatsAppReminders: async (groupId: string): Promise<WhatsAppPreparation> => {
+    await dataService.assertWhatsAppAdmin(groupId);
+    const group = await getDoc(doc(db, 'groups', groupId));
+    const snapshot = await getDocs(query(collection(db,'users'),where('groupId','==',groupId)));
+    const users = snapshot.docs.map(snapshot=>({...snapshot.data(),uid:snapshot.id} as User)).filter(member => member.groupId === groupId && member.active && member.role !== 'viewer');
+    const recipients: WhatsAppRecipient[] = [];
+    const period = currentReminderPeriod();
+    let next=0;
+    await Promise.all(Array.from({length:Math.min(5,users.length)},async()=>{
+      while(next<users.length){
+        const member=users[next++];
+        try { const reminder=debtReminder(await dataService.getPayments(member.uid,true),groupId,period);if(reminder.total>0)recipients.push({member,reminder}); }
+        catch { recipients.push({member,reminder:{rows:[],periods:[],body:'',total:0},error:'No se pudo consultar su saldo. Actualiza antes de enviar.'}); }
+      }
+    }));
+    recipients.sort((a,b)=>a.member.name.localeCompare(b.member.name));
+    return {groupName:group.data()?.name || 'Mi Logia',recipients,calculatedAt:new Date().toISOString()};
+  },
   getAllGroups: async (): Promise<Group[]> => {
     try {
       const q = query(collection(db, "groups"));
@@ -1885,37 +1923,14 @@ export const dataService = {
       : allUsers.filter(u => u.active && u.role !== 'viewer'); // Todos los roles activos excepto viewers
 
     let sent = 0;
-    const currentPeriod = new Date().toISOString().slice(0, 7); // YYYY-MM
+    const currentPeriod = currentReminderPeriod();
 
     for (const u of targets) {
       try {
         const payments = await dataService.getPayments(u.uid);
-        const pendingPeriods = payments
-          .filter(p => {
-            if (!p.groupId || p.groupId !== groupId) return false;
-            const debt = (p.amount - (p.paidRegular || 0));
-            // Extra: solo contar fees NO perdonados
-            let extraDebt = 0;
-            if (p.extraFees?.length) {
-              extraDebt = p.extraFees
-                .filter(ef => !ef.forgiven)
-                .reduce((s, ef) => s + Math.max(0, ef.amount - ef.paid), 0);
-            } else {
-              extraDebt = Math.max(0, (p.extraAmount || 0) - (p.paidExtra || 0));
-            }
-            return (debt > 0 || extraDebt > 0) && p.period <= currentPeriod;
-          })
-          .map(p => {
-            const [yr, mo] = p.period.split('-');
-            const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-            return `${months[parseInt(mo)-1]} ${yr}`;
-          });
-
-        if (pendingPeriods.length === 0) continue;
-
-        const body = pendingPeriods.length <= 3
-          ? `Meses pendientes: ${pendingPeriods.join(', ')}`
-          : `Tienes ${pendingPeriods.length} meses pendientes de pago hasta la fecha.`;
+        const reminder = debtReminder(payments, groupId, currentPeriod);
+        if (!reminder.periods.length) continue;
+        const body = reminder.body;
 
         await notificationService.createNotification(
           [u.uid],

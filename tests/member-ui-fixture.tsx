@@ -1,3 +1,5 @@
+import WhatsAppReminders from '../components/WhatsAppReminders';
+import { debtReminder } from '../services/whatsappReminders';
 import ExistingFeeAssignment from '../components/ExistingFeeAssignment';
 import { existingFeeTemplates, assignExistingFee } from '../services/extraFeeLifecycle';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -24,6 +26,15 @@ function Fixture() {
  const [filters,setFilters]=useState<MemberFilters>({query:'',sort:'name',role:'all',status:'active',start:'',end:''});
  const results=useMemo(()=>searchMembers(members.filter(member=>(filters.status==='all'||(filters.status==='active'?member.active:!member.active))&&(filters.role==='all'||member.role===filters.role)),filters.query,filters.sort,stats),[members,filters]);
  const currentUser={...members[136],role:'admin'} as User;
+ if(new URLSearchParams(location.search).has('whatsapp')) {
+   const role=new URLSearchParams(location.search).get('role') || 'admin';
+   return <div className="p-4 max-w-3xl mx-auto"><WhatsAppReminders user={{...currentUser,role:role as User['role']}} suspended={new URLSearchParams(location.search).has('suspended')}
+     prepare={async()=>{(window as any).__prepared=((window as any).__prepared || 0)+1;return {groupName:'Logia Prueba',calculatedAt:new Date().toISOString(),recipients:[
+       {member:{...members[0],name:'José Ríos',phoneNumber:'528112345678',whatsappRemindersAllowed:true},reminder:debtReminder([{period:'2026-09',amount:100,paid:40} as Payment],'test','2026-10')},
+       {member:{...members[1],name:'Ana López',phoneNumber:'',whatsappRemindersAllowed:false},reminder:debtReminder([{period:'2026-09',amount:200,paid:0} as Payment],'test','2026-10')}
+     ]};}}
+     saveContact={async(uid,phone,permitted)=>{(window as any).__saved={uid,phone,permitted};}} /></div>;
+ }
  if(new URLSearchParams(location.search).has('assignment')) return <div className="p-4 max-w-3xl mx-auto"><ExistingFeeAssignment templates={existingFeeTemplates(assignmentLedgers,[],2026)} members={members} ledgers={assignmentLedgers} initialConcept="Evento perdonado" onClose={()=>{}} onAssign={async(template,uids)=>{const updated={...assignmentLedgers};let created=0,skipped=0;for(const uid of uids){const payment=assignExistingFee(updated[uid]?.find(row=>row.period===template.period),template,'admin','2026-10-03');if(payment){updated[uid]=[payment];created++;}else skipped++;}setAssignmentLedgers(updated);(window as any).__assignmentLedgers=updated;return {created,skipped,failed:[]};}} /></div>;
 
  return <div className="p-4 max-w-7xl mx-auto"><MemberManagement members={results} allMembers={members} currentUser={currentUser} stats={stats} statsLoading={false} readOnly={new URLSearchParams(location.search).has('readonly')} filters={filters} onFilters={change=>setFilters(previous=>({...previous,...change}))} actions={{edit:()=>{},payments:()=>{},advance:()=>{},link:()=>{},role:(uid,role)=>setMembers(previous=>previous.map(member=>member.uid===uid?{...member,role}:member)),status:async(uid)=>setMembers(previous=>previous.map(member=>member.uid===uid?{...member,active:!member.active,leaveDate:'2026-10-02'}:member))}} loadHistory={loadHistory} loadReceipts={loadReceipts} onCreate={()=>{}} onRequests={()=>{}} pendingCount={0} onExport={async()=>{(window as any).__exportedCount=results.length;}} onRefresh={async()=>{}} /></div>;

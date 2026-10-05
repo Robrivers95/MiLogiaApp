@@ -37,6 +37,8 @@ export interface User {
   uid: string;
   name: string;
   email: string;
+  phoneNumber?: string;
+  whatsappRemindersAllowed?: boolean;
   role: Role;
   active: boolean;
   groupId: string;

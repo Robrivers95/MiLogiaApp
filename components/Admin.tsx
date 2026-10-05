@@ -1,3 +1,4 @@
+import WhatsAppReminders from './WhatsAppReminders';
 import ExistingFeeAssignment from './ExistingFeeAssignment';
 import { existingFeeTemplates } from '../services/extraFeeLifecycle';
 
@@ -1650,6 +1651,8 @@ const Admin: React.FC<Props> = ({ user }) => {
   const handleUpdateUserProfile = async () => {
       if (isReadOnly || !editingUserProfile) return;
       try {
+          const original = users.find(member => member.uid === editingUserProfile.uid);
+          if (user.role === 'admin' && ((editingUserProfile.phoneNumber || '') !== (original?.phoneNumber || '') || !!editingUserProfile.whatsappRemindersAllowed !== !!original?.whatsappRemindersAllowed)) await dataService.saveWhatsAppContact(user.groupId,editingUserProfile.uid,editingUserProfile.phoneNumber || '',editingUserProfile.whatsappRemindersAllowed === true);
           await dataService.updateUser(editingUserProfile.uid, {
               name: editingUserProfile.name,
               email: editingUserProfile.email,
@@ -5131,6 +5134,7 @@ const Admin: React.FC<Props> = ({ user }) => {
         {/* --- DEBT NOTIFY TAB --- */}
         {activeTab === 'debt-notify' && (
           <div className="space-y-4">
+            <WhatsAppReminders key={`${user.uid}:${user.groupId}:${user.role}`} user={user} suspended={suspended} prepare={() => dataService.prepareWhatsAppReminders(user.groupId)} saveContact={async (uid,phone,permitted) => { await dataService.saveWhatsAppContact(user.groupId,uid,phone,permitted);await loadUsers(); }} />
             <div className="bg-logia-800 rounded-xl p-4 border border-logia-700">
               <h3 className="text-xl font-bold text-white mb-2">🔔 Notificaciones de Deuda</h3>
               <p className="text-gray-400 text-sm mb-4">Envía recordatorios a los miembros indicando los meses que adeudan. Se envía una notificación in-app a cada usuario con su lista de períodos pendientes.</p>
@@ -5620,6 +5624,11 @@ const Admin: React.FC<Props> = ({ user }) => {
              <h3 className="text-xl font-bold text-white mb-6">Editar Perfil: {editingUserProfile.name}</h3>
              
              <div className="space-y-4">
+                 <div className="border border-logia-700 rounded-lg p-3 space-y-2">
+                   <label className="block text-xs text-gray-400">WhatsApp del miembro<input type="tel" value={editingUserProfile.phoneNumber || ''} disabled={user.role !== 'admin' || isReadOnly} onChange={e => setEditingUserProfile({...editingUserProfile,phoneNumber:e.target.value})} placeholder="10 dígitos de México o +código de país" className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white text-sm mt-1 disabled:opacity-40" /></label>
+                   <label className="flex gap-2 items-start text-sm"><input type="checkbox" checked={editingUserProfile.whatsappRemindersAllowed === true} disabled={user.role !== 'admin' || isReadOnly} onChange={e => setEditingUserProfile({...editingUserProfile,whatsappRemindersAllowed:e.target.checked})} />Aceptó recibir recordatorios por WhatsApp</label>
+                   <p className="text-xs text-gray-400">Solo un administrador puede guardar estos datos. También aplica a miembros sin cuenta vinculada.</p>
+                 </div>
                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <div>
                           <label className="text-xs text-gray-400 uppercase">Iniciación Masónica</label>
