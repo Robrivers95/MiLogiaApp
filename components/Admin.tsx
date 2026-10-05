@@ -392,14 +392,19 @@ const Admin: React.FC<Props> = ({ user }) => {
         setUsers(data);
         
         const stats: any = {};
+        const failedStats: string[] = [];
         let next = 0;
         await Promise.all(Array.from({ length: Math.min(6, data.length) }, async () => {
             while (next < data.length && sequence === userLoadSequence.current) {
                 const u = data[next++];
-                stats[u.uid] = await dataService.getUserFinancialStats(u.uid, filterStart, filterEnd);
+                try { stats[u.uid] = await dataService.getUserFinancialStats(u.uid, filterStart, filterEnd, true); }
+                catch { failedStats.push(u.name); }
             }
         }));
-        if (sequence === userLoadSequence.current) setUserStats(stats);
+        if (sequence === userLoadSequence.current) {
+          setUserStats(stats);
+          if (failedStats.length) showMessage(`No se pudieron consultar los saldos de: ${failedStats.join(', ')}. Pulsa Actualizar; no se muestran como deuda cero.`, 'error');
+        }
 
     } catch (e) {
         console.error("Error loading users", e);
