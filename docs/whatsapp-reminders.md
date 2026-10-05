@@ -2,7 +2,7 @@
 
 Ruta: Gestionar → Finanzas → Recordatorios → Cobros por WhatsApp.
 
-Solo el rol `admin` activo puede preparar el recorrido, editar contactos desde esta opción y abrir chats. `viewer`, `member` y `master` ven el botón deshabilitado; una Logia suspendida tampoco lo habilita. Cada preparación y guardado comprueba la sesión y la pertenencia a la Logia. Los datos del recorrido se reinician al cambiar usuario, grupo o rol.
+Admin activo y Master pueden preparar el recorrido, editar contactos y abrir chats. Master trabaja sobre la Logia seleccionada, aunque no pertenezca a ella; Admin solo sobre su propia Logia. `viewer` y `member` ven el botón deshabilitado; una Logia suspendida tampoco lo habilita. Cada preparación y guardado comprueba la sesión y la pertenencia a la Logia. Los datos del recorrido se reinician al cambiar usuario, grupo o rol.
 
 El administrador registra `phoneNumber` y `whatsappRemindersAllowed` en la ficha (incluidos miembros temporales). La vinculación a una cuenta real conserva contacto y autorización cuando copia el teléfono. Números de México con diez dígitos se normalizan a +52; otros países deben indicarse con prefijo. El miembro debe aceptar estos recordatorios. Contactos modificados deben guardarse antes de abrir un chat.
 

@@ -1,4 +1,5 @@
 import WhatsAppReminders from './WhatsAppReminders';
+import { canUseWhatsApp } from '../services/whatsappReminders';
 import ExistingFeeAssignment from './ExistingFeeAssignment';
 import { existingFeeTemplates } from '../services/extraFeeLifecycle';
 
@@ -1652,7 +1653,7 @@ const Admin: React.FC<Props> = ({ user }) => {
       if (isReadOnly || !editingUserProfile) return;
       try {
           const original = users.find(member => member.uid === editingUserProfile.uid);
-          if (user.role === 'admin' && ((editingUserProfile.phoneNumber || '') !== (original?.phoneNumber || '') || !!editingUserProfile.whatsappRemindersAllowed !== !!original?.whatsappRemindersAllowed)) await dataService.saveWhatsAppContact(user.groupId,editingUserProfile.uid,editingUserProfile.phoneNumber || '',editingUserProfile.whatsappRemindersAllowed === true);
+          if (canUseWhatsApp(user, suspended) && ((editingUserProfile.phoneNumber || '') !== (original?.phoneNumber || '') || !!editingUserProfile.whatsappRemindersAllowed !== !!original?.whatsappRemindersAllowed)) await dataService.saveWhatsAppContact(user.groupId,editingUserProfile.uid,editingUserProfile.phoneNumber || '',editingUserProfile.whatsappRemindersAllowed === true);
           await dataService.updateUser(editingUserProfile.uid, {
               name: editingUserProfile.name,
               email: editingUserProfile.email,
@@ -5625,9 +5626,9 @@ const Admin: React.FC<Props> = ({ user }) => {
              
              <div className="space-y-4">
                  <div className="border border-logia-700 rounded-lg p-3 space-y-2">
-                   <label className="block text-xs text-gray-400">WhatsApp del miembro<input type="tel" value={editingUserProfile.phoneNumber || ''} disabled={user.role !== 'admin' || isReadOnly} onChange={e => setEditingUserProfile({...editingUserProfile,phoneNumber:e.target.value})} placeholder="10 dígitos de México o +código de país" className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white text-sm mt-1 disabled:opacity-40" /></label>
-                   <label className="flex gap-2 items-start text-sm"><input type="checkbox" checked={editingUserProfile.whatsappRemindersAllowed === true} disabled={user.role !== 'admin' || isReadOnly} onChange={e => setEditingUserProfile({...editingUserProfile,whatsappRemindersAllowed:e.target.checked})} />Aceptó recibir recordatorios por WhatsApp</label>
-                   <p className="text-xs text-gray-400">Solo un administrador puede guardar estos datos. También aplica a miembros sin cuenta vinculada.</p>
+                   <label className="block text-xs text-gray-400">WhatsApp del miembro<input type="tel" value={editingUserProfile.phoneNumber || ''} disabled={!canUseWhatsApp(user, suspended)} onChange={e => setEditingUserProfile({...editingUserProfile,phoneNumber:e.target.value})} placeholder="10 dígitos de México o +código de país" className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white text-sm mt-1 disabled:opacity-40" /></label>
+                   <label className="flex gap-2 items-start text-sm"><input type="checkbox" checked={editingUserProfile.whatsappRemindersAllowed === true} disabled={!canUseWhatsApp(user, suspended)} onChange={e => setEditingUserProfile({...editingUserProfile,whatsappRemindersAllowed:e.target.checked})} />Aceptó recibir recordatorios por WhatsApp</label>
+                   <p className="text-xs text-gray-400">Solo Admin o Master pueden guardar estos datos. También aplica a miembros sin cuenta vinculada.</p>
                  </div>
                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <div>

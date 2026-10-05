@@ -333,7 +333,7 @@ export const dataService = {
     if (!auth.currentUser?.uid || !groupId) throw new Error('Necesitas iniciar sesión como administrador.');
     const actorSnap = await getDoc(doc(db, 'users', auth.currentUser.uid));
     const actor = actorSnap.exists() ? { ...actorSnap.data(), uid: actorSnap.id } as User : null;
-    if (!actor || !canUseWhatsApp(actor) || actor.groupId !== groupId) throw new Error('Solo los administradores de esta Logia pueden usar WhatsApp.');
+    if (!actor || !canUseWhatsApp({ ...actor, groupId }) || (actor.role !== 'master' && actor.groupId !== groupId)) throw new Error('Solo los administradores de esta Logia o Master pueden usar WhatsApp.');
     const group = await getDoc(doc(db, 'groups', groupId));
     if (!group.exists() || group.data().active === false) throw new Error('La Logia no está activa.');
     return actor;

@@ -42,7 +42,7 @@ export default function WhatsAppReminders({ user, suspended, prepare, saveContac
   return <section aria-label="Cobros por WhatsApp" className="bg-logia-800 border border-logia-700 rounded-xl p-4 space-y-4 min-w-0">
     <div><h3 className="text-lg font-bold">Cobros por WhatsApp</h3><p className="text-xs text-gray-400 mt-2">Abre el chat de cada miembro con su nombre y adeudo. Solo pulsas Enviar en WhatsApp, regresas aquí y pasas al siguiente. Se usa el WhatsApp activo en tu dispositivo.</p></div>
     <button disabled={!allowed || busy} onClick={load} className="rounded-lg bg-green-700 p-3 text-sm disabled:opacity-40">{busy ? 'Consultando saldos…' : data ? 'Actualizar saldos de WhatsApp' : 'Preparar cobros por WhatsApp'}</button>
-    {!allowed && <p className="text-xs text-amber-300">Disponible exclusivamente para administradores de una Logia activa. Visores y otros niveles no pueden usarlo.</p>}
+    {!allowed && <p className="text-xs text-amber-300">Disponible exclusivamente para Admin y Master en una Logia activa. Visores y otros niveles no pueden usarlo.</p>}
     {allowed && <>
       <div>
         <label htmlFor={batchMessageId} className="block text-xs text-gray-400">Mensaje previo para todos (opcional)</label><textarea id={batchMessageId} value={batchMessage} onChange={event=>setBatchMessage(event.target.value)} rows={3} className={`${control} mt-1`} placeholder="Hola hermano, me pidieron recordarte tu pago. ¿Me podrías compartir una fecha de compromiso?" />
