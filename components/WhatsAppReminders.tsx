@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import type { User } from '../types';
 import { canUseWhatsApp, normalizeWhatsAppPhone, whatsappChatUrl, whatsappMessage, WhatsAppPreparation } from '../services/whatsappReminders';
 import { memberMoney } from '../services/memberPresentation';
@@ -8,6 +8,7 @@ export default function WhatsAppReminders({ user, suspended, prepare, saveContac
   saveContact: (uid: string, phone: string, permitted: boolean) => Promise<void>;
 }) {
   const allowed = canUseWhatsApp(user, suspended);
+  const batchMessageId = useId();
   const [data,setData] = useState<WhatsAppPreparation | null>(null);
   const [selected,setSelected] = useState<string[]>([]);
   const [queue,setQueue] = useState<string[]>([]);
@@ -44,7 +45,7 @@ export default function WhatsAppReminders({ user, suspended, prepare, saveContac
     {!allowed && <p className="text-xs text-amber-300">Disponible exclusivamente para administradores de una Logia activa. Visores y otros niveles no pueden usarlo.</p>}
     {allowed && <>
       <div>
-        <label className="block text-xs text-gray-400">Mensaje previo para todos (opcional)<textarea value={batchMessage} onChange={event=>setBatchMessage(event.target.value)} rows={3} className={`${control} mt-1`} placeholder="Hola hermano, me pidieron recordarte tu pago. ¿Me podrías compartir una fecha de compromiso?" /></label>
+        <label htmlFor={batchMessageId} className="block text-xs text-gray-400">Mensaje previo para todos (opcional)</label><textarea id={batchMessageId} value={batchMessage} onChange={event=>setBatchMessage(event.target.value)} rows={3} className={`${control} mt-1`} placeholder="Hola hermano, me pidieron recordarte tu pago. ¿Me podrías compartir una fecha de compromiso?" />
         <p className="text-xs text-gray-400 mt-2">Escríbelo una vez por tanda. Se coloca antes del nombre, las cuotas y el total de cada miembro. Puedes modificarlo antes de abrir cada chat; si lo dejas vacío se usa el mensaje habitual.</p>
       </div>
       {error && <p role="alert" className="text-sm text-red-300 break-words">{error}</p>}
