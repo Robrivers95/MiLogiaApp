@@ -32,6 +32,7 @@ const Dashboard: React.FC<Props> = ({ user }) => {
 
   return (
     <div className="p-4 space-y-6">
+      {user.role === 'member' && <div className="border border-logia-700 rounded-lg p-3"><button disabled className="p-3 rounded-lg bg-green-700 text-sm opacity-40">Preparar cobros por WhatsApp</button><p className="text-xs text-gray-400 mt-2">Disponible solo para administradores.</p></div>}
       
       {/* Header Card */}
       <div className="bg-gradient-to-r from-logia-800 to-indigo-900 rounded-xl p-6 shadow-lg border border-logia-700">

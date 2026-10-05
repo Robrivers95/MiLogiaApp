@@ -24,5 +24,7 @@ jobs:
 
       - name: Extra fee integration tests
         run: node tests/extra-fee-integration.mjs
+      - name: WhatsApp reminder tests
+        run: node tests/run-whatsapp.mjs
       - name: Build
         run: npm run build

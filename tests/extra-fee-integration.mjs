@@ -6,7 +6,9 @@ const store=new Map();let failCommit=false;let lock=Promise.resolve();
 const clone=value=>structuredClone(value);
 const ref=(...args)=>{const path=args.slice(1).join('/');return {path,id:path.split('/').at(-1)};};
 const snap=reference=>({id:reference.id,exists:()=>store.has(reference.path),data:()=>clone(store.get(reference.path))});
-const firestore={doc:ref,getDoc:async reference=>snap(reference),updateDoc:async(reference,value)=>store.set(reference.path,{...store.get(reference.path),...clone(value)}),
+const firestore={doc:ref,collection:ref,query:(reference,...conditions)=>({...reference,conditions}),where:(...condition)=>condition,
+ getDocs:async reference=>({docs:[...store.keys()].filter(path=>path.startsWith(`${reference.path}/`) && !path.slice(reference.path.length+1).includes('/') && (reference.conditions || []).every(([field,operator,value])=>store.get(path)[field]===value)).map(path=>snap({path,id:path.split('/').at(-1)}))}),
+ getDoc:async reference=>snap(reference),updateDoc:async(reference,value)=>store.set(reference.path,{...store.get(reference.path),...clone(value)}),
  runTransaction:async(_db,callback)=>{const next=lock.then(async()=>{const writes=[];const transaction={get:async reference=>snap(reference),set:(reference,value)=>writes.push([reference.path,clone(value)]),update:(reference,value)=>writes.push([reference.path,{...store.get(reference.path),...clone(value)}])};const result=await callback(transaction);if(failCommit){failCommit=false;throw new Error('simulated commit failure');}for(const [path,value] of writes)store.set(path,value);return result;});lock=next.catch(()=>{});return next;}};
 const mocks={firestore,auth:{currentUser:{uid:'admin'}},db:{},storage:{}};
 const firebaseExports=['doc','getDoc','setDoc','updateDoc','deleteDoc','deleteField','collection','query','where','getDocs','orderBy','limit','increment','writeBatch','addDoc','runTransaction'];
@@ -32,3 +34,12 @@ assert.equal(await dataService.assignExistingExtraFee('logia','new',template,'ad
 assert.equal(store.get('users/new/ledger/2026-09').amount,0,'assigning an extra must not create a monthly charge');assert.equal(store.get('users/new/ledger/2026-09').extraFees.length,1);assert.deepEqual([...store.get('extraFees/original').appliedToUsers],['member','new']);
 store.set('users/other',{groupId:'other'});await assert.rejects(dataService.assignExistingExtraFee('logia','other',template,'admin'),/Logia/);assert.equal(store.has('users/other/ledger/2026-09'),false);
 console.log('Real API integration passed: atomic approval/failure, concurrency/idempotency, voluntary correction, late assignment, registry and group isolation.');
+store.set('users/admin',{role:'admin',active:true,groupId:'logia'});store.set('groups/logia',{name:'Logia Prueba',active:true});
+store.set('users/member',{uid:'member',name:'Miembro',role:'member',active:true,groupId:'logia'});
+await dataService.saveWhatsAppContact('logia','member','8112345678',true);assert.equal(store.get('users/member').phoneNumber,'528112345678');assert.equal(store.get('users/member').whatsappRemindersAllowed,true);
+await assert.rejects(dataService.saveWhatsAppContact('logia','other','8112345678',true),/Logia/);
+for(const role of ['viewer','member','master']){store.set('users/admin',{role,active:true,groupId:'logia'});await assert.rejects(dataService.saveWhatsAppContact('logia','member','8112345678',true),/administradores/);await assert.rejects(dataService.prepareWhatsAppReminders('logia'),/administradores/);}
+store.set('users/admin',{role:'admin',active:true,groupId:'logia'});store.set('users/new',{uid:'new',name:'Nuevo',role:'member',active:true,groupId:'logia'});
+const reminders=await dataService.prepareWhatsAppReminders('logia');assert.equal(reminders.groupName,'Logia Prueba');assert.equal(reminders.recipients.length,1,'forgiven debt is excluded and other Logias stay isolated');assert.equal(reminders.recipients[0].member.uid,'new');assert.equal(reminders.recipients[0].reminder.total,500);
+store.set('groups/logia',{active:false});await assert.rejects(dataService.prepareWhatsAppReminders('logia'),/activa/);
+console.log('WhatsApp real API guards passed: strict admin-only, consent/contact saving, own-group debts and suspended Logia.');
