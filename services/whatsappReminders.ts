@@ -25,9 +25,9 @@ export function debtReminder(payments: Payment[], groupId: string, currentPeriod
   const body = labels.length <= 3 ? `Meses pendientes: ${labels.join(', ')}` : `Tienes ${labels.length} meses pendientes de pago hasta la fecha.`;
   return { rows, periods, body, total: Math.round(rows.reduce((total,row) => total + row.balance, 0) * 100) / 100 };
 }
-export function whatsappMessage(member: User, groupName: string, reminder: ReturnType<typeof debtReminder>, instructions = '') {
+export function whatsappMessage(member: User, groupName: string, reminder: ReturnType<typeof debtReminder>, instructions = '', batchMessage = '') {
   if (reminder.total <= 0) throw new Error('Este miembro no tiene adeudo pendiente.');
-  return [`Hola, ${member.name || 'hermano'}.`, `Recordatorio de pago de ${groupName || 'tu Logia'}.`, reminder.body,
+  return [...(batchMessage.trim() ? [batchMessage.trim(), ''] : []), `Hola, ${member.name || 'hermano'}.`, `Recordatorio de pago de ${groupName || 'tu Logia'}.`, reminder.body,
     `Adeudo pendiente: ${memberMoney(reminder.total)}.`, '', 'Detalle:',
     ...reminder.rows.map(row => `• ${row.period} · ${row.concept}: ${memberMoney(row.balance)}`), '',
     ...(instructions.trim() ? [instructions.trim(), ''] : []),

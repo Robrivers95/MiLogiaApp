@@ -14,6 +14,13 @@ const payments=[{period:'2026-09',groupId:'one',amount:100,paid:120,extraAmount:
  {period:'2026-12',amount:999,paid:0}, {period:'2026-09',groupId:'other',amount:999,paid:0}] as Payment[];
 const reminder=debtReminder(payments,'one','2026-10');assert.equal(reminder.total,30);assert.deepEqual(reminder.periods,['2026-09']);
 const message=whatsappMessage(user,'Logia Uno',reminder,'Referencia: José & Logia');assert.ok(message.includes('José Ríos'));assert.ok(message.includes('Cena'));assert.ok(!message.includes('Perdonada'));assert.ok(message.includes(reminder.body));
+const prefix='Hola hermano, ¿me compartes una fecha de compromiso?\nGracias & saludos.';
+const custom=whatsappMessage(user,'Logia Uno',reminder,'Referencia: José & Logia',`  ${prefix}  `);
+assert.equal(custom,`${prefix}\n\n${message}`,'common introduction precedes unchanged individualized debt and instructions');
+assert.equal(whatsappMessage(user,'Logia Uno',reminder,'Referencia: José & Logia','  \n '),message,'blank introduction preserves existing format');
+const other=whatsappMessage({...user,name:'Ana López'},'Logia Uno',{...reminder,total:90},'',prefix);
+assert.ok(other.startsWith(`${prefix}\n\nHola, Ana López.`));assert.ok(other.includes('$90.00'));assert.ok(!other.includes('José Ríos'));
+assert.equal(new URL(whatsappChatUrl('8112345678',custom)).searchParams.get('text'),custom,'multiline accented introduction round trips through WhatsApp URL');
 const url=whatsappChatUrl('8112345678',message);assert.ok(url.startsWith('https://wa.me/528112345678?text='));assert.equal(new URL(url).searchParams.get('text'),message);
 assert.equal(currentReminderPeriod(new Date('2026-11-01T02:00:00Z')),'2026-10','billing month follows Monterrey, not UTC');
 assert.throws(()=>whatsappMessage(user,'Logia',{rows:[],periods:[],body:'',total:0}));

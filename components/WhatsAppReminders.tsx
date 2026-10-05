@@ -14,6 +14,7 @@ export default function WhatsAppReminders({ user, suspended, prepare, saveContac
   const [index,setIndex] = useState(0);
   const [busy,setBusy] = useState(false);
   const [error,setError] = useState('');
+  const [batchMessage,setBatchMessage] = useState('');
   const [instructions,setInstructions] = useState('');
   const [query,setQuery] = useState('');
   const [phone,setPhone] = useState('');
@@ -34,7 +35,7 @@ export default function WhatsAppReminders({ user, suspended, prepare, saveContac
   };
   let url='';let message='';
   if (current && !current.error) {
-    try { message=whatsappMessage(current.member,data!.groupName,current.reminder,instructions);if (current.member.whatsappRemindersAllowed && phone === (current.member.phoneNumber || '') && permitted) url=whatsappChatUrl(current.member.phoneNumber || '',message); } catch { /* Invalid contact must be corrected before opening. */ }
+    try { message=whatsappMessage(current.member,data!.groupName,current.reminder,instructions,batchMessage);if (current.member.whatsappRemindersAllowed && phone === (current.member.phoneNumber || '') && permitted) url=whatsappChatUrl(current.member.phoneNumber || '',message); } catch { /* Invalid contact must be corrected before opening. */ }
   }
   const control='w-full rounded-lg bg-logia-900 border border-logia-700 p-3 text-sm text-white';
   return <section aria-label="Cobros por WhatsApp" className="bg-logia-800 border border-logia-700 rounded-xl p-4 space-y-4 min-w-0">
@@ -42,6 +43,10 @@ export default function WhatsAppReminders({ user, suspended, prepare, saveContac
     <button disabled={!allowed || busy} onClick={load} className="rounded-lg bg-green-700 p-3 text-sm disabled:opacity-40">{busy ? 'Consultando saldos…' : data ? 'Actualizar saldos de WhatsApp' : 'Preparar cobros por WhatsApp'}</button>
     {!allowed && <p className="text-xs text-amber-300">Disponible exclusivamente para administradores de una Logia activa. Visores y otros niveles no pueden usarlo.</p>}
     {allowed && <>
+      <div>
+        <label className="block text-xs text-gray-400">Mensaje previo para todos (opcional)<textarea value={batchMessage} onChange={event=>setBatchMessage(event.target.value)} rows={3} className={`${control} mt-1`} placeholder="Hola hermano, me pidieron recordarte tu pago. ¿Me podrías compartir una fecha de compromiso?" /></label>
+        <p className="text-xs text-gray-400 mt-2">Escríbelo una vez por tanda. Se coloca antes del nombre, las cuotas y el total de cada miembro. Puedes modificarlo antes de abrir cada chat; si lo dejas vacío se usa el mensaje habitual.</p>
+      </div>
       {error && <p role="alert" className="text-sm text-red-300 break-words">{error}</p>}
       {data && <>
         <p className="text-xs text-gray-400">{data.groupName} · Saldos consultados: {new Date(data.calculatedAt).toLocaleString('es-MX')}. No incluye cuotas futuras ni perdonadas.</p>
