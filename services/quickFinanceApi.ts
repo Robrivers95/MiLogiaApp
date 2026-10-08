@@ -66,6 +66,8 @@ export const quickFinanceService = {
       const previous = await transaction.get(target);
       if (previous.exists()) {
         if (!previous.data().quickStatus || previous.data().createdBy !== by) throw new Error('La captura ya existe.');
+        const stored = previous.data();
+        if (stored.amount !== amount || stored.date !== date || stored.type !== input.type || (stored.memberId || '') !== input.memberId || (stored.accountId || '') !== input.accountId || stored.paymentMethod !== input.paymentMethod || (stored.notes || '') !== input.notes.trim()) throw new Error('Esta captura ya está guardada con otros datos. Revísala en Capturas.');
         return; // Lost response or simultaneous taps cannot count twice.
       }
       let memberName = ''; let accountName = ''; let account: BankBalance | undefined;
@@ -102,7 +104,10 @@ export const quickFinanceService = {
       const by = await authority(transaction,groupId); const target = entryRef(groupId,id); const current = await transaction.get(target);
       if (!current.exists()) throw new Error('La captura ya no existe.');
       const entry = {...current.data(),id} as TreasuryEntry;
-      if (entry.quickStatus === 'applied') return;
+      if (entry.quickStatus === 'applied') {
+        if (entry.memberId !== uid || entry.appliedPeriod !== period || (entry.appliedFeeId || '') !== (feeId || '')) throw new Error('Este ingreso ya se aplicó a otra cuota.');
+        return;
+      }
       if (entry.projectId) throw new Error('Retira el vínculo con el proyecto antes de aplicar a una cuota.');
       if (entry.memberId && entry.memberId !== uid) throw new Error('El ingreso está vinculado a otro miembro.');
       const member = await transaction.get(doc(db,'users',uid));

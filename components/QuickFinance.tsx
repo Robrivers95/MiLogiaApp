@@ -24,7 +24,7 @@ export default function QuickFinance({user,suspended}: Props) {
   const captureId = useRef(''); const inFlight = useRef(false); const panel = useRef<HTMLDivElement>(null); const opener = useRef<HTMLButtonElement>(null);
   const requestSequence = useRef(0); const [locked,setLocked] = useState(false);
   const changeInput = (patch: Partial<CaptureInput>) => { setInput(value=>({...value,...patch})); setError(''); };
-  const select = (entry: TreasuryEntry) => {setSelected(entry);setDescription(entry.description);setCategory(entry.category);setPayee(entry.payee || '');setNotes(entry.notes || '');setMemberId(entry.memberId || '');setQuota('');setError('');};
+  const select = (entry: TreasuryEntry) => {if(entry.id === captureId.current){captureId.current='';setLocked(false);setInput(empty());setPhoto(undefined);}setSelected(entry);setDescription(entry.description);setCategory(entry.category);setPayee(entry.payee || '');setNotes(entry.notes || '');setMemberId(entry.memberId || '');setQuota('');setError('');};
   const refresh = async () => {
     const sequence = ++requestSequence.current;setLoading(true);
     try {
@@ -49,7 +49,7 @@ export default function QuickFinance({user,suspended}: Props) {
   },[memberId,selected?.id,open,user.groupId]);
   const close = () => {if(!inFlight.current){setOpen(false);setSelected(undefined);setError('');setMessage('');opener.current?.focus();}};
   useEffect(()=>{
-    if(!open)return;const previous=document.body.style.overflow;document.body.style.overflow='hidden';panel.current?.focus();
+    if(!open || !allowed)return;const previous=document.body.style.overflow;document.body.style.overflow='hidden';panel.current?.focus();
     const key = (event: KeyboardEvent) => {
       if(event.key==='Escape'){event.preventDefault();close();}
       if(event.key==='Tab'){
@@ -59,7 +59,7 @@ export default function QuickFinance({user,suspended}: Props) {
         else if(!event.shiftKey && document.activeElement===last){event.preventDefault();first?.focus();}
       }
     };window.addEventListener('keydown',key);return()=>{document.body.style.overflow=previous;window.removeEventListener('keydown',key);};
-  },[open]);
+  },[open,allowed]);
   const action = async (work: ()=>Promise<void>, success: string) => {
     if(inFlight.current)return;inFlight.current=true;setBusy(true);setError('');setMessage('');
     try{await work();setMessage(success);await refresh();}catch(e){setError(e instanceof Error ? e.message : 'No se pudo guardar. Intenta nuevamente.');}
@@ -87,7 +87,7 @@ export default function QuickFinance({user,suspended}: Props) {
         {error && <p role="alert" className="text-red-300">{error}</p>}{message && <p role="status" className="text-emerald-300">{message}</p>}
         {loading && <p role="status" className="text-gray-400">Cargando…</p>}
         {tab==='new' ? <form onSubmit={e=>{e.preventDefault();void save();}} className="space-y-3">
-          <fieldset disabled={busy || locked} className="space-y-3 min-w-0">
+          <fieldset disabled={busy} className="space-y-3 min-w-0">
             <label className="block">Tipo<select className={field} value={input.type} onChange={e=>changeInput({type:e.target.value as CaptureInput['type'],memberId:''})}><option value="expense">Gasto</option><option value="income">Ingreso</option></select></label>
             <label className="block">Monto<input className={field} type="number" inputMode="decimal" min="0.01" max="999999999" step="0.01" required value={input.amount || ''} onChange={e=>changeInput({amount:Number(e.target.value)})}/></label>
             <label className="block">Fecha<input className={field} type="date" required value={input.date} onChange={e=>changeInput({date:e.target.value})}/></label>
@@ -98,7 +98,7 @@ export default function QuickFinance({user,suspended}: Props) {
             <p className="text-xs text-gray-400">Se incluye en tesorería al guardar. Si eliges una cuenta o caja, suma o resta al saldo actual una sola vez. Para un movimiento ya incluido en ese saldo, elige Solo tesorería.</p>
             <label className="block">Foto de cámara o galería (opcional)<input className={field} type="file" accept="image/*" onChange={e=>setPhoto(e.target.files?.[0])}/></label>
           </fieldset>
-          {locked && !busy && <p className="text-sm text-amber-300">No se confirmó el guardado. Reintenta la misma captura para evitar duplicados.</p>}
+          {locked && !busy && <p className="text-sm text-amber-300">No se confirmó el guardado. Reintenta o revisa esta captura en Capturas antes de registrar otro movimiento.</p>}
           <button className={`${button} w-full`} disabled={busy || loading} type="submit">{busy?'Guardando…':locked?'Reintentar guardado':'Guardar pendiente'}</button>
         </form> : selected ? <div className="space-y-3">
           <button disabled={busy} className="text-indigo-300 p-2" onClick={()=>setSelected(undefined)}>← Volver a capturas</button>

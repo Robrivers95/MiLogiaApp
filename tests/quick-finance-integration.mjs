@@ -18,6 +18,7 @@ const input={type:'expense',amount:125.50,date:'2026-09-15',notes:'Material',mem
 const photo={type:'image/jpeg',size:100,name:'photo.jpg'};
 await Promise.all([service.save('logia','expense',input,photo),service.save('logia','expense',input,photo)]);
 assert.equal(records.get('bankBalances/cash').amount,874.50);assert.equal(records.get('groups/logia/treasury/expense').receiptImageUrls.length,1);assert.equal((await service.list('logia')).length,1);
+await assert.rejects(service.save('logia','expense',{...input,amount:200}),/otros datos/);assert.equal(records.get('bankBalances/cash').amount,874.50);
 await service.complete('logia','expense',{description:'Compra de material',category:'compra_material',payee:'Proveedor',notes:''});
 assert.equal(records.get('bankBalances/cash').amount,874.50,'completion must not charge cash again');assert.equal((await dataService.getTreasuryEntries('logia')).length,1);
 const ledger='users/member/ledger/2026-09';const base={period:'2026-09',groupId:'logia',amount:500,paidRegular:100,paidExtra:0,paid:100,status:'Parcial',comments:'Abono anterior',paymentDate:'2026-09-01',extraFees:[{id:'event',description:'Evento',amount:200,paid:0,createdAt:''}]};records.set(ledger,copy(base));
@@ -30,6 +31,7 @@ await Promise.all([service.apply('logia','income','member','2026-09'),service.ap
 assert.equal(records.get(ledger).paidRegular,250,'concurrent application credits once');assert.equal(records.get(ledger).extraFees[0].paid,0,'monthly payment does not touch extra fees');assert.equal(records.get(ledger).comments.startsWith('Abono anterior'),true);assert.equal(records.get('bankBalances/cash').amount,1024.50,'applying must not change cash twice');
 const proof=records.get('groups/logia/paymentReceipts/quick-income');assert.equal(proof.ledgerIncluded,true);assert.equal(proof.status,'approved');assert.equal(proof.receiptImageUrl,'https://test.invalid/photo.jpg');
 assert.equal(countsInTreasury(records.get('groups/logia/treasury/income')),false);const after=await dataService.getGlobalFinancials('logia','2026-01-01','2026-12-31');assert.equal(before.income,after.income,'income moves from treasury to quota without changing combined total');assert.equal(after.expense,125.50);
+await assert.rejects(service.apply('logia','income','member','2026-09','event'),/otra cuota/);
 await assert.rejects(dataService.updatePaymentReceipt('logia','quick-income',{amount:170}),/enlazado/);
 await service.save('logia','extra',{...input,type:'income',amount:75,memberId:'member',accountId:''});await service.apply('logia','extra','member','2026-09','event');assert.equal(records.get(ledger).extraFees[0].paid,75);assert.equal(records.get(ledger).paidRegular,250);
 await service.save('logia','too-large',{...input,type:'income',amount:300,memberId:'member',accountId:''});await assert.rejects(service.apply('logia','too-large','member','2026-09'),/excede/);assert.equal(records.get(ledger).paidRegular,250);
