@@ -5,6 +5,7 @@ import { auth, db, storage } from './firebase';
 import { canUseWhatsApp, currentReminderPeriod, debtReminder, normalizeWhatsAppPhone, WhatsAppPreparation, WhatsAppRecipient } from './whatsappReminders';
 import { assignmentPeriod, assignExistingFee, hasAssignedFee, applyExtraReceipt, ExistingFeeTemplate } from './extraFeeLifecycle';
 import { normalizePayment, correctAppliedPayment } from './paymentAccounting';
+import { countsInTreasury } from './quickFinance';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { 
   signInWithEmailAndPassword, 
@@ -585,7 +586,7 @@ export const dataService = {
           
           tSnap.forEach(doc => {
               const t = doc.data() as TreasuryEntry;
-              if (t.date >= startDate && t.date <= endDate) {
+              if (countsInTreasury(t) && t.date >= startDate && t.date <= endDate) {
                   if (t.type === 'income') treasuryIncome += (Number(t.amount) || 0);
                   else treasuryExpense += (Number(t.amount) || 0);
               }
@@ -642,6 +643,8 @@ export const dataService = {
 
   updateTreasuryEntry: async (entry: TreasuryEntry) => {
      const ref = doc(db, "groups", entry.groupId, "treasury", entry.id);
+     const current = await getDoc(ref);
+     if (current.data()?.quickStatus) throw new Error('Completa esta captura desde el botón de dinero.');
      await updateDoc(ref, {
         date: entry.date,
         type: entry.type,
@@ -655,6 +658,8 @@ export const dataService = {
   deleteTreasuryEntry: async (groupId: string, entryId: string) => {
      if (!entryId) throw new Error("Missing entry ID");
      const ref = doc(db, "groups", groupId, "treasury", entryId);
+     const current = await getDoc(ref);
+     if (current.data()?.quickStatus) throw new Error('Una captura enlazada no puede eliminarse como un movimiento manual.');
      await deleteDoc(ref);
   },
 
@@ -673,7 +678,7 @@ export const dataService = {
             } as TreasuryEntry;
         });
         
-        return entries.sort((a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+        return entries.filter(countsInTreasury).sort((a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
       } catch (e) {
           console.error("Error fetching treasury", e);
           return [];
@@ -1689,6 +1694,7 @@ export const dataService = {
       const liveSnap = await transaction.get(ref);
       if (!liveSnap.exists()) throw new Error('El comprobante ya no existe.');
       const live = liveSnap.data() as PaymentReceipt;
+      if (live.quickMovementId) throw new Error('Este comprobante está enlazado a una captura rápida. Revisa la captura antes de corregirlo.');
       if (live.status !== current.status) throw new Error('El estado cambió. Actualiza y vuelve a intentar.');
       if (live.status !== 'approved') { transaction.update(ref, clean); return; }
       if (clean.receiptType && clean.receiptType !== live.receiptType) throw new Error('No puedes cambiar el tipo de un pago aprobado.');

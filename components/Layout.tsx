@@ -2,6 +2,7 @@ import React from 'react';
 import { User } from '../types';
 import NavIcon from './NavIcon';
 import NotificationBell from './NotificationBell';
+import QuickFinance from './QuickFinance';
 
 interface Props {
   user: User;
@@ -81,6 +82,7 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
       {suspended && <div className="bg-red-900/80 border-b border-red-700 px-4 py-3 text-center sticky top-[60px] z-20"><p className="text-red-100 text-sm font-bold">⚠️ La fecha de pago expiró, comunícate con el administrador{' '}<a href="https://wa.me/528611013113" target="_blank" rel="noopener noreferrer" className="underline text-white">+52 8611013113</a></p><p className="text-red-300 text-xs mt-1">Modo solo lectura — No se pueden realizar cambios</p></div>}
 
       <main className={`w-full mx-auto min-h-[calc(100vh-140px)] pb-24 ${currentView === 'admin' ? 'max-w-7xl' : 'max-w-4xl'}`}>{children}</main>
+      <QuickFinance key={`${user.uid}:${user.groupId}:${user.role}`} user={user} suspended={!!suspended} />
       {showCommunity && <section className="fixed bottom-20 left-3 right-3 sm:left-auto sm:right-6 sm:w-80 bg-logia-800 border border-logia-700 rounded-xl shadow-2xl z-40 p-3" aria-label="Comunidad">
         <div className="flex items-center justify-between px-2 py-2"><h2 className="font-bold">Comunidad</h2><button onClick={() => setShowCommunity(false)} className="text-gray-400 p-2" aria-label="Cerrar comunidad">×</button></div>
         <button onClick={() => navigate('notices')} className="w-full text-left rounded-lg p-3 hover:bg-logia-700"><span className="block text-sm font-semibold">Avisos</span><span className="text-xs text-gray-400">Comunicados de la Logia</span></button>

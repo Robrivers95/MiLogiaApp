@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mi-logia-v2-beta-fee-period-20261005';
+const CACHE_NAME = 'mi-logia-v2-beta-quick-finance-20261008';
 const urlsToCache = [
   '/',
   '/index.html',

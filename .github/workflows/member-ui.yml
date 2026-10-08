@@ -9,6 +9,9 @@ on:
       - 'components/ExistingFeeAssignment.tsx'
       - 'components/Payments.tsx'
       - 'components/WhatsAppReminders.tsx'
+      - 'components/QuickFinance.tsx'
+      - 'services/quickFinance*'
+      - 'tests/quick-finance*'
       - 'services/whatsappReminders.ts'
       - 'tests/whatsapp*'
       - 'services/extraFeeLifecycle.ts'
@@ -37,6 +40,8 @@ jobs:
         run: node tests/member-ui.mjs
       - name: Verify WhatsApp reminders
         run: node tests/whatsapp-ui.mjs
+      - name: Verify quick finance
+        run: node tests/quick-finance-ui.mjs
       - name: Save screenshots
         if: always()
         uses: actions/upload-artifact@v4

@@ -368,6 +368,15 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
   }, [activeTab, dashboardStart, dashboardEnd]);
 
+  useEffect(() => {
+    const refresh = (event: Event) => {
+      if ((event as CustomEvent).detail?.groupId !== user.groupId) return;
+      void Promise.all([loadUsers(), loadAllLedgers(), loadPaymentReceipts(), loadTreasury(), loadDashboardStats(), loadBankBalances()]);
+    };
+    window.addEventListener('finance-updated', refresh);
+    return () => window.removeEventListener('finance-updated', refresh);
+  }, [user.groupId, filterStart, filterEnd, dashboardStart, dashboardEnd]);
+
   const refreshAllData = async () => {
       setLoading(true);
       await Promise.all([
@@ -3700,12 +3709,12 @@ const Admin: React.FC<Props> = ({ user }) => {
                                             <td className="p-3 whitespace-nowrap">{t.date}</td>
                                             <td className="p-3 text-xs uppercase">{isQuota ? 'CUOTA' : (t.type === 'income' ? 'INGRESO' : 'GASTO')}</td>
                                             <td className="p-3 text-xs uppercase">{t.category.replace('_', ' ')}</td>
-                                            <td className="p-3">{t.description}</td>
+                                            <td className="p-3">{t.description}{t.quickStatus === 'pending' && <span className="block text-xs text-amber-300">Pendiente de completar</span>}</td>
                                             <td className={`p-3 text-right font-bold ${t.type === 'income' ? 'text-green-400' : 'text-red-400'}`}>
                                                 {t.type === 'income' ? '+' : '-'}${t.amount}
                                             </td>
                                             <td className="p-3 flex justify-center gap-2">
-                                                {!isQuota ? (
+                                                {t.quickStatus ? <button disabled={isReadOnly} type="button" className="text-xs text-indigo-300 disabled:opacity-50" onClick={() => window.dispatchEvent(new CustomEvent('open-quick-finance', {detail:{id:t.id}}))}>Ver / completar captura</button> : !isQuota ? (
                                                     <>
                                                         <button 
                                                         type="button"

@@ -124,7 +124,7 @@ export const projectFinanceService = {
     const snap = await getDocs(collection(db, 'groups', groupId, 'treasury'));
     return snap.docs
       .map(item => ({ id: item.id, ...item.data(), amount: Number(item.data().amount) || 0 } as TreasuryEntry))
-      .filter(entry => !entry.projectId)
+      .filter(entry => !entry.projectId && !entry.quickStatus)
       .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
   },
 
