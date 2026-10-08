@@ -80,6 +80,7 @@ export interface Notice {
 }
 
 export interface PaymentReceipt {
+  quickMovementId?: string; // Captura enlazada: no volver a aplicar ni modificar por separado
   id: string;
   groupId: string;
   userId: string;
@@ -222,6 +223,16 @@ export interface TreasuryAllocation {
 }
 
 export interface TreasuryEntry {
+  quickStatus?: 'pending' | 'completed' | 'applied';
+  memberId?: string;
+  memberName?: string;
+  paymentMethod?: 'cash' | 'card' | 'transfer';
+  accountId?: string;
+  accountName?: string;
+  payee?: string;
+  appliedPeriod?: string;
+  appliedFeeId?: string;
+  completedBy?: string;
   id: string;
   groupId: string;
   date: string; // YYYY-MM-DD

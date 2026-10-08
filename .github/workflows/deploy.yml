@@ -33,6 +33,8 @@ jobs:
         run: node tests/extra-fee-integration.mjs
       - name: WhatsApp reminder tests
         run: node tests/run-whatsapp.mjs
+      - name: Quick finance integration tests
+        run: node tests/quick-finance-integration.mjs
       - name: Production build
         run: npm run build
       - name: Publish live
