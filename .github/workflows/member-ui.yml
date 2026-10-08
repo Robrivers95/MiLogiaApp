@@ -10,6 +10,9 @@ on:
       - 'components/Payments.tsx'
       - 'components/WhatsAppReminders.tsx'
       - 'components/QuickFinance.tsx'
+      - 'components/TreasuryReport.tsx'
+      - 'services/treasuryReport.ts'
+      - 'tests/treasury-report*'
       - 'services/quickFinance*'
       - 'tests/quick-finance*'
       - 'services/whatsappReminders.ts'
@@ -42,6 +45,8 @@ jobs:
         run: node tests/whatsapp-ui.mjs
       - name: Verify quick finance
         run: node tests/quick-finance-ui.mjs
+      - name: Verify treasury report
+        run: node tests/treasury-report-ui.mjs
       - name: Save screenshots
         if: always()
         uses: actions/upload-artifact@v4

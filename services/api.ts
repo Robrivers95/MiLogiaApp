@@ -1,11 +1,12 @@
 
-import { User, Payment, IndividualExtraFee, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee, AppNotification, NotificationType, PaymentReceipt } from '../types';
+import { User, Payment, IndividualExtraFee, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee, FinanceProject, AppNotification, NotificationType, PaymentReceipt } from '../types';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { auth, db, storage } from './firebase';
 import { canUseWhatsApp, currentReminderPeriod, debtReminder, normalizeWhatsAppPhone, WhatsAppPreparation, WhatsAppRecipient } from './whatsappReminders';
 import { assignmentPeriod, assignExistingFee, hasAssignedFee, applyExtraReceipt, ExistingFeeTemplate } from './extraFeeLifecycle';
 import { normalizePayment, correctAppliedPayment } from './paymentAccounting';
 import { countsInTreasury } from './quickFinance';
+import { quotaReportRows } from './treasuryReport';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { 
   signInWithEmailAndPassword, 
@@ -663,7 +664,7 @@ export const dataService = {
      await deleteDoc(ref);
   },
 
-  getTreasuryEntries: async (groupId: string): Promise<TreasuryEntry[]> => {
+  getTreasuryEntries: async (groupId: string, strict = false): Promise<TreasuryEntry[]> => {
       if (!groupId) return [];
       try {
         const q = query(collection(db, "groups", groupId, "treasury"));
@@ -681,46 +682,28 @@ export const dataService = {
         return entries.filter(countsInTreasury).sort((a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
       } catch (e) {
           console.error("Error fetching treasury", e);
+          if (strict) throw e;
           return [];
       }
   },
   
-  // Helper to transform individual user payments into Treasury-like entries for display/CSV
+  // A read-only income breakdown, using the same member/month records as the payment matrix.
   getDetailedQuotaTransactions: async (groupId: string): Promise<TreasuryEntry[]> => {
       if (!groupId) return [];
-      const usersQ = query(collection(db, "users"), where("groupId", "==", groupId));
-      const usersSnap = await getDocs(usersQ);
-      
-      const allTransactions: TreasuryEntry[] = [];
-      
-      const promises = usersSnap.docs.map(async (uDoc) => {
-          const u = uDoc.data() as User;
-          try {
-              const ledgerSnap = await getDocs(collection(db, "users", uDoc.id, "ledger"));
-              ledgerSnap.forEach(d => {
-                  const p = d.data() as Payment;
-                  if (p.paid > 0) {
-                      allTransactions.push({
-                          id: `quota_${u.uid}_${p.period}`,
-                          groupId: groupId,
-                          date: p.paymentDate ? p.paymentDate.slice(0, 10) : 'Sin Fecha',
-                          type: 'income',
-                          category: 'cuota_extra', // Reuse category or map to specific label in UI
-                          description: `Acumulado ${p.period} - ${u.name} (incluye abonos manuales; no es un depósito individual)`,
-                          amount: Number(p.paid),
-                          allocations: [{ source: 'cuotas', amount: Number(p.paid) }],
-                          createdBy: u.uid,
-                          createdAt: 0
-                      } as any); // Cast to allow custom handling in UI
-                  }
-              });
-          } catch (e) {
-              // ignore permission error per user
-          }
-      });
-      
-      await Promise.all(promises);
-      return allTransactions;
+      const [usersSnap, projectsSnap] = await Promise.all([
+          getDocs(query(collection(db, 'users'), where('groupId', '==', groupId))),
+          getDocs(collection(db, 'groups', groupId, 'projects'))
+      ]);
+      const projects = projectsSnap.docs.map(item => ({ ...item.data(), id: item.id } as FinanceProject));
+      const rows = await Promise.all(usersSnap.docs.map(async memberDoc => {
+          const member = memberDoc.data() as User;
+          const ledger = await getDocs(collection(db, 'users', memberDoc.id, 'ledger'));
+          return ledger.docs.flatMap(item => quotaReportRows(
+              { uid: memberDoc.id, name: member.name || member.email || memberDoc.id },
+              { ...item.data(), period: item.id } as Payment, groupId, projects
+          ));
+      }));
+      return rows.flat();
   },
   
   getAllPaidQuotas: async (groupId: string): Promise<number> => {
