@@ -14,6 +14,7 @@ import AdminProjects from './AdminProjects';
 import AdminNavigation from './AdminNavigation';
 import { AdminTab as Tab } from './adminNavigation';
 import MemberManagement from './MemberManagement';
+import TreasuryReport from './TreasuryReport';
 import { searchMembers, MemberSort } from '../services/memberDirectory';
 
 
@@ -103,6 +104,7 @@ const Admin: React.FC<Props> = ({ user }) => {
 
   // Treasury State
   const [treasuryEntries, setTreasuryEntries] = useState<TreasuryEntry[]>([]);
+  const [loadingTreasury, setLoadingTreasury] = useState(false);
   const [combinedTreasuryHistory, setCombinedTreasuryHistory] = useState<TreasuryEntry[]>([]); // Includes Quotas
   const [treasuryBalance, setTreasuryBalance] = useState({ general: 0, charity: 0, quotas: 0 });
   const [editingTreasuryId, setEditingTreasuryId] = useState<string | null>(null);
@@ -563,8 +565,9 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const loadTreasury = async () => {
+      setLoadingTreasury(true);
       try {
-          const entries = await dataService.getTreasuryEntries(user.groupId);
+          const entries = await dataService.getTreasuryEntries(user.groupId, true);
           setTreasuryEntries(entries);
           const quotaTransactions = await dataService.getDetailedQuotaTransactions(user.groupId);
           
@@ -607,6 +610,8 @@ const Admin: React.FC<Props> = ({ user }) => {
       } catch (e) {
           console.error(e);
           showMessage("Error cargando Tesorería.", 'error');
+      } finally {
+          setLoadingTreasury(false);
       }
   };
   
@@ -1472,44 +1477,6 @@ const Admin: React.FC<Props> = ({ user }) => {
       setNewTransDesc(t.description);
       setNewTransAmount(t.amount);
       setAllocations(t.allocations || []);
-  };
-  const handleDownloadTreasuryCSV = async () => {
-      try {
-          const entries = await dataService.getTreasuryEntries(user.groupId!);
-          const quotas = await dataService.getDetailedQuotaTransactions(user.groupId!);
-          const combined = [...entries, ...quotas].sort((a, b) => b.date.localeCompare(a.date));
-          
-          // Build CSV with multiple rows per entry if it has multiple allocations
-          const csvRows: string[] = ["Fecha,Tipo,Categoría,Descripción,Monto,Origen/Destino Fondos,Monto Asignado"];
-          
-          combined.forEach(e => {
-              const baseInfo = `${e.date},"${e.type}","${e.category}","${e.description}",${e.amount}`;
-              
-              // Check if entry has allocations
-              if (e.allocations && e.allocations.length > 0) {
-                  // Create one row per allocation
-                  e.allocations.forEach(alloc => {
-                      csvRows.push(`${baseInfo},"${alloc.source}",${alloc.amount}`);
-                  });
-              } else {
-                  // No allocations, just add a single row with empty allocation columns
-                  csvRows.push(`${baseInfo},"N/A",0`);
-              }
-          });
-          
-          const csv = csvRows.join('\n');
-          
-          const blob = new Blob([csv], { type: 'text/csv' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `tesoreria_${user.groupId}_${new Date().toISOString().slice(0,10)}.csv`;
-          a.click();
-          URL.revokeObjectURL(url);
-      } catch (e) {
-          console.error(e);
-          showMessage("Error descargando CSV", 'error');
-      }
   };
   const handleAddPriceChange = async () => {
       if (isReadOnly || !newPricePeriod || newPriceAmount <= 0) {
@@ -3684,66 +3651,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                     </div>
                 </div>
 
-                <div className="bg-logia-800 rounded-xl border border-logia-700 shadow-lg overflow-hidden">
-                    <div className="p-4 border-b border-logia-700 flex justify-between items-center">
-                        <h3 className="font-bold text-white">Historial de Movimientos (Incluye Cuotas)</h3>
-                        <button onClick={handleDownloadTreasuryCSV} className="text-xs bg-green-700 px-2 py-1 rounded text-white">📥 CSV Detallado</button>
-                    </div>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left text-sm text-gray-300">
-                            <thead className="bg-logia-900 text-xs uppercase text-gray-500">
-                                <tr>
-                                    <th className="p-3">Fecha</th>
-                                    <th className="p-3">Tipo</th>
-                                    <th className="p-3">Concepto</th>
-                                    <th className="p-3">Descripción</th>
-                                    <th className="p-3 text-right">Monto</th>
-                                    <th className="p-3 text-center">Acción</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-logia-700">
-                                {combinedTreasuryHistory.map((t) => {
-                                    const isQuota = t.id.startsWith('quota_');
-                                    return (
-                                        <tr key={t.id} className={`hover:bg-logia-700/50 ${isQuota ? 'bg-logia-900/30 text-gray-400 italic' : ''}`}>
-                                            <td className="p-3 whitespace-nowrap">{t.date}</td>
-                                            <td className="p-3 text-xs uppercase">{isQuota ? 'CUOTA' : (t.type === 'income' ? 'INGRESO' : 'GASTO')}</td>
-                                            <td className="p-3 text-xs uppercase">{t.category.replace('_', ' ')}</td>
-                                            <td className="p-3">{t.description}{t.quickStatus === 'pending' && <span className="block text-xs text-amber-300">Pendiente de completar</span>}</td>
-                                            <td className={`p-3 text-right font-bold ${t.type === 'income' ? 'text-green-400' : 'text-red-400'}`}>
-                                                {t.type === 'income' ? '+' : '-'}${t.amount}
-                                            </td>
-                                            <td className="p-3 flex justify-center gap-2">
-                                                {t.quickStatus ? <button disabled={isReadOnly} type="button" className="text-xs text-indigo-300 disabled:opacity-50" onClick={() => window.dispatchEvent(new CustomEvent('open-quick-finance', {detail:{id:t.id}}))}>Ver / completar captura</button> : !isQuota ? (
-                                                    <>
-                                                        <button 
-                                                        type="button"
-                                                        onClick={(e) => handleEditTransaction(t, e)} 
-                                                        className="text-gray-400 hover:text-white p-1"
-                                                        title="Editar"
-                                                        >
-                                                        ✏️
-                                                        </button>
-                                                        <button 
-                                                            type="button"
-                                                            onClick={(e) => handleDeleteTransaction(t.id, e)} 
-                                                            className="text-white p-2 bg-red-600 rounded border border-red-700 hover:bg-red-500 cursor-pointer w-8 h-8 flex items-center justify-center shadow-md"
-                                                            title="Eliminar"
-                                                        >
-                                                            🗑️
-                                                        </button>
-                                                    </>
-                                                ) : (
-                                                    <button disabled={isReadOnly} onClick={(e) => handleEditTransaction(t, e)} className="text-xs text-yellow-300 disabled:opacity-50">✏️ Corregir pago / fecha</button>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+                <TreasuryReport key={user.groupId} groupId={user.groupId} entries={combinedTreasuryHistory} loading={loadingTreasury} readOnly={isReadOnly} onRefresh={() => { void loadTreasury(); }} onEdit={handleEditTransaction} onDelete={handleDeleteTransaction} />
             </div>
         )}
 

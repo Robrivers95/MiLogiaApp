@@ -223,6 +223,12 @@ export interface TreasuryAllocation {
 }
 
 export interface TreasuryEntry {
+  quotaPeriod?: string; // Mes asignado en la matriz; no es fecha del depósito
+  quotaKind?: 'regular' | 'extra' | 'unclassified';
+  quotaConcept?: string;
+  quotaFeeId?: string;
+  reportNote?: string;
+  reportProjects?: { id: string; name: string }[];
   quickStatus?: 'pending' | 'completed' | 'applied';
   memberId?: string;
   memberName?: string;

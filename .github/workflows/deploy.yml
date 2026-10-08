@@ -35,6 +35,8 @@ jobs:
         run: node tests/run-whatsapp.mjs
       - name: Quick finance integration tests
         run: node tests/quick-finance-integration.mjs
+      - name: Treasury report tests
+        run: node tests/treasury-report.mjs
       - name: Production build
         run: npm run build
       - name: Publish live
