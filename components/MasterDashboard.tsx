@@ -11,6 +11,12 @@ interface Props {
 const MasterDashboard: React.FC<Props> = ({ onSelectGroup, onLogout }) => {
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showGreeting, setShowGreeting] = useState(true);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setShowGreeting(false), 6000);
+    return () => window.clearTimeout(timer);
+  }, []);
   
   // Create State
   const [showCreate, setShowCreate] = useState(false);
@@ -178,6 +184,12 @@ const MasterDashboard: React.FC<Props> = ({ onSelectGroup, onLogout }) => {
   }, [showIconConfig]);
   return (
     <div className="min-h-screen bg-logia-900 p-6 font-sans">
+      {showGreeting && <div className="fixed inset-x-4 z-40 flex justify-center pointer-events-none" style={{ bottom: 'calc(1.5rem + env(safe-area-inset-bottom))' }}>
+        <div role="status" aria-live="polite" className="flex items-center gap-3 max-w-full rounded-xl border border-indigo-400/50 bg-logia-800 px-4 py-3 text-white shadow-2xl">
+          <span className="text-sm">hola hola niño guapo</span>
+          <button type="button" aria-label="Cerrar saludo" onClick={() => setShowGreeting(false)} className="pointer-events-auto p-1 text-gray-300 hover:text-white">×</button>
+        </div>
+      </div>}
       <div className="max-w-4xl mx-auto space-y-8">
         
         <header className="flex justify-between items-center border-b border-logia-700 pb-4">
