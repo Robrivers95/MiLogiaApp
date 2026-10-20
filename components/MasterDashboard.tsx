@@ -1,6 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { Group } from '../types';
+import {MasonicSeal,TempleBackdrop} from './MasonicIdentity';
+import {validLodgeLogo} from '../services/lodgeIdentity';
 import { dataService, authService } from '../services/api';
 
 interface Props {
@@ -183,7 +185,8 @@ const MasterDashboard: React.FC<Props> = ({ onSelectGroup, onLogout }) => {
     }
   }, [showIconConfig]);
   return (
-    <div className="min-h-screen bg-logia-900 p-6 font-sans">
+    <div className="temple-shell min-h-screen bg-logia-900 p-6 font-sans">
+      <TempleBackdrop/>
       {showGreeting && <div className="fixed inset-x-4 z-40 flex justify-center pointer-events-none" style={{ bottom: 'calc(1.5rem + env(safe-area-inset-bottom))' }}>
         <div role="status" aria-live="polite" className="flex items-center gap-3 max-w-full rounded-xl border border-indigo-400/50 bg-logia-800 px-4 py-3 text-white shadow-2xl">
           <span className="text-sm">hola hola niño guapo</span>
@@ -340,7 +343,7 @@ const MasterDashboard: React.FC<Props> = ({ onSelectGroup, onLogout }) => {
                       ⛔ SUSPENDIDA
                     </div>
                   )}
-                  <h3 className="text-xl font-bold text-white mb-2">{group.name}</h3>
+                  <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-3">{validLodgeLogo(group) ? <img src={group.logoImageUrl} alt={`Logo de ${group.name}`} className="temple-logo"/> : <MasonicSeal className="temple-seal"/>}<span>{group.name}</span></h3>
                   <p className="text-gray-400 text-sm mb-4">{group.description || 'Sin descripción'}</p>
                   <div className="flex justify-between items-center mt-4">
                     <span className="text-xs text-gray-500 uppercase tracking-wider">ID: {group.id.slice(0,8)}...</span>
@@ -480,3 +483,4 @@ const MasterDashboard: React.FC<Props> = ({ onSelectGroup, onLogout }) => {
 };
 
 export default MasterDashboard;
+

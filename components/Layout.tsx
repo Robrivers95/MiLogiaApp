@@ -2,6 +2,8 @@ import React from 'react';
 import { User } from '../types';
 import NavIcon from './NavIcon';
 import NotificationBell from './NotificationBell';
+import {MasonicSeal,TempleBackdrop} from './MasonicIdentity';
+import LodgeLogoEditor from './LodgeLogoEditor';
 import QuickFinance from './QuickFinance';
 
 interface Props {
@@ -13,10 +15,14 @@ interface Props {
   children: React.ReactNode;
   suspended?: boolean;
   groupName?: string;
+  groupLogo?: string;
 }
 
-const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onExitGroup, children, suspended, groupName }) => {
+const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onExitGroup, children, suspended, groupName, groupLogo }) => {
   const [showMore, setShowMore] = React.useState(false);
+  const [editLogo,setEditLogo] = React.useState(false);
+  const [logoFailed,setLogoFailed] = React.useState(false);
+  React.useEffect(()=>setLogoFailed(false),[groupLogo]);
   const [showCommunity, setShowCommunity] = React.useState(false);
   React.useEffect(() => { setShowMore(false); setShowCommunity(false); }, [currentView]);
   React.useEffect(() => {
@@ -64,10 +70,12 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
   const navigate = (id: string) => { if (id === 'community') { setShowCommunity(value => !value); setShowMore(false); } else { onNavigate(id); setShowMore(false); setShowCommunity(false); } };
 
   return (
-    <div className="min-h-screen bg-logia-900 text-gray-100 font-sans relative">
+    <div className="temple-shell min-h-screen bg-logia-900 text-gray-100 font-sans relative">
+      <TempleBackdrop/>
+      {editLogo && <LodgeLogoEditor groupId={user.groupId} name={groupName || ''} logo={groupLogo} onClose={()=>setEditLogo(false)}/>}
       <header className="bg-logia-800 border-b border-logia-700 px-4 py-3 sticky top-0 z-20 shadow-md">
         <div className="max-w-7xl mx-auto flex justify-between items-center gap-3">
-          <div className="min-w-0"><div className="flex items-center gap-2"><h1 className="text-lg font-bold text-indigo-400">Mi Logia</h1><span className="text-[10px] text-gray-400">V2 Beta</span></div>{groupName && <p className="text-xs text-gray-400 truncate max-w-[52vw] sm:max-w-md">{groupName}</p>}</div>
+          <div className="temple-identity"><button type="button" className="temple-logo-control" disabled={!['admin','master'].includes(user.role) || !!suspended} onClick={()=>setEditLogo(true)} aria-label={['admin','master'].includes(user.role) ? 'Cambiar logo de la logia' : 'Identidad de la logia'}>{groupLogo && !logoFailed ? <img src={groupLogo} onError={()=>setLogoFailed(true)} className="temple-logo" alt={`Logo de ${groupName || 'la logia'}`}/>:<MasonicSeal className="temple-seal"/>}{['admin','master'].includes(user.role) && !suspended && <span className="temple-logo-edit" aria-hidden="true">✎</span>}</button><div className="min-w-0"><div className="flex items-center gap-2"><h1 className="text-lg font-bold text-indigo-400">Mi Logia</h1><span className="text-[10px] text-gray-400">V2 Beta</span></div>{groupName && <p className="text-xs text-gray-400 truncate max-w-[52vw] sm:max-w-md">{groupName}</p>}</div></div>
           <div className="flex gap-2 items-center shrink-0"><NotificationBell user={user} onNavigate={onNavigate} /><button onClick={() => { setShowMore(value => !value); setShowCommunity(false); }} aria-label="Opciones de cuenta" aria-expanded={showMore} className="p-2 border border-logia-700 rounded-lg text-gray-300"><NavIcon name="menu" /></button></div>
         </div>
         {showMore && <div className="absolute right-3 top-full mt-2 w-64 bg-logia-800 rounded-xl border border-logia-700 shadow-2xl p-2 z-40" aria-label="Opciones de cuenta">
@@ -100,3 +108,4 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
 };
 
 export default Layout;
+

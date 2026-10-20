@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { authService, dataService } from '../services/api';
 import { User, Group } from '../types';
+import {MasonicSeal,TempleBackdrop} from './MasonicIdentity';
 
 interface Props {
   onLogin: (user: User) => void;
@@ -79,8 +80,10 @@ const Auth: React.FC<Props> = ({ onLogin }) => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-logia-900 p-4">
+    <div className="temple-shell flex flex-col items-center justify-center min-h-screen bg-logia-900 p-4">
+      <TempleBackdrop/>
       <div className="w-full max-w-md bg-logia-800 rounded-xl shadow-2xl p-8 border border-logia-700">
+        <MasonicSeal className="temple-auth-seal"/>
         <h1 className="text-3xl font-bold text-center text-indigo-400 mb-2">Mi Logia</h1>
         <p className="text-center text-gray-400 mb-8">
           {isRegistering ? 'Solicita tu ingreso' : 'Bienvenido, Hermano'}
@@ -182,3 +185,4 @@ const Auth: React.FC<Props> = ({ onLogin }) => {
 };
 
 export default Auth;
+

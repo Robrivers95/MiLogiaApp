@@ -1,0 +1,26 @@
+:root{color-scheme:dark;--temple-gold:#d6b77d;--temple-ink:#f2f5fa;--temple-muted:#bac7d9}
+body{background:#14243a!important;color:var(--temple-ink)}
+.temple-shell{isolation:isolate;background:linear-gradient(135deg,#172b43 0%,#1c3048 48%,#14263d 100%)!important}
+.temple-backdrop{position:fixed;inset:0;z-index:-1;pointer-events:none;color:var(--temple-gold);overflow:hidden}
+.temple-backdrop>svg{width:100%;height:100%;display:block}
+.temple-shell .bg-logia-900{background-color:#16283f}
+.temple-shell .bg-logia-800{background-color:#233951}
+.temple-shell .border-logia-700{border-color:#415670}
+.temple-shell .bg-logia-700{background-color:#304a65}
+.temple-shell .text-gray-400{color:#b8c4d6}
+.temple-shell .text-gray-500{color:#a0b2c9}
+.temple-shell .text-indigo-400,.temple-shell .text-indigo-300{color:#c6d7f3}
+.temple-shell .text-logia-gold{color:#e2c58f}
+.temple-shell header.bg-logia-800{background:linear-gradient(100deg,#233a52,#1d3048);border-bottom-color:#a58a5a80}
+.temple-shell nav[aria-label="Navegación principal"]{background:#20364d;border-top-color:#a58a5a70}
+.temple-shell h1,.temple-shell h2,.temple-shell h3{letter-spacing:.012em}
+.temple-identity{display:flex;align-items:center;gap:.65rem;min-width:0}
+.temple-seal{width:42px;height:42px;flex:none;color:var(--temple-gold)}
+.temple-logo{width:42px;height:42px;object-fit:contain;flex:none;background:#f3f1e9;border:1px solid #c5ac78;border-radius:50%;padding:3px}
+.temple-logo-control{position:relative;flex:none;border-radius:50%;line-height:0}
+.temple-logo-control:focus-visible{outline:2px solid #f0d8a8;outline-offset:4px}
+.temple-logo-control .temple-logo-edit{position:absolute;right:-3px;bottom:-3px;background:#d6b77d;color:#172b43;border-radius:50%;padding:3px;font-size:10px;line-height:1}
+.temple-auth-seal{height:72px;width:72px;margin:0 auto 1rem;color:var(--temple-gold)}
+.temple-shell button:not(:disabled):focus-visible,.temple-shell input:focus-visible,.temple-shell select:focus-visible,.temple-shell textarea:focus-visible{outline:2px solid #e6c88d;outline-offset:3px}
+@media(max-width:640px){.temple-backdrop>svg{min-width:850px;position:relative;left:50%;transform:translateX(-50%);opacity:.7}.temple-seal,.temple-logo{width:34px;height:34px}.temple-identity{gap:.45rem}}
+@media(prefers-reduced-motion:reduce){.temple-shell *{scroll-behavior:auto!important}}

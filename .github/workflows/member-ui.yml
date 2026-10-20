@@ -20,6 +20,12 @@ on:
       - 'services/extraFeeLifecycle.ts'
       - 'services/member*.ts'
       - 'tests/member*'
+      - 'tests/temple*'
+      - 'styles/**'
+      - 'components/Layout.tsx'
+      - 'components/MasonicIdentity.tsx'
+      - 'components/LodgeLogoEditor.tsx'
+      - 'components/RequiredPasswordChange.tsx'
       - '.github/workflows/member-ui.yml'
 
 permissions:
@@ -47,9 +53,12 @@ jobs:
         run: node tests/quick-finance-ui.mjs
       - name: Verify treasury report
         run: node tests/treasury-report-ui.mjs
+      - name: Verify temple and member access
+        run: node tests/temple-ui.mjs
       - name: Save screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: responsive-members-screenshots
           path: test-results/
+

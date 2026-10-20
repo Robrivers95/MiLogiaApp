@@ -1,6 +1,7 @@
 
 import { User, Payment, IndividualExtraFee, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee, FinanceProject, AppNotification, NotificationType, PaymentReceipt } from '../types';
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import {MEMBER_ACCESS_ENABLED} from './features';
 import { auth, db, storage } from './firebase';
 import { canUseWhatsApp, currentReminderPeriod, debtReminder, normalizeWhatsAppPhone, WhatsAppPreparation, WhatsAppRecipient } from './whatsappReminders';
 import { assignmentPeriod, assignExistingFee, hasAssignedFee, applyExtraReceipt, ExistingFeeTemplate } from './extraFeeLifecycle';
@@ -52,6 +53,8 @@ export const authService = {
   signIn: async (email: string, password: string): Promise<User> => {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     const uid = userCredential.user.uid;
+    const security = MEMBER_ACCESS_ENABLED ? await getDoc(doc(db,'accountSecurity',uid)) : null;
+    if (security?.data()?.mustChangePassword) return {uid,name:userCredential.user.displayName || '',email:userCredential.user.email || email,role:'member',active:false,groupId:'',joinDate:'',profileEditable:false,requirePasswordChange:true};
     
     const userRef = doc(db, "users", uid);
     const userDoc = await getDoc(userRef);
@@ -82,12 +85,7 @@ export const authService = {
       if (!userData.uid) { userData.uid = uid; dirty = true; }
       if (!userData.rpg) { userData.rpg = { ...INITIAL_RPG }; dirty = true; }
       
-      // --- SUPER ADMIN AUTO-PROMOTION ---
-      if (email === 'robrivers95@gmail.com' && userData.role !== 'master') {
-          userData.role = 'master';
-          dirty = true;
-      }
-      // ----------------------------------
+      // Privileged roles are assigned by an authorized administrator, never by an email check in the client.
 
       if (dirty) {
           await setDoc(userRef, userData, { merge: true });
@@ -117,9 +115,13 @@ export const authService = {
     });
     // -----------------------------------------------
     
-    // --- SUPER ADMIN CHECK ---
-    const role = email === 'robrivers95@gmail.com' ? 'master' : (existingUserData?.role || 'member');
-    // -------------------------
+    // Privileged invitations require an administrator to link/approve the account.
+    // Keep their existing profile and ledger intact instead of granting a role from client input.
+    if (existingUserData && ['admin','master'].includes(existingUserData.role)) {
+      existingUserData = null;
+      tempUidToDelete = null;
+    }
+    const role = existingUserData?.role === 'viewer' ? 'viewer' : 'member';
 
     const newUser: User = {
       uid,
@@ -2625,3 +2627,4 @@ export const generateTriviaWithAI = async (): Promise<Partial<Trivia>> => {
   if (!text) throw new Error("No response from AI");
   return JSON.parse(text);
 };
+

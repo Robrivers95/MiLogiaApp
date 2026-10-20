@@ -1,0 +1,63 @@
+name: Deploy protected member access
+
+on:
+  push:
+    branches: [feat/temple-member-access]
+    paths:
+      - 'functions/**'
+      - 'firestore.rules'
+      - 'tests/account-recovery.mjs'
+      - 'tests/security-rules.mjs'
+      - '.github/workflows/member-access-backend.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mi-logia-member-access-backend
+  cancel-in-progress: false
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: /tmp/mi-logia-deploy.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: npm ci --prefix functions
+      - run: npm run build --prefix functions
+      - name: Verify isolated recovery backend
+        run: node tests/account-recovery.mjs
+      - name: Install rule verification tools
+        run: npm install --no-save --package-lock=false firebase-tools@14.22.0 @firebase/rules-unit-testing@3.0.4
+      - name: Verify Firestore authorization
+        run: npx firebase emulators:exec --only firestore --project demo-mi-logia-security --config firebase.security-test.json 'node tests/security-rules.mjs'
+      - name: Authorize existing deployment identity
+        env:
+          DEPLOY_CREDENTIALS: ${{ secrets.FIREBASE_SERVICE_ACCOUNT2 }}
+        run: |
+          python3 - <<'PY'
+          import os, json
+          path = os.environ['GOOGLE_APPLICATION_CREDENTIALS']
+          descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+          with os.fdopen(descriptor, 'w') as handle:
+              handle.write(os.environ['DEPLOY_CREDENTIALS'])
+          print('Deployment service account:', json.loads(os.environ['DEPLOY_CREDENTIALS']).get('client_email', 'unknown'))
+          PY
+      - name: Protect role and recovery state before enabling account operations
+        run: npx firebase deploy --only firestore:rules --project registrologia --non-interactive
+      - name: Publish only the two new recovery callables
+        run: npx firebase deploy --only functions:adminMemberAccess,functions:finishMemberPasswordChange --project registrologia --non-interactive
+      - name: Remove temporary credential file
+        if: always()
+        run: rm -f "$GOOGLE_APPLICATION_CREDENTIALS"

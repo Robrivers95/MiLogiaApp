@@ -2,7 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { User, Group } from './types';
 import { dataService } from './services/api';
 import { isConfigured, auth } from './services/firebase';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onIdTokenChanged } from 'firebase/auth';
+import {doc,onSnapshot} from 'firebase/firestore';
+import {db} from './services/firebase';
+import {MEMBER_ACCESS_ENABLED} from './services/features';
+import RequiredPasswordChange from './components/RequiredPasswordChange';
+import {validLodgeLogo} from './services/lodgeIdentity';
 import Auth from './components/Auth';
 import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
@@ -25,39 +30,51 @@ const App: React.FC = () => {
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [groupSuspended, setGroupSuspended] = useState(false);
   const [groupName, setGroupName] = useState('');
+  const [groupLogo,setGroupLogo] = useState('');
+  const [needsPasswordChange,setNeedsPasswordChange] = useState(false);
 
   if (!isConfigured) {
     return <Setup />;
   }
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async firebaseUser => {
-      if (firebaseUser) {
+    let stopSecurity = () => {};
+    let session = 0;
+    let securityVersion = 0;
+    const unsubscribe = onIdTokenChanged(auth, firebaseUser => {
+      const current = ++session;
+      stopSecurity();
+      setLoading(true);
+      if (!firebaseUser) { setUser(null); setNeedsPasswordChange(false); localStorage.removeItem('logia_session'); setLoading(false); return; }
+      if (!MEMBER_ACCESS_ENABLED) {
+        setNeedsPasswordChange(false);
+        dataService.getUserProfile(firebaseUser.uid).then(profile=>{
+          if(current!==session)return;
+          setUser(profile ? {...profile,uid:firebaseUser.uid} : null);
+          if(profile)localStorage.setItem('logia_session',JSON.stringify(profile));
+        }).catch(()=>{if(current===session)setUser(null);}).finally(()=>{if(current===session)setLoading(false);});
+        return;
+      }
+      stopSecurity = onSnapshot(doc(db,'accountSecurity',firebaseUser.uid), async snapshot => {
+        const version=++securityVersion;
+        if (current !== session) return;
+        if (snapshot.data()?.mustChangePassword) { setNeedsPasswordChange(true); setUser(null); localStorage.removeItem('logia_session'); setLoading(false); return; }
+        setNeedsPasswordChange(false);
         try {
           const profile = await dataService.getUserProfile(firebaseUser.uid);
-          if (profile) {
-            setUser({ ...profile, uid: firebaseUser.uid });
-            localStorage.setItem('logia_session', JSON.stringify(profile));
-          } else {
-            console.warn('User authenticated but no profile found.');
-            setUser(null);
-          }
-        } catch (error) {
-          console.error('Error fetching user profile:', error);
-          setUser(null);
-        }
-      } else {
-        setUser(null);
-        localStorage.removeItem('logia_session');
-      }
-      setLoading(false);
+          if (current !== session || version !== securityVersion) return;
+          setUser(profile ? { ...profile, uid: firebaseUser.uid } : null);
+          if (profile) localStorage.setItem('logia_session', JSON.stringify(profile));
+        } catch { if (current === session && version === securityVersion) setUser(null); }
+        finally { if (current === session && version === securityVersion) setLoading(false); }
+      }, () => { if (current === session) {setUser(null);setNeedsPasswordChange(false);setLoading(false);} });
     });
-
-    return () => unsubscribe();
+    return () => {session++;stopSecurity();unsubscribe();};
   }, []);
 
   const handleLogin = (loggedUser: User) => {
     setUser(loggedUser);
+    setNeedsPasswordChange(!!loggedUser.requirePasswordChange);
     setView('home');
     setSelectedGroup(null);
   };
@@ -81,29 +98,25 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const checkGroupStatus = async () => {
-      const groupId = selectedGroup?.id || user?.groupId;
-      if (selectedGroup?.name) setGroupName(selectedGroup.name);
-      if (!groupId || user?.role === 'master') {
-        setGroupSuspended(false);
-        return;
-      }
-      try {
-        const group = await dataService.getGroupDetails(groupId);
-        setGroupSuspended(group?.active === false);
-        if (group?.name) setGroupName(group.name);
-      } catch {
-        setGroupSuspended(false);
-      }
-    };
-    void checkGroupStatus();
-  }, [user, selectedGroup]);
+    const groupId=selectedGroup?.id || user?.groupId;
+    setGroupName(selectedGroup?.name || '');setGroupLogo('');
+    if(!groupId){setGroupSuspended(false);return;}
+    return onSnapshot(doc(db,'groups',groupId),snapshot=>{
+      const group=snapshot.exists()?{...snapshot.data(),id:snapshot.id} as Group:null;
+      setGroupSuspended(user?.role!=='master' && group?.active===false);
+      setGroupName(group?.name || selectedGroup?.name || '');
+      setGroupLogo(group && validLodgeLogo(group) ? group.logoImageUrl || '' : '');
+    },()=>setGroupSuspended(user?.role!=='master'));
+  }, [user?.uid,user?.groupId,user?.role,selectedGroup?.id]);
 
   const handleLogout = () => {
     void auth.signOut();
     setUser(null);
     setSelectedGroup(null);
+    setNeedsPasswordChange(false);
   };
+
+  if (needsPasswordChange && auth.currentUser) return <RequiredPasswordChange onLogout={handleLogout}/>;
 
   if (loading) {
     return <div className="min-h-screen bg-logia-900 flex items-center justify-center text-white">Cargando...</div>;
@@ -134,6 +147,7 @@ const App: React.FC = () => {
         onExitGroup={user.role === 'master' ? () => setSelectedGroup(null) : undefined}
         suspended={groupSuspended}
         groupName={groupName}
+        groupLogo={groupLogo}
       >
         {view === 'home' && <Dashboard user={activeUserContext} />}
         {view === 'notices' && <Notices user={activeUserContext} />}

@@ -34,6 +34,7 @@ export interface RpgCharacter {
 }
 
 export interface User {
+  requirePasswordChange?: boolean;
   uid: string;
   name: string;
   email: string;
@@ -198,6 +199,9 @@ export interface TriviaAnswer {
 }
 
 export interface Group {
+  logoImageUrl?: string;
+  logoUpdatedAt?: number;
+  logoUpdatedBy?: string;
   id: string;
   name: string;
   description: string;
@@ -333,3 +337,4 @@ export interface AppNotification {
   read: boolean;
   createdAt: number;   // timestamp ms
 }
+

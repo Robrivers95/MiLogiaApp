@@ -35,8 +35,12 @@ jobs:
         run: node tests/run-whatsapp.mjs
       - name: Quick finance integration tests
         run: node tests/quick-finance-integration.mjs
+      - name: Member recovery isolation tests
+        run: node tests/account-recovery.mjs
       - name: Treasury report tests
         run: node tests/treasury-report.mjs
+      - name: Verify account feature deployment gate
+        run: node scripts/check-member-access-deployment.mjs
       - name: Production build
         run: npm run build
       - name: Publish live
@@ -45,3 +49,4 @@ jobs:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT2 }}
           channelId: live
           projectId: registrologia
+
