@@ -67,6 +67,10 @@ jobs:
               const result=await auth.request({url:'https://cloudresourcemanager.googleapis.com/v1/projects/registrologia:testIamPermissions',method:'POST',data:{permissions}});
               const granted=new Set(result.data.permissions||[]);
               console.log('Missing project deployment permissions:',permissions.filter(permission=>!granted.has(permission)).join(', ')||'none');
+              for(const service of ['cloudfunctions.googleapis.com','cloudbuild.googleapis.com','artifactregistry.googleapis.com']) {
+                try { const api=await auth.request({url:'https://serviceusage.googleapis.com/v1/projects/635701699225/services/'+service}); console.log('Deployment API state:',service,api.data.state); }
+                catch(error) { console.log('Deployment API state unavailable:',service,error.response?.status||error.code||'unknown'); }
+              }
             } catch(error) { console.log('Permission inspection unavailable:',error.response?.status||error.code||'unknown'); }
           })();
           JS

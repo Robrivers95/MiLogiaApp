@@ -18,7 +18,7 @@ const sources={
 const stubRoutes=['Auth','Payments','Attendance','Admin','Profile','Setup','Notices','MasterDashboard','PendingApproval','Library'];
 await build({stdin:{contents:"import React from 'react';import {createRoot} from 'react-dom/client';import App from './App';createRoot(document.getElementById('root')).render(<App/>);",resolveDir:process.cwd(),loader:'tsx'},outfile:'tests/session-browser.js',bundle:true,format:'esm',plugins:[{name:'isolated-app-session',setup(b){
  b.onResolve({filter:/^firebase\/(auth|firestore)$|\/(firebase|api|features|lodgeIdentity|memberAccess)$|\/(Auth|Layout|Dashboard|Payments|Attendance|Admin|Profile|Setup|Notices|MasterDashboard|PendingApproval|Library)$/},args=>({path:args.path.startsWith('firebase/')?args.path:args.path.split('/').at(-1),namespace:'mock'}));
- b.onLoad({filter:/.*/,namespace:'mock'},args=>({loader:'tsx',contents:stubRoutes.includes(args.path)?"import React from 'react';export default function Route(){return <p>Ingresar</p>;}":(args.path==='Layout'?"import React from 'react';":'')+sources[args.path]}));
+ b.onLoad({filter:/.*/,namespace:'mock'},args=>({loader:'tsx',resolveDir:process.cwd(),contents:stubRoutes.includes(args.path)?"import React from 'react';export default function Route(){return <p>Ingresar</p>;}":(args.path==='Layout'?"import React from 'react';":'')+sources[args.path]}));
 }}]});
 writeFileSync('tests/session-browser.html',readFileSync('tests/member-ui.html','utf8').replace('/tests/member-ui-fixture.tsx','/tests/session-browser.js'));
 const server=spawn(process.execPath,['node_modules/vite/bin/vite.js','--host','127.0.0.1','--port','5184'],{stdio:'ignore'});let browser;
