@@ -13,7 +13,7 @@ export const adminMemberAccess=callable.https.onCall(async(data,context)=>{
   const db=admin.firestore();const auth=admin.auth();const security=db.doc(`accountSecurity/${targetId}`);
   const [actorSnap,targetSnap,groupSnap,actorSecurity]=await Promise.all([db.doc(`users/${actorId}`).get(),db.doc(`users/${targetId}`).get(),db.doc(`groups/${groupId}`).get(),db.doc(`accountSecurity/${actorId}`).get()]);
   if(!actorSnap.exists || !targetSnap.exists || !mayRecover(actorSnap.data() || {},targetSnap.data() || {},actorId,targetId,groupId))return fail('permission-denied','Solo puedes recuperar cuentas de miembros de tu logia. Las cuentas Master y tu propia cuenta están protegidas.');
-  if(actorSecurity.data()?.mustChangePassword)return fail('permission-denied','Cambia primero tu contraseña temporal.');
+  if(actorSecurity.data()?.mustChangePassword || Number(context.auth.token.auth_time || 0)<Number(actorSecurity.data()?.validAfterSeconds || 0))return fail('permission-denied','Cambia primero tu contraseña temporal.');
   if(!groupSnap.exists || groupSnap.data()?.active===false)return fail('failed-precondition','La logia está en modo solo lectura.');
   if(targetId.startsWith('temp_'))return fail('failed-precondition','Este miembro no tiene una cuenta vinculada. Usa Vincular cuenta real.');
   let account:admin.auth.UserRecord;

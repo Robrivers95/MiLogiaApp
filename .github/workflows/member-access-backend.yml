@@ -22,7 +22,7 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     env:
-      GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/mi-logia-deploy.json
+      GOOGLE_APPLICATION_CREDENTIALS: /tmp/mi-logia-deploy.json
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

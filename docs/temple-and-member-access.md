@@ -20,4 +20,4 @@ La seguridad adicional bloquea que un miembro se cambie el rol o la logia y que 
 
 El backend se verifica y publica antes de integrar el frontend. El workflow usa la identidad ya configurada en FIREBASE_SERVICE_ACCOUNT2. Publica primero las reglas y solo las nuevas funciones adminMemberAccess y finishMemberPasswordChange, sin volver a desplegar las funciones antiguas de notificaciones. Functions se compila con Node 22. Si esa identidad no tiene permisos para Functions o sus APIs, el workflow debe mostrar el permiso faltante; no se debe afirmar que la recuperación está operativa hasta comprobar su despliegue.
 
-Pruebas: account-recovery.mjs con SDK simulado sin cuentas reales, security-rules.mjs en Firestore Emulator, temple-access-ui.mjs a 1440/390/320 px y regresiones existentes de cuotas, evidencias y tesorería.
+Pruebas: account-recovery.mjs con SDK simulado sin cuentas reales, security-rules.mjs en Firestore Emulator, temple-ui.mjs a 1440/390/320 px y regresiones existentes de cuotas, evidencias y tesorería.
