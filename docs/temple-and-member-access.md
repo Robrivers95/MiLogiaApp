@@ -1,3 +1,9 @@
+## Estado de publicación
+
+La interfaz y el logo están listos para Hosting. La recuperación permanece desactivada mediante services/features.ts. El despliegue del 20 de octubre de 2026 recibió HTTP 403 en firebaserules.googleapis.com al probar las reglas, antes de publicarlas; no se publicaron funciones ni se cambiaron cuentas.
+
+Para activarla: conceder a la identidad de despliegue los permisos de Firebase Rules necesarios y verificar los de Cloud Functions; ejecutar Deploy protected member access y comprobar reglas y ambas funciones; cambiar MEMBER_ACCESS_ENABLED a true y publicar el frontend. El workflow de Hosting verifica las dos funciones antes de publicar cuando la opción está activa. No activar el frontend antes de ese despliegue.
+
 # Identidad masónica y recuperación de acceso
 
 La estructura y navegación de V2 se conservan. La piel visual usa azul legible, acentos dorados, sello G con escuadra y compás y un fondo vectorial tenue con columnas J/B, mampostería, mosaico ajedrezado, vela y calavera. Los adornos son decorativos, no capturan eventos ni incorporan imágenes remotas.

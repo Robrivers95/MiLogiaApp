@@ -5,6 +5,7 @@ import { isConfigured, auth } from './services/firebase';
 import { onIdTokenChanged } from 'firebase/auth';
 import {doc,onSnapshot} from 'firebase/firestore';
 import {db} from './services/firebase';
+import {MEMBER_ACCESS_ENABLED} from './services/features';
 import RequiredPasswordChange from './components/RequiredPasswordChange';
 import {validLodgeLogo} from './services/lodgeIdentity';
 import Auth from './components/Auth';
@@ -45,6 +46,15 @@ const App: React.FC = () => {
       stopSecurity();
       setLoading(true);
       if (!firebaseUser) { setUser(null); setNeedsPasswordChange(false); localStorage.removeItem('logia_session'); setLoading(false); return; }
+      if (!MEMBER_ACCESS_ENABLED) {
+        setNeedsPasswordChange(false);
+        dataService.getUserProfile(firebaseUser.uid).then(profile=>{
+          if(current!==session)return;
+          setUser(profile ? {...profile,uid:firebaseUser.uid} : null);
+          if(profile)localStorage.setItem('logia_session',JSON.stringify(profile));
+        }).catch(()=>{if(current===session)setUser(null);}).finally(()=>{if(current===session)setLoading(false);});
+        return;
+      }
       stopSecurity = onSnapshot(doc(db,'accountSecurity',firebaseUser.uid), async snapshot => {
         const version=++securityVersion;
         if (current !== session) return;

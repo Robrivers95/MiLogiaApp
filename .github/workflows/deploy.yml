@@ -39,6 +39,8 @@ jobs:
         run: node tests/account-recovery.mjs
       - name: Treasury report tests
         run: node tests/treasury-report.mjs
+      - name: Verify account feature deployment gate
+        run: node scripts/check-member-access-deployment.mjs
       - name: Production build
         run: npm run build
       - name: Publish live

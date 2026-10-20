@@ -2,7 +2,7 @@ name: Deploy protected member access
 
 on:
   push:
-    branches: [main, feat/temple-member-access]
+    branches: [feat/temple-member-access]
     paths:
       - 'functions/**'
       - 'firestore.rules'
@@ -47,11 +47,12 @@ jobs:
           DEPLOY_CREDENTIALS: ${{ secrets.FIREBASE_SERVICE_ACCOUNT2 }}
         run: |
           python3 - <<'PY'
-          import os
+          import os, json
           path = os.environ['GOOGLE_APPLICATION_CREDENTIALS']
           descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
           with os.fdopen(descriptor, 'w') as handle:
               handle.write(os.environ['DEPLOY_CREDENTIALS'])
+          print('Deployment service account:', json.loads(os.environ['DEPLOY_CREDENTIALS']).get('client_email', 'unknown'))
           PY
       - name: Protect role and recovery state before enabling account operations
         run: npx firebase deploy --only firestore:rules --project registrologia --non-interactive
