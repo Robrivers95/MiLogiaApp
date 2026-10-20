@@ -41,10 +41,13 @@ const App: React.FC = () => {
     let stopSecurity = () => {};
     let session = 0;
     let securityVersion = 0;
+    let observedUid: string | null = null;
     const unsubscribe = onIdTokenChanged(auth, firebaseUser => {
       const current = ++session;
       stopSecurity();
-      setLoading(true);
+      const switchingAccount = (firebaseUser?.uid || null) !== observedUid;
+      observedUid = firebaseUser?.uid || null;
+      if (switchingAccount) setLoading(true);
       if (!firebaseUser) { setUser(null); setNeedsPasswordChange(false); localStorage.removeItem('logia_session'); setLoading(false); return; }
       if (!MEMBER_ACCESS_ENABLED) {
         setNeedsPasswordChange(false);
