@@ -55,6 +55,8 @@ jobs:
         run: node tests/treasury-report-ui.mjs
       - name: Verify temple and member access
         run: node tests/temple-ui.mjs
+      - name: Verify recovery survives administrator reauthentication
+        run: node tests/member-access-session-ui.mjs
       - name: Save screenshots
         if: always()
         uses: actions/upload-artifact@v4

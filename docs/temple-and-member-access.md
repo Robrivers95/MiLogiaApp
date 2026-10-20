@@ -1,6 +1,6 @@
 ## Estado de publicación
 
-La interfaz y el logo están listos para Hosting. La recuperación permanece desactivada mediante services/features.ts. El despliegue del 20 de octubre de 2026 recibió HTTP 403 en firebaserules.googleapis.com al probar las reglas, antes de publicarlas; no se publicaron funciones ni se cambiaron cuentas.
+La interfaz y el logo ya están publicados. La recuperación permanece desactivada mediante services/features.ts. Tras actualizar IAM, las reglas de Firestore se publicaron correctamente el 20 de octubre de 2026. El siguiente paso fue rechazado por falta de iam.serviceAccounts.actAs sobre registrologia@appspot.gserviceaccount.com para la identidad github-deploy@gen-lang-client-0255480722.iam.gserviceaccount.com. Hace falta el rol Service Account User sobre esa cuenta de ejecución. Las funciones todavía no se han publicado y no se han cambiado contraseñas.
 
 Para activarla: conceder a la identidad de despliegue los permisos de Firebase Rules necesarios y verificar los de Cloud Functions; ejecutar Deploy protected member access y comprobar reglas y ambas funciones; cambiar MEMBER_ACCESS_ENABLED a true y publicar el frontend. El workflow de Hosting verifica las dos funciones antes de publicar cuando la opción está activa. No activar el frontend antes de ese despliegue.
 
@@ -26,4 +26,4 @@ La seguridad adicional bloquea que un miembro se cambie el rol o la logia y que 
 
 El backend se verifica y publica antes de integrar el frontend. El workflow usa la identidad ya configurada en FIREBASE_SERVICE_ACCOUNT2. Publica primero las reglas y solo las nuevas funciones adminMemberAccess y finishMemberPasswordChange, sin volver a desplegar las funciones antiguas de notificaciones. Functions se compila con Node 22. Si esa identidad no tiene permisos para Functions o sus APIs, el workflow debe mostrar el permiso faltante; no se debe afirmar que la recuperación está operativa hasta comprobar su despliegue.
 
-Pruebas: account-recovery.mjs con SDK simulado sin cuentas reales, security-rules.mjs en Firestore Emulator, temple-ui.mjs a 1440/390/320 px y regresiones existentes de cuotas, evidencias y tesorería.
+Pruebas: account-recovery.mjs con SDK simulado sin cuentas reales, security-rules.mjs en Firestore Emulator, temple-ui.mjs a 1440/390/320 px, member-access-session-ui.mjs con App real y reautenticación simulada y regresiones existentes de cuotas, evidencias y tesorería.
