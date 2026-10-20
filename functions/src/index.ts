@@ -3,6 +3,8 @@ import * as admin from 'firebase-admin';
 
 admin.initializeApp();
 
+export {adminMemberAccess,finishMemberPasswordChange} from './accountRecovery';
+
 /**
  * Cloud Function para enviar notificaciones push
  * Endpoint: https://us-central1-registrologia.cloudfunctions.net/sendNotification
@@ -167,3 +169,4 @@ export const sendNotificationToGroup = functions.https.onRequest(async (req, res
     });
   }
 });
+

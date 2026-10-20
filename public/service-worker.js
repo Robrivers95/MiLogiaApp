@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mi-logia-v2-beta-treasury-report-20261008';
+const CACHE_NAME = 'mi-logia-v2-beta-temple-access-20261020';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -147,3 +147,4 @@ self.addEventListener('notificationclick', (event) => {
       })
   );
 });
+
