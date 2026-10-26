@@ -31,7 +31,7 @@ jobs:
       - name: Member recovery isolation tests
         run: node tests/account-recovery.mjs
       - name: Modular secretary and AI guards
-        run: node tests/secretariat.mjs && node tests/secretariat-backend.mjs
+        run: node tests/secretariat.mjs && node tests/secretariat-backend.mjs && node tests/secretariat-recorder.mjs
       - name: Treasury report tests
         run: node tests/treasury-report.mjs
       - name: Build

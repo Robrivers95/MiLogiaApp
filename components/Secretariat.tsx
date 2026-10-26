@@ -390,7 +390,7 @@ export default function Secretariat({
           {drafts.map((item) => (
             <div key={item.id} className="flex gap-2">
               <button
-                disabled={locked}
+                disabled={busy || status !== "idle"}
                 className={button + " flex-1 text-left min-w-0 break-words"}
                 onClick={async () => {
                   try {
@@ -1306,7 +1306,7 @@ export default function Secretariat({
             <div className="flex flex-wrap gap-2">
               <button
                 className={button}
-                disabled={locked}
+                disabled={busy || status !== "idle"}
                 onClick={() => {
                   downloadMeetingFile(
                     new Blob([meetingTextExport(draft)], {
@@ -1320,7 +1320,7 @@ export default function Secretariat({
               </button>
               <button
                 className={button}
-                disabled={locked}
+                disabled={busy || status !== "idle"}
                 onClick={() =>
                   downloadMeetingFile(
                     new Blob([JSON.stringify(draft, null, 2)], {

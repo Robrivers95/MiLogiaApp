@@ -9,7 +9,7 @@ import {
 import { spawn } from "node:child_process";
 import { build } from "esbuild";
 import { chromium } from "playwright";
-const mock = `export const meetingCloud={members:async()=>Array.from({length:35},(_,i)=>({uid:'m'+i,name:i===0?'Abraham Moreno':i===1?'Carlos Ríos':'Hermano '+i,active:true,groupId:'test',role:'member'})),present:async()=>['m0','m1'],list:async()=>[],save:async()=>1,organize:async(d)=>{window.__analyses=(window.__analyses||0)+1;window.__analysisText=JSON.stringify(d.texts);return {fields:d.fields.filter(f=>!f.manualOnly&&f.origin!=='manual').map(f=>({id:f.id,value:'Borrador de '+f.title,evidenceIds:d.texts.length?[d.texts[0].id]:[]}))};}};`;
+const mock = `export const meetingCloud={members:async()=>Array.from({length:35},(_,i)=>({uid:'m'+i,name:i===0?'Abraham Moreno':i===1?'Carlos Ríos':'Hermano '+i,active:true,groupId:'test',role:'member'})),present:async()=>['m0','m1'],list:async()=>[],save:async()=>1,organize:async(d)=>{if(location.search.includes('ai-unavailable'))throw Error('Conexión de IA no configurada');window.__analyses=(window.__analyses||0)+1;window.__analysisText=JSON.stringify(d.texts);return {fields:d.fields.filter(f=>!f.manualOnly&&f.origin!=='manual').map(f=>({id:f.id,value:'Borrador de '+f.title,evidenceIds:d.texts.length?[d.texts[0].id]:[]}))};}};`;
 await build({
   entryPoints: ["tests/secretariat-fixture.tsx"],
   outfile: "tests/secretariat-browser.js",
@@ -270,6 +270,54 @@ try {
       .count(),
     0,
     "restoring text never fabricates audio files",
+  );
+  await page.goto(url + "?suspended=1");
+  assert.equal(
+    await page
+      .getByRole("button", { name: "Nueva tenida", exact: true })
+      .isDisabled(),
+    true,
+  );
+  await page.getByText(/Mis borradores/).click();
+  await page
+    .getByRole("button", { name: /^\d{4}-\d{2}-\d{2} · Tenida de prueba$/ })
+    .first()
+    .click();
+  assert.equal(
+    await page
+      .getByRole("button", { name: "Descargar respaldo editable" })
+      .isEnabled(),
+    true,
+    "read-only mode permits safety exports",
+  );
+  await page.goto(url + "?ai-unavailable");
+  await page.getByRole("button", { name: "Nueva tenida", exact: true }).click();
+  await page.getByRole("tab", { name: "Transcripción", exact: true }).click();
+  await page
+    .getByLabel("Pegar transcripción", { exact: true })
+    .fill("Propuesta que todavía no es un acuerdo.");
+  await page
+    .getByRole("button", { name: "Añadir texto a la transcripción" })
+    .click();
+  await page.getByRole("tab", { name: "Formato y acta", exact: true }).click();
+  await page.getByRole("button", { name: "Organizar texto con IA" }).click();
+  await page
+    .getByRole("alert")
+    .filter({ hasText: "Conexión de IA no configurada" })
+    .waitFor();
+  assert.ok(
+    (
+      await page
+        .getByLabel("Solicitud de análisis para IA", { exact: true })
+        .inputValue()
+    ).includes("Propuesta que todavía no es un acuerdo."),
+  );
+  assert.equal(
+    await page
+      .getByLabel("Contenido del campo 1", { exact: true })
+      .inputValue(),
+    "",
+    "missing backend never fabricates an acta",
   );
   await page.goto(url + "?owner=another-secretary");
   await page.getByRole("button", { name: "Nueva tenida" }).waitFor();
