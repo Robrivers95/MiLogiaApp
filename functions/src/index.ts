@@ -4,6 +4,7 @@ import * as admin from 'firebase-admin';
 admin.initializeApp();
 
 export {adminMemberAccess,finishMemberPasswordChange} from './accountRecovery';
+export {organizeMeetingMinutes} from './meetingMinutes';
 
 /**
  * Cloud Function para enviar notificaciones push

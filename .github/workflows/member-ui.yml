@@ -21,6 +21,10 @@ on:
       - 'services/member*.ts'
       - 'tests/member*'
       - 'tests/temple*'
+      - 'tests/secretariat*'
+      - 'services/meeting*'
+      - 'components/Secretariat.tsx'
+      - 'App.tsx'
       - 'styles/**'
       - 'components/Layout.tsx'
       - 'components/MasonicIdentity.tsx'
@@ -44,7 +48,8 @@ jobs:
       - name: Install browser test tools
         run: npm install --no-save --package-lock=false playwright@1.62.1
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        timeout-minutes: 5
+        run: npx playwright install chromium
       - name: Verify responsive member UI
         run: node tests/member-ui.mjs
       - name: Verify WhatsApp reminders
@@ -57,10 +62,13 @@ jobs:
         run: node tests/temple-ui.mjs
       - name: Verify recovery survives administrator reauthentication
         run: node tests/member-access-session-ui.mjs
+      - name: Verify recorder and modular secretary editor
+        run: node tests/secretariat-ui.mjs
       - name: Save screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: responsive-members-screenshots
           path: test-results/
+
 

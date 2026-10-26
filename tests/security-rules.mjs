@@ -10,5 +10,20 @@ try{
  await assertSucceeds(getDoc(doc(temporary,'accountSecurity/temporary')));await assertFails(getDoc(doc(temporary,'users/temporary')));await assertFails(setDoc(doc(temporary,'groups/lodge/treasury/blocked'),{amount:100}));await assertFails(updateDoc(doc(temporary,'accountSecurity/temporary'),{mustChangePassword:false}));await assertFails(setDoc(doc(admin,'accountSecurity/temporary'),{mustChangePassword:false}));await assertFails(getDoc(doc(admin,'accountRecoveryAudit/event')));
  await assertSucceeds(updateDoc(doc(admin,'groups/lodge'),{logoImageUrl:'data:image/jpeg;base64,QUJDRA=='}));await assertFails(updateDoc(doc(member,'groups/lodge'),{logoImageUrl:''}));await assertFails(updateDoc(doc(admin,'groups/other'),{logoImageUrl:''}));await assertFails(updateDoc(doc(admin,'groups/lodge'),{active:false}));await assertSucceeds(updateDoc(doc(master,'groups/lodge'),{logoImageUrl:''}));
  await env.withSecurityRulesDisabled(async context=>updateDoc(doc(context.firestore(),'accountSecurity/temporary'),{mustChangePassword:false,validAfterSeconds:2000}));await assertFails(getDoc(doc(temporary,'users/temporary')));await assertSucceeds(getDoc(doc(env.authenticatedContext('temporary',{auth_time:2001}).firestore(),'users/temporary')));
+ await assertFails(updateDoc(doc(member,'users/member'),{lodgeRole:'secretario'}));
+ await assertFails(setDoc(doc(env.authenticatedContext('fake-secretary',{auth_time:1000}).firestore(),'users/fake-secretary'),{uid:'fake-secretary',role:'member',groupId:'lodge',active:true,lodgeRole:'secretario'}));
+ await assertSucceeds(updateDoc(doc(admin,'users/member'),{lodgeRole:'secretario'}));
+ const minute={id:'minute',groupId:'lodge',schemaVersion:1,title:'Acta',fields:[],texts:[],takes:[],savedBy:'member'};
+ await assertSucceeds(setDoc(doc(member,'groups/lodge/minutes/minute'),minute));
+ await assertSucceeds(getDoc(doc(admin,'groups/lodge/minutes/minute')));
+ await assertFails(getDoc(doc(env.authenticatedContext('foreign',{auth_time:1000}).firestore(),'groups/lodge/minutes/minute')));
+ await assertFails(setDoc(doc(member,'groups/other/minutes/minute'),{...minute,groupId:'other'}));
+ await assertFails(setDoc(doc(member,'secretariatAnalysisLocks/member'),{inProgress:false}));
+ await assertSucceeds(updateDoc(doc(admin,'users/member'),{active:false}));
+ await assertFails(updateDoc(doc(member,'users/member'),{active:true}));
+ await assertFails(getDoc(doc(member,'groups/lodge/minutes/minute')));
+ await assertSucceeds(updateDoc(doc(admin,'users/member'),{active:true}));
+ await assertSucceeds(updateDoc(doc(admin,'users/member'),{lodgeRole:'sin_cargo'}));
+ await assertFails(getDoc(doc(member,'groups/lodge/minutes/minute')));
  assert.ok(true);console.log('Firestore emulator passed: role escalation blocked, scoped admin, own profile editing, private server recovery state/audit, forced password gate and old-session revocation, lodge logo permissions.');
 }finally{await env.cleanup();}
