@@ -162,7 +162,9 @@ try {
   );
   await page.reload();
   await page.getByText(/Mis borradores/).click();
-  await page.getByRole("button", { name: /Tenida de prueba/ }).click();
+  await page
+    .getByRole("button", { name: /^\d{4}-\d{2}-\d{2} · Tenida de prueba$/ })
+    .click();
   assert.equal(
     await page.getByLabel("Título de la tenida", { exact: true }).inputValue(),
     "Tenida de prueba",
@@ -248,7 +250,12 @@ try {
     );
     await page.screenshot({ path: `test-results/secretariat-${width}.png` });
   }
-  await page.getByText(/Mis borradores/).click();
+  if (
+    !(await page
+      .getByLabel("Restaurar respaldo de acta", { exact: true })
+      .isVisible())
+  )
+    await page.getByText(/Mis borradores/).click();
   await page
     .getByLabel("Restaurar respaldo de acta", { exact: true })
     .setInputFiles({

@@ -98,7 +98,10 @@ export class MeetingRecorder {
             this.stop();
           });
       };
+      let finalizing = false;
       media.onstop = async () => {
+        if (finalizing) return;
+        finalizing = true;
         const duration = Math.max(0, performance.now() - this.startedAt);
         this.offset = take.offsetMs + duration;
         this.stopped = true;
@@ -127,6 +130,7 @@ export class MeetingRecorder {
             complete,
             new Blob(chunks, { type: take.mime }),
           );
+        chunks.length = 0;
         this.callbacks.state("idle");
       };
       media.onerror = () => {
@@ -177,13 +181,17 @@ export class MeetingRecorder {
         analyser.fftSize = 256;
         this.audioContext!.createMediaStreamSource(stream).connect(analyser);
         const data = new Uint8Array(analyser.fftSize);
+        let lastMeterAt = 0;
         const sample = () => {
           if (this.stopped) return;
           analyser.getByteTimeDomainData(data);
           const rms = Math.sqrt(
             data.reduce((s, x) => s + ((x - 128) / 128) ** 2, 0) / data.length,
           );
-          this.callbacks.meter(Math.min(100, rms * 400));
+          if (performance.now() - lastMeterAt >= 150) {
+            lastMeterAt = performance.now();
+            this.callbacks.meter(Math.round(Math.min(100, rms * 400)));
+          }
           this.levelFrame = requestAnimationFrame(sample);
         };
         sample();
@@ -302,7 +310,9 @@ export class MeetingRecorder {
   stop() {
     if (this.stopped) return;
     this.callbacks.state("stopping");
-    this.speech?.stop();
+    try {
+      this.speech?.stop();
+    } catch {}
     clearTimeout(this.timer);
     if (this.media && this.media.state !== "inactive") this.media.stop();
   }

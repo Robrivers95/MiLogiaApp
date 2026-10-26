@@ -1177,6 +1177,33 @@ export default function Secretariat({
                   Añadir punto al formato
                 </button>
                 <button
+                  className={button}
+                  disabled={locked}
+                  onClick={async () => {
+                    try {
+                      await persist();
+                      const next = newMeeting(user.uid, user.groupId);
+                      next.fields = draft.fields.map((f) => ({
+                        ...f,
+                        id: uid(),
+                        value: "",
+                        origin: "empty",
+                        evidenceIds: [],
+                      }));
+                      await saveMeetingLocal(next);
+                      open(next);
+                      await refresh();
+                      setNotice(
+                        "Nueva tenida creada con este formato, sin copiar contenidos ni grabaciones anteriores.",
+                      );
+                    } catch (e) {
+                      setError((e as Error).message);
+                    }
+                  }}
+                >
+                  Usar este formato en otra tenida
+                </button>
+                <button
                   className={button + " bg-indigo-600 font-semibold"}
                   disabled={locked || !draft.texts.length}
                   onClick={() => void analyze()}
