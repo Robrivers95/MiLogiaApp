@@ -86,9 +86,21 @@ export class MeetingRecorder {
         if (!event.data.size) return;
         chunks.push(event.data);
         const n = sequence++;
+        const capturedDuration = Math.max(
+          0,
+          performance.now() - this.startedAt,
+        );
         this.write = this.write
           .then(async () => {
             await saveMeetingChunk(draftId, take.id, n, event.data);
+            this.callbacks.change((d) => ({
+              ...d,
+              durationMs: take.offsetMs + capturedDuration,
+              takes: d.takes.map((t) =>
+                t.id === take.id ? { ...t, durationMs: capturedDuration } : t,
+              ),
+            }));
+            await this.callbacks.persist();
           })
           .catch(() => {
             this.saveFailed = true;

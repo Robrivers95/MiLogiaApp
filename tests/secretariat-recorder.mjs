@@ -135,13 +135,23 @@ function harness() {
 }
 let h = harness();
 await h.r.start(false);
+now = 1500;
+currentMedia.ondataavailable({ data: new Blob(["partial-audio"]) });
+for (let i = 0; i < 30 && h.draft.durationMs !== 2500; i++)
+  await new Promise((resolve) => setTimeout(resolve, 1));
+assert.equal(
+  h.draft.durationMs,
+  2500,
+  "committed chunks persist their timeline before the recording ends",
+);
+assert.equal(h.draft.takes[0].complete, false);
 now = 2500;
 currentTrack.onended();
 await h.done;
 assert.equal(h.draft.durationMs, 3500);
 assert.equal(h.draft.takes[0].complete, true);
 assert.equal(currentTrack.stopped, true);
-assert.equal(stored.length, 1);
+assert.equal(stored.length, 2);
 assert.ok(h.warnings.some((m) => m.includes("interrumpió")));
 assert.equal(h.backups.length, 0);
 assert.ok(h.persisted >= 2);
