@@ -12,6 +12,13 @@ import { auth, db } from "./firebase";
 import type { User } from "../types";
 import type { MeetingDraft, MeetingField } from "./meetingModel";
 export const meetingCloud = {
+  aiStatus: async (groupId: string) => {
+    const result = await httpsCallable(
+      getFunctions(undefined, "us-central1"),
+      "organizeMeetingMinutes",
+    )({ groupId, action: "status" });
+    return (result.data as { configured?: boolean }).configured === true;
+  },
   members: async (groupId: string): Promise<User[]> => {
     const snapshot = await getDocs(
       query(collection(db, "users"), where("groupId", "==", groupId)),

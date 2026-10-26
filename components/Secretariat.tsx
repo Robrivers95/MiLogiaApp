@@ -58,6 +58,15 @@ export default function Secretariat({
   const [paste, setPaste] = useState("");
   const [backup, setBackup] = useState<{ take: any; blob: Blob }>();
   const [review, setReview] = useState(false);
+  const [aiReady, setAiReady] = useState<boolean | null>(null);
+  const checkAI = async () => {
+    setAiReady(null);
+    try {
+      setAiReady(await meetingCloud.aiStatus(user.groupId));
+    } catch {
+      setAiReady(false);
+    }
+  };
   const [importOffset, setImportOffset] = useState("0");
   const [copyPrompt, setCopyPrompt] = useState(false);
   const recorder = useRef<MeetingRecorder>();
@@ -123,6 +132,15 @@ export default function Secretariat({
   useEffect(() => {
     let canceled = false;
     alive.current = true;
+    let stopAI = false;
+    meetingCloud
+      .aiStatus(user.groupId)
+      .then((value) => {
+        if (!stopAI) setAiReady(value);
+      })
+      .catch(() => {
+        if (!stopAI) setAiReady(false);
+      });
     (async () => {
       try {
         const list = await listMeetingsLocal(user.uid, user.groupId);
@@ -151,6 +169,7 @@ export default function Secretariat({
     })();
     return () => {
       canceled = true;
+      stopAI = true;
       alive.current = false;
       clearTimeout(saveTimer.current);
       recorder.current?.dispose();
@@ -1205,7 +1224,7 @@ export default function Secretariat({
                 </button>
                 <button
                   className={button + " bg-indigo-600 font-semibold"}
-                  disabled={locked || !draft.texts.length}
+                  disabled={locked || !draft.texts.length || aiReady !== true}
                   onClick={() => void analyze()}
                 >
                   {busy ? "Analizando…" : "Organizar texto con IA"}
@@ -1218,6 +1237,22 @@ export default function Secretariat({
                   Preparar solicitud para otra IA
                 </button>
               </div>
+              {aiReady !== true && (
+                <div className="bg-logia-800 border border-logia-700 rounded-lg p-3 space-y-2">
+                  <p className="text-sm text-gray-300">
+                    {aiReady === null
+                      ? "Comprobando la conexión de IA…"
+                      : "La organización automática de actas está pendiente de conexión o configuración. Puedes llenar los campos o preparar una solicitud para otra IA."}
+                  </p>
+                  <button
+                    className={button}
+                    disabled={busy || aiReady === null}
+                    onClick={() => void checkAI()}
+                  >
+                    Comprobar conexión de IA
+                  </button>
+                </div>
+              )}
               {copyPrompt && (
                 <div className="bg-logia-800 rounded-xl p-4 space-y-2">
                   <p className="text-sm">

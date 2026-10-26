@@ -9,7 +9,7 @@ import {
 import { spawn } from "node:child_process";
 import { build } from "esbuild";
 import { chromium } from "playwright";
-const mock = `export const meetingCloud={members:async()=>Array.from({length:35},(_,i)=>({uid:'m'+i,name:i===0?'Abraham Moreno':i===1?'Carlos Ríos':'Hermano '+i,active:true,groupId:'test',role:'member'})),present:async()=>['m0','m1'],list:async()=>[],save:async()=>1,organize:async(d)=>{if(location.search.includes('ai-unavailable'))throw Error('Conexión de IA no configurada');window.__analyses=(window.__analyses||0)+1;window.__analysisText=JSON.stringify(d.texts);return {fields:d.fields.filter(f=>!f.manualOnly&&f.origin!=='manual').map(f=>({id:f.id,value:'Borrador de '+f.title,evidenceIds:d.texts.length?[d.texts[0].id]:[]}))};}};`;
+const mock = `export const meetingCloud={aiStatus:async()=>!location.search.includes('ai-disabled'),members:async()=>Array.from({length:35},(_,i)=>({uid:'m'+i,name:i===0?'Abraham Moreno':i===1?'Carlos Ríos':'Hermano '+i,active:true,groupId:'test',role:'member'})),present:async()=>['m0','m1'],list:async()=>[],save:async()=>1,organize:async(d)=>{if(location.search.includes('ai-unavailable'))throw Error('Conexión de IA no configurada');window.__analyses=(window.__analyses||0)+1;window.__analysisText=JSON.stringify(d.texts);return {fields:d.fields.filter(f=>!f.manualOnly&&f.origin!=='manual').map(f=>({id:f.id,value:'Borrador de '+f.title,evidenceIds:d.texts.length?[d.texts[0].id]:[]}))};}};`;
 await build({
   entryPoints: ["tests/secretariat-fixture.tsx"],
   outfile: "tests/secretariat-browser.js",
@@ -136,6 +136,10 @@ try {
     .getByRole("alert")
     .filter({ hasText: "Pausa o termina" })
     .waitFor();
+  await page.screenshot({
+    path: "test-results/secretariat-recorder-390.png",
+    fullPage: true,
+  });
   await page.getByRole("tab", { name: "Transcripción", exact: true }).click();
   assert.equal(
     await page
@@ -248,6 +252,7 @@ try {
       ),
       `secretary editor fits ${width}`,
     );
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: `test-results/secretariat-${width}.png` });
   }
   if (
@@ -318,6 +323,18 @@ try {
       .inputValue(),
     "",
     "missing backend never fabricates an acta",
+  );
+  await page.goto(url + "?ai-disabled");
+  await page.getByRole("button", { name: "Nueva tenida", exact: true }).click();
+  await page.getByRole("tab", { name: "Formato y acta", exact: true }).click();
+  await page
+    .getByText(/La organización automática de actas está pendiente/)
+    .waitFor();
+  assert.equal(
+    await page
+      .getByRole("button", { name: "Organizar texto con IA", exact: true })
+      .isDisabled(),
+    true,
   );
   await page.goto(url + "?owner=another-secretary");
   await page.getByRole("button", { name: "Nueva tenida" }).waitFor();
