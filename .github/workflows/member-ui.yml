@@ -21,6 +21,10 @@ on:
       - 'services/member*.ts'
       - 'tests/member*'
       - 'tests/temple*'
+      - 'tests/secretariat*'
+      - 'services/meeting*'
+      - 'components/Secretariat.tsx'
+      - 'App.tsx'
       - 'styles/**'
       - 'components/Layout.tsx'
       - 'components/MasonicIdentity.tsx'
@@ -57,6 +61,8 @@ jobs:
         run: node tests/temple-ui.mjs
       - name: Verify recovery survives administrator reauthentication
         run: node tests/member-access-session-ui.mjs
+      - name: Verify recorder and modular secretary editor
+        run: node tests/secretariat-ui.mjs
       - name: Save screenshots
         if: always()
         uses: actions/upload-artifact@v4

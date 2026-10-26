@@ -51,13 +51,23 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId && role != 'master');
     }
 
+    function canUseMinutes(groupId) {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        (isMaster() || (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('active',false) == true &&
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('lodgeRole','sin_cargo') == 'secretario')));
+    }
+    match /secretariatAnalysisLocks/{userId} { allow read, write: if false; }
+
     match /users/{userId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.auth.uid == userId &&
-        request.resource.data.uid == userId && request.resource.data.role in ['member', 'viewer'];
+        request.resource.data.uid == userId && request.resource.data.role in ['member', 'viewer'] &&
+        request.resource.data.get('lodgeRole','sin_cargo') in ['sin_cargo','otro'];
       allow create: if isSignedIn() && managesProfile(request.resource.data.groupId, request.resource.data.role);
       allow update: if isSignedIn() && request.auth.uid == userId &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'groupId']) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'groupId','lodgeRole']) &&
         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid']) || request.resource.data.uid == userId);
       allow update: if isSignedIn() && managesProfile(resource.data.groupId, resource.data.role) &&
         managesProfile(request.resource.data.groupId, request.resource.data.role) &&
@@ -101,6 +111,18 @@ service cloud.firestore {
         (!request.resource.data.keys().hasAny(['logoImageUrl']) ||
           (request.resource.data.logoImageUrl is string && request.resource.data.logoImageUrl.size() <= 150000 &&
             (request.resource.data.logoImageUrl == '' || request.resource.data.logoImageUrl.matches('data:image/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+'))));
+
+      match /minutes/{minuteId} {
+        allow read: if canUseMinutes(groupId);
+        allow create, update: if canUseMinutes(groupId) && (isMaster() || isGroupActive(groupId)) &&
+          request.resource.data.groupId == groupId && request.resource.data.id == minuteId &&
+          request.resource.data.schemaVersion == 1 && request.resource.data.savedBy == request.auth.uid &&
+          request.resource.data.title is string && request.resource.data.title.size() <= 160 &&
+          request.resource.data.fields is list && request.resource.data.fields.size() <= 15 &&
+          request.resource.data.texts is list && request.resource.data.texts.size() <= 1200 &&
+          request.resource.data.takes is list && request.resource.data.takes.size() == 0;
+        allow delete: if isAdminOrMaster() && canUseMinutes(groupId) && (isMaster() || isGroupActive(groupId));
+      }
 
       match /treasury/{entryId} {
         allow read: if isSignedIn();

@@ -8,6 +8,8 @@ import {db} from './services/firebase';
 import {MEMBER_ACCESS_ENABLED} from './services/features';
 import RequiredPasswordChange from './components/RequiredPasswordChange';
 import {validLodgeLogo} from './services/lodgeIdentity';
+import Secretariat from './components/Secretariat';
+import {canUseSecretariat} from './services/meetingModel';
 import Auth from './components/Auth';
 import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
@@ -92,7 +94,7 @@ const App: React.FC = () => {
     }
 
     const handleSwMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'NAVIGATE' && event.data.view) {
+      if (event.data?.type === 'NAVIGATE' && event.data.view && window.dispatchEvent(new Event('logia-before-navigate',{cancelable:true}))) {
         setView(event.data.view === 'trivia' ? 'library' : event.data.view);
       }
     };
@@ -112,7 +114,10 @@ const App: React.FC = () => {
     },()=>setGroupSuspended(user?.role!=='master'));
   }, [user?.uid,user?.groupId,user?.role,selectedGroup?.id]);
 
+  const allowNavigation=()=>window.dispatchEvent(new Event('logia-before-navigate',{cancelable:true}));
+  const handleNavigate=(next:string)=>{if(allowNavigation())setView(next);};
   const handleLogout = () => {
+    if(!allowNavigation())return;
     void auth.signOut();
     setUser(null);
     setSelectedGroup(null);
@@ -145,13 +150,15 @@ const App: React.FC = () => {
       <Layout
         user={activeUserContext}
         currentView={view}
-        onNavigate={setView}
+        onNavigate={handleNavigate}
         onLogout={handleLogout}
-        onExitGroup={user.role === 'master' ? () => setSelectedGroup(null) : undefined}
+        onExitGroup={user.role === 'master' ? () => {if(allowNavigation())setSelectedGroup(null);} : undefined}
         suspended={groupSuspended}
         groupName={groupName}
         groupLogo={groupLogo}
       >
+        {view === 'secretariat' && canUseSecretariat(activeUserContext) && <Secretariat key={`${user.uid}:${activeUserContext.groupId}`} user={activeUserContext} suspended={groupSuspended}/>}
+        {view === 'secretariat' && !canUseSecretariat(activeUserContext) && <p className="p-5 text-red-300">Este apartado requiere autorización de Secretaría.</p>}
         {view === 'home' && <Dashboard user={activeUserContext} />}
         {view === 'notices' && <Notices user={activeUserContext} />}
         {view === 'payments' && <Payments user={activeUserContext} />}
