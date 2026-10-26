@@ -1,6 +1,6 @@
 # Secretaría: actas de tenida modulares
 
-Acceso: Comunidad → Secretaría y actas. Admin, Master y miembros activos cuyo Cargo / Oficio sea Secretario. El administrador asigna este cargo desde Gestión de miembros → ficha → Editar perfil → Cargo / Oficio. Las reglas impiden autoasignarse cargos y consultar actas desde otra logia.
+Acceso: Comunidad → Secretaría y actas. Admin, Master y miembros activos cuyo Cargo / Oficio sea Secretario. El administrador asigna este cargo desde Gestión de miembros → ficha → Editar perfil → Cargo / Oficio. Las reglas impiden autoasignarse cargos, reactivar la propia cuenta después de una baja y consultar actas desde otra logia.
 
 ## Flujo
 

@@ -19,6 +19,10 @@ try{
  await assertFails(getDoc(doc(env.authenticatedContext('foreign',{auth_time:1000}).firestore(),'groups/lodge/minutes/minute')));
  await assertFails(setDoc(doc(member,'groups/other/minutes/minute'),{...minute,groupId:'other'}));
  await assertFails(setDoc(doc(member,'secretariatAnalysisLocks/member'),{inProgress:false}));
+ await assertSucceeds(updateDoc(doc(admin,'users/member'),{active:false}));
+ await assertFails(updateDoc(doc(member,'users/member'),{active:true}));
+ await assertFails(getDoc(doc(member,'groups/lodge/minutes/minute')));
+ await assertSucceeds(updateDoc(doc(admin,'users/member'),{active:true}));
  await assertSucceeds(updateDoc(doc(admin,'users/member'),{lodgeRole:'sin_cargo'}));
  await assertFails(getDoc(doc(member,'groups/lodge/minutes/minute')));
  assert.ok(true);console.log('Firestore emulator passed: role escalation blocked, scoped admin, own profile editing, private server recovery state/audit, forced password gate and old-session revocation, lodge logo permissions.');

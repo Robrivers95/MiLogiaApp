@@ -67,7 +67,7 @@ service cloud.firestore {
         request.resource.data.get('lodgeRole','sin_cargo') in ['sin_cargo','otro'];
       allow create: if isSignedIn() && managesProfile(request.resource.data.groupId, request.resource.data.role);
       allow update: if isSignedIn() && request.auth.uid == userId &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'groupId','lodgeRole']) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'groupId','lodgeRole','active']) &&
         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid']) || request.resource.data.uid == userId);
       allow update: if isSignedIn() && managesProfile(resource.data.groupId, resource.data.role) &&
         managesProfile(request.resource.data.groupId, request.resource.data.role) &&
