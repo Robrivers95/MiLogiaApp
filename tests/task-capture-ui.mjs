@@ -6,7 +6,7 @@ import { chromium } from "playwright";
 const captureMock = `
 const members=[{uid:'member',name:'Abraham Moreno',active:true,groupId:'lodge'},{uid:'carlos',name:'Carlos Ríos',active:true,groupId:'lodge'}];
 const saved=()=>JSON.parse(sessionStorage.getItem('__saved')||'[]');
-export const taskCaptureCloud={status:async()=>!location.search.includes('ai-disabled'),members:async()=>members,tasks:async()=>saved(),analyze:async(_g,text,date,mode)=>{window.__analyses=(window.__analyses||0)+1;return mode==='finance'?{finance:{type:'income',amount:500,date:'2026-10-27',memberId:'member',paymentMethod:'cash',notes:'Cuota septiembre 2026'}}:{tasks:[{id:'proposal-1',title:'Organizar visita',description:'Confirmar el lugar',kind:'commitment',dueDate:'2026-11-15',assigneeIds:['member'],assignmentMode:'individual',sourceQuote:text}]};},confirm:async(_g,requestId,tasks)=>{window.__confirmedPayload={requestId,tasks};const receipts=JSON.parse(sessionStorage.getItem('__receipts')||'{}');if(receipts[requestId])return receipts[requestId];const result={taskIds:tasks.map(t=>t.id)};sessionStorage.setItem('__saved',JSON.stringify([...saved(),...tasks.map(t=>({id:t.id,title:t.title,description:t.description,assignedTo:t.assigneeIds[0],assignedToName:members.find(m=>m.uid===t.assigneeIds[0])?.name,createdBy:'member',createdAt:new Date().toISOString(),completed:false,dueDate:t.dueDate}))]));receipts[requestId]=result;sessionStorage.setItem('__receipts',JSON.stringify(receipts));await new Promise(r=>setTimeout(r,100));if(location.search.includes('uncertain')&&!sessionStorage.getItem('__uncertain')){sessionStorage.setItem('__uncertain','1');const error=Error('Respuesta interrumpida');error.code='functions/unavailable';throw error;}return result;},complete:async(_g,id,completed)=>{window.__completed=(window.__completed||0)+1;sessionStorage.setItem('__saved',JSON.stringify(saved().map(t=>t.id===id?{...t,completed}:t)));}};
+export const taskCaptureCloud={status:async()=>{if(location.search.includes('backend-missing'))throw Error('Servicio no publicado');return !location.search.includes('ai-disabled');},members:async()=>members,tasks:async()=>saved(),analyze:async(_g,text,date,mode)=>{window.__analyses=(window.__analyses||0)+1;return mode==='finance'?{finance:{type:'income',amount:500,date:'2026-10-27',memberId:'member',paymentMethod:'cash',notes:'Cuota septiembre 2026'}}:{tasks:[{id:'proposal-1',title:'Organizar visita',description:'Confirmar el lugar',kind:'commitment',dueDate:'2026-11-15',assigneeIds:['member'],assignmentMode:'individual',sourceQuote:text}]};},confirm:async(_g,requestId,tasks)=>{window.__confirmedPayload={requestId,tasks};const receipts=JSON.parse(sessionStorage.getItem('__receipts')||'{}');if(receipts[requestId])return receipts[requestId];const result={taskIds:tasks.map(t=>t.id)};sessionStorage.setItem('__saved',JSON.stringify([...saved(),...tasks.map(t=>({id:t.id,title:t.title,description:t.description,assignedTo:t.assigneeIds[0],assignedToName:members.find(m=>m.uid===t.assigneeIds[0])?.name,createdBy:'member',createdAt:new Date().toISOString(),completed:false,dueDate:t.dueDate}))]));receipts[requestId]=result;sessionStorage.setItem('__receipts',JSON.stringify(receipts));await new Promise(r=>setTimeout(r,100));if(location.search.includes('uncertain')&&!sessionStorage.getItem('__uncertain')){sessionStorage.setItem('__uncertain','1');const error=Error('Respuesta interrumpida');error.code='functions/unavailable';throw error;}return result;},complete:async(_g,id,completed)=>{window.__completed=(window.__completed||0)+1;sessionStorage.setItem('__saved',JSON.stringify(saved().map(t=>t.id===id?{...t,completed}:t)));}};
 `;
 const financeMock = `export const quickFinanceService={options:async()=>({members:[{uid:'member',name:'Abraham Moreno'},{uid:'carlos',name:'Carlos Ríos'}],accounts:[]}),list:async()=>[],save:async(_g,_id,input)=>{window.__moneySaves=(window.__moneySaves||0)+1;window.__moneyPayload=input;},payments:async()=>[]};`;
 await build({
@@ -66,9 +66,12 @@ try {
     await page.evaluate(() => sessionStorage.clear());
     await page.reload();
     if (!query.includes("role=viewer")) {
-    await page
-      .getByRole("heading", { name: "Captura por texto y tareas", exact: true })
-      .waitFor();
+      await page
+        .getByRole("heading", {
+          name: "Captura por texto y tareas",
+          exact: true,
+        })
+        .waitFor();
     }
   };
   const prepare = async () => {
@@ -195,6 +198,30 @@ try {
   await confirm.click();
   await page.getByText(/1 tarea\(s\) guardada/).waitFor();
   assert.equal(await page.evaluate(() => window.__analyses || 0), 0);
+  await reset("?backend-missing");
+  await page.getByText(/IA pendiente de publicación/).waitFor();
+  await page
+    .getByRole("button", { name: "Añadir tarea manual", exact: true })
+    .click();
+  await page
+    .getByLabel("Título 1", { exact: true })
+    .fill("Borrador sin servidor");
+  await page
+    .getByRole("group", { name: "Responsables 1", exact: true })
+    .getByLabel("Abraham Moreno", { exact: true })
+    .check();
+  await review.check();
+  assert.equal(
+    await confirm.isDisabled(),
+    true,
+    "cannot falsely confirm a task while backend is missing",
+  );
+  assert.equal(
+    await page.evaluate(
+      () => JSON.parse(sessionStorage.getItem("__saved") || "[]").length,
+    ),
+    0,
+  );
   await reset("?role=admin");
   await page
     .getByLabel("Qué quieres preparar", { exact: true })

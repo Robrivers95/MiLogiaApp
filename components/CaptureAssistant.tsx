@@ -56,6 +56,7 @@ export default function CaptureAssistant({
     [reviewed, setReviewed] = useState(false),
     [ai, setAI] = useState<boolean | null>(null),
     [statusChange, setStatusChange] = useState<Task>();
+  const [serverReady, setServerReady] = useState(false);
   const [peopleSearch, setPeopleSearch] = useState("");
   const inFlight = useRef(false),
     mounted = useRef(true),
@@ -70,9 +71,13 @@ export default function CaptureAssistant({
   };
   const checkAI = async () => {
     setAI(null);
+    setServerReady(false);
     try {
       const ready = await taskCaptureCloud.status(user.groupId);
-      if (mounted.current) setAI(ready);
+      if (mounted.current) {
+        setAI(ready);
+        setServerReady(true);
+      }
     } catch {
       if (mounted.current) setAI(false);
     }
@@ -161,6 +166,10 @@ export default function CaptureAssistant({
     });
   const save = () =>
     run(async () => {
+      if (!pending && !serverReady)
+        throw Error(
+          "La confirmación de tareas requiere publicar el servicio. Conserva tu borrador y comprueba la conexión.",
+        );
       if (!pending && !reviewed)
         throw Error("Revisa las propuestas y marca la confirmación.");
       const request = pending || {
@@ -349,6 +358,13 @@ export default function CaptureAssistant({
       )}
       {proposals.length > 0 && (
         <div className="space-y-4">
+          {!serverReady && !pending && (
+            <p className="text-amber-300 text-sm">
+              La confirmación está pendiente de conexión o publicación del
+              servicio. Puedes editar el borrador; todavía no se pueden crear
+              tareas desde este apartado.
+            </p>
+          )}
           <h3 className="font-bold">
             Revisar propuestas ({selected.length} seleccionadas)
           </h3>
@@ -514,7 +530,9 @@ export default function CaptureAssistant({
           <button
             className={button + " bg-emerald-700 w-full"}
             disabled={
-              busy || suspended || (!pending && (!reviewed || !selected.length))
+              busy ||
+              suspended ||
+              (!pending && (!serverReady || !reviewed || !selected.length))
             }
             onClick={() => void save()}
           >
