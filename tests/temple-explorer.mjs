@@ -9,6 +9,7 @@ for(const p of points){assert.equal(p.grade,1);assert.ok(p.text&&p.pages.length)
 let p=start;for(let i=0;i<30;i++)p=moveBody(p,1,0,0,1/60);assert.ok(start.z-p.z>1.3&&start.z-p.z<1.5,'continuous motion follows elapsed time');
 const rotated=moveBody(start,0,0,1,.06);assert.ok(rotated.yaw>0);const huge=moveBody(start,1,0,0,300);assert.ok(start.z-huge.z<.18,'long frame cannot teleport');
 assert.equal(clearAt(0,0),false,'altar collision');assert.equal(clearAt(-6.8,-10),false,'zodiac column collision');assert.equal(clearAt(-2.2,9),false,'B collision');
+assert.equal(floorHeight(3,4.3),.16,'first visible step of Second Warden');assert.equal(floorHeight(3,4.8),.48,'three visible Second Warden steps');assert.equal(floorHeight(12,-4.1),.6,'five visible First Warden steps');
 assert.equal(floorHeight(-11),.72);assert.equal(floorHeight(1),0);
 // Flood-fill the real collision field; every lesson must have a reachable nearest trigger.
 const step=.35,queue=[{x:0,z:11.2}],seen=new Set(['0,32']),reached=new Set();

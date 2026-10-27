@@ -84,8 +84,13 @@ export function moveBody(p:Body,forward:number,strafe:number,turn:number,seconds
  if(clearAt(out.x+dx,out.z))out.x+=dx;if(clearAt(out.x,out.z+dz))out.z+=dz;return out;
 }
 export const floorHeight=(z:number,x=0)=>{
- if(x> -5.45&&x< -2.75&&z>10.6&&z<13.4)return Math.min(5,Math.max(1,Math.ceil((z-10.6)/.45)))*.12;
- if(x>4.6&&x<7.4&&z>1.4&&z<4.6)return Math.min(3,Math.max(1,Math.ceil((x-4.6)/.65)))*.16;
- return z< -9.9?.72:z< -9.3?.48:z< -8.7?.24:0;
+ let height=z< -9.9?.72:z< -9.3?.48:z< -8.7?.24:0;
+ // Same footprint as the visible warden platforms: each successive step
+ // narrows by .12/.24 and moves .14 toward the back of its station.
+ for(const station of [{x:-4.1,z:12.3,angle:0,count:5,rise:.12},{x:5.9,z:3,angle:Math.PI/2,count:3,rise:.16}]){
+  const dx=x-station.x,dz=z-station.z,localX=dx*Math.cos(station.angle)-dz*Math.sin(station.angle),localZ=dx*Math.sin(station.angle)+dz*Math.cos(station.angle);
+  for(let i=0;i<station.count;i++)if(Math.abs(localX)<=(2.3-i*.12)/2&&Math.abs(localZ-(-.3+i*.14))<=(2.8-i*.24)/2)height=Math.max(height,(i+1)*station.rise);
+ }
+ return height;
 };
 export const nearWorldPoint=(p:Body)=>nearbyWorldPoints(p)[0];
