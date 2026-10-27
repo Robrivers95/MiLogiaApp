@@ -123,3 +123,13 @@ assert.ok(prompt.generationConfig.responseSchema.properties.fields);
 console.log(
   "Audio policy passed: MP4/M4A normalization, ordered multi-take inputs, bounded private paths, speaker timing, original transcript and evidence-backed summary from one request.",
 );
+
+// The compact UI requests transcription alone by sending no report fields.
+const transcriptionOnly = p.validateAudioInput({...input, requestId:"transcript-only", fields:[]}, "sec");
+const literal = p.validateAudioResult({...result, fields:[]}, transcriptionOnly);
+assert.equal(literal.fields.length, 0);
+assert.ok(literal.originalTranscript.includes("Segundo audio."));
+const literalPrompt = p.audioInstructions(transcriptionOnly, [{uri:"https://generativelanguage.googleapis.com/v1beta/files/a",mime:"audio/m4a"},{uri:"https://generativelanguage.googleapis.com/v1beta/files/b",mime:"audio/m4a"}]);
+assert.deepEqual(JSON.parse(literalPrompt.contents[0].parts[0].text).requestedFields, []);
+assert.equal(literalPrompt.generationConfig.responseSchema.properties.fields.items.properties.id.enum, undefined);
+console.log("Transcription-only requests return the complete original and zero summary fields.");

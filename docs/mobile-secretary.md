@@ -1,6 +1,6 @@
 # Secretaría simple para celular
 
-Asistencia conserva su navegación y almacenamiento anteriores. Secretaría sigue siendo una adición, con tres vistas: **Grabar**, **Transcripción** e **Informe y tareas**. El formulario anterior permanece detrás de «Guardar, respaldos y más opciones → Importar texto y opciones avanzadas».
+Asistencia conserva su navegación y almacenamiento anteriores. Secretaría sigue siendo una adición, con tres vistas: **Grabar**, **Transcripción** e **Acta y tareas**. El formulario anterior permanece detrás de «Guardar, respaldos y más opciones → Importar texto y opciones avanzadas».
 
 ## Grabar una reunión
 
@@ -12,17 +12,19 @@ Asistencia conserva su navegación y almacenamiento anteriores. Secretaría sigu
 
 Los subtítulos en vivo son opcionales y dependen del reconocimiento de voz del navegador. Se muestran resultados provisionales mientras se habla, y solo se guardan los finales. El navegador puede usar internet o su proveedor de voz. Esta opción no llama a Gemini. No garantiza funcionamiento offline, compatibilidad en todos los iPhone ni grabación ininterrumpida ante llamadas o cierre de Safari. Ante una interrupción se conserva el tramo y se puede iniciar otro. Antes de una tenida, prueba el iPhone y micrófono reales.
 
-## Un botón para transcribir y preparar el informe
+## Transcripción y resumen en pasos separados
 
-Cuando termines los audios, pulsa **Transcribir y crear informe**. La app sube los archivos finalizados y los envía juntos al servidor. Los archivos ya subidos no se vuelven a subir si conservan el mismo tamaño e identificador.
+Después de guardar uno o varios audios, pulsa **Transcribir audios**. Los audios finalizados se envían juntos para obtener solo la transcripción literal, sin pedir campos de informe. Puedes continuar con **Grabar otro audio**; los audios nuevos quedan pendientes de transcribir. Para incluirlos, vuelve a transcribir antes de resumir. Los archivos ya subidos no se vuelven a subir, aunque el nuevo análisis sí consume tokens por la grabación completa.
 
-Una única solicitud de generación a Gemini recibe los audios en orden y devuelve **la transcripción original y los campos del informe**. No se hacen una llamada de transcripción y otra de resumen. Esto reduce solicitudes, pero no significa un token ni una tarifa fija: los datos y tokens dependen de la duración y el plan de Google. No se garantiza que una reunión larga quepa en las cuotas gratuitas.
+Dentro de **Grabar** y **Transcripción** aparecen dos cuadros de texto: **Transcripción completa** (original de solo lectura) y **Resumen de IA** (vista del acta, inicialmente vacía). Los cuadros tienen desplazamiento interno y se pueden ampliar. No hace falta descargar archivos para leerlos. Los subtítulos finales se conservan en el cuadro de transcripción; los provisionales siguen apareciendo en vivo.
 
-La app mantiene la transcripción original sin edición, el informe editable y los audios por separado. La transcripción de IA también puede contener errores: el audio es la referencia. El modelo de audio se configura con `GEMINI_AUDIO_MODEL`; por defecto se usa `gemini-3.1-flash-lite`, que tiene nivel gratuito. Las respuestas temporales 503 de Google se muestran como fallo recuperable y no disparan nuevas llamadas de generación por sí solas.
+Cuando termine la tenida, pulsa **Resumir con IA** y confirma que ya terminó. Esta acción usa únicamente el texto existente para llenar el formato del acta. Cancelar no hace ninguna llamada al modelo. Grabar, pausar, terminar un audio, transcribirlo o abrir un resultado guardado no genera resúmenes nuevos. El resumen no se habilita si quedan audios pendientes de transcribir. Puedes grabar más después de un resumen; el acta anterior permanece visible hasta que solicites otro análisis.
 
-Los informes son borradores y requieren revisión humana. Las tareas de acuerdos se preparan mediante el flujo de confirmación editable existente; procesar audio nunca crea tareas ni movimientos financieros.
+La transcripción y el resumen son dos solicitudes separadas, cada una con su propio consumo. La transcripción por audio sigue usando Gemini; los subtítulos opcionales usan el reconocimiento del navegador. Los datos y tokens dependen de la duración y del plan de Google.
 
-Los campos manuales se conservan. El formato del informe se configura en un panel plegado: títulos, instrucciones y puntos de llenado manual. Para modificar solo el informe después de transcribir, usa **Actualizar informe usando solo el texto**, evitando volver a enviar los audios. Si agregas más audio después de procesar, se requiere un nuevo análisis de la grabación completa.
+**Revisar acta y tareas** abre los campos editables. Los cambios manuales se reflejan en el cuadro del resumen y se conservan al solicitar otro análisis. Las tareas mantienen la confirmación editable existente; ninguna transcripción o resumen crea tareas automáticamente. Se conservan las descargas independientes del original y del informe.
+
+La transcripción puede tener errores: el audio es la referencia. El formato sigue siendo configurable en el panel plegado. El modelo de audio se configura con `GEMINI_AUDIO_MODEL`; las respuestas temporales de Google se muestran como fallo recuperable sin repetir llamadas automáticamente.
 
 ## Recuperación y privacidad
 

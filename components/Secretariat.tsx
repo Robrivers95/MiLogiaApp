@@ -327,9 +327,9 @@ export default function Secretariat({
           }));
           void persist().catch((e) => setError(e.message));
           setNotice(
-            "Transcripción original e informe guardados por separado. Revisa el borrador.",
+            "Transcripción completa guardada. El resumen solo se genera cuando pulses Resumir con IA.",
           );
-          setTab("report");
+          setTab("transcript");
         }
         if (value.state === "failed")
           setError(
@@ -401,7 +401,7 @@ export default function Secretariat({
             setNotice(
               (current) =>
                 current ||
-                "Audio guardado. Puedes grabar otro o procesar la reunión.",
+                "Audio guardado. Puedes grabar otro o transcribirlo sin generar el resumen.",
             );
           const d = dref.current;
           if (
@@ -449,7 +449,7 @@ export default function Secretariat({
   };
   const process = () =>
     action(async () => {
-      const d = dref.current!;
+      const d = { ...dref.current!, fields: [] };
       const fingerprint = audioFingerprint(d),
         failed = job?.state === "failed" || timedOut;
       const previous = d.audioJob;
@@ -481,8 +481,11 @@ export default function Secretariat({
   const updateReport = () =>
     action(async () => {
       const snapshot = dref.current!;
+      if (snapshot.takes.some((t) => !snapshot.processedTakeIds?.includes(t.id)))
+        throw Error("Primero transcribe los audios pendientes para incluir toda la tenida.");
       if (!snapshot.texts.length)
         throw Error("Primero obtén una transcripción.");
+      if (!window.confirm("¿Ya terminó la tenida? Se generará el resumen con IA usando la transcripción actual. Los campos corregidos manualmente se conservan.")) return;
       const result = await meetingCloud.organize(snapshot);
       change((d) => ({
         ...d,
@@ -494,7 +497,8 @@ export default function Secretariat({
         }),
       }));
       await persist();
-      setNotice("Informe actualizado. La transcripción original se conserva.");
+      setNotice("Resumen de IA guardado. Revisa el informe antes de confirmar tareas.");
+      setTab("transcript");
     });
   const patchField = (id: string, patch: Partial<MeetingField>) =>
     change((d) => ({
@@ -544,6 +548,7 @@ export default function Secretariat({
       (!onlyPresent || draft?.presentUids.includes(p.uid)) &&
       p.name.toLocaleLowerCase("es").includes(search.toLocaleLowerCase("es")),
   );
+  const originalText = draft ? (draft.transcriptSource === "audio" ? draft.originalTranscript || transcript(draft) : transcript(draft) || draft.originalTranscript || "") : "";
   const reportExists = draft?.fields.some((f) => f.value.trim());
   const allAudiosProcessed =
     !!draft?.takes.length &&
@@ -596,8 +601,7 @@ export default function Secretariat({
       {!draft ? (
         <div className="rounded-xl border border-logia-700 bg-logia-800 p-5 space-y-4">
           <p>
-            Graba la reunión. Al terminar podrás obtener su transcripción y un
-            informe, y confirmar las tareas que salgan de ahí.
+            Graba y transcribe la reunión. Cuando termine la tenida, pulsa Resumir con IA; después podrás revisar el acta y confirmar sus tareas.
           </p>
           <button
             className={button + " bg-indigo-700 w-full"}
@@ -617,7 +621,7 @@ export default function Secretariat({
               [
                 ["record", "Grabar"],
                 ["transcript", "Transcripción"],
-                ["report", "Informe y tareas"],
+                ["report", "Acta y tareas"],
               ] as const
             ).map(([id, label]) => (
               <button
@@ -793,7 +797,7 @@ export default function Secretariat({
                   className="bg-indigo-950/40 border border-indigo-700 rounded-lg p-3 text-sm"
                 >
                   {job?.state === "transcribing"
-                    ? "Transcribiendo y preparando el informe…"
+                    ? "Transcribiendo los audios…"
                     : job?.state === "preparing"
                       ? "Preparando los audios…"
                       : "Proceso en espera…"}
@@ -825,17 +829,16 @@ export default function Secretariat({
                     onClick={() => void process()}
                   >
                     {allAudiosProcessed
-                      ? "Transcripción e informe listos"
+                      ? "Audios transcritos"
                       : job?.state === "failed" || timedOut
-                        ? "Reintentar transcripción e informe"
+                        ? "Reintentar transcripción"
                         : draft.audioJob && !draft.audioJob.started
                           ? "Continuar proceso"
-                          : "Transcribir y crear informe"}
+                          : "Transcribir audios"}
                   </button>
                   <p className="text-xs text-gray-400">
-                    Procesa todos los audios juntos en una solicitud de IA. Usa
-                    datos y tokens según su duración. El original y el informe
-                    quedan separados.
+                    Solo obtiene la transcripción; no genera el resumen. Puedes
+                    seguir grabando después. Usa internet y tokens según la duración.
                   </p>
                 </>
               )}
@@ -909,43 +912,46 @@ export default function Secretariat({
               </details>
             </>
           )}
-          {tab === "transcript" && (
-            <div className="space-y-3">
-              <div className="flex justify-between items-center gap-2">
-                <h3 className="font-bold">Transcripción original</h3>
-                <button
-                  className={button}
-                  disabled={!draft.originalTranscript && !draft.texts.length}
-                  onClick={() =>
-                    exportText(
-                      draft.originalTranscript || transcript(draft),
-                      "transcripcion-original",
-                    )
-                  }
-                >
-                  Descargar
-                </button>
-              </div>
-              <p className="text-xs text-gray-400">
-                Se conserva aparte del informe. Puede contener errores de
-                reconocimiento; el audio es la referencia.
-              </p>
-              {draft.takes.length > 0 && draft.originalTranscript && !allAudiosProcessed && (
-                <p className="text-amber-200 text-sm">
-                  Hay audios que aún no se han procesado. Vuelve a Grabar para
-                  obtener la transcripción completa.
-                </p>
-              )}
-              {draft.originalTranscript || draft.texts.length ? (
-                <div className="whitespace-pre-wrap break-words text-base leading-relaxed rounded-xl border border-logia-700 bg-logia-800 p-4">
-                  {draft.originalTranscript || transcript(draft)}
+          {(tab === "record" || tab === "transcript") && (
+            <div className="space-y-3" aria-label="Transcripción y resumen">
+              <section className="rounded-xl border border-logia-700 bg-logia-800 p-3 space-y-2">
+                <div className="flex justify-between items-center gap-2">
+                  <h3 className="font-bold">Transcripción completa</h3>
+                  <button className={button}
+                    disabled={!draft.originalTranscript && !draft.texts.length}
+                    onClick={() => exportText(originalText, "transcripcion-original")}>
+                    Descargar
+                  </button>
                 </div>
-              ) : (
-                <p className="text-gray-400 text-sm">
-                  Después de grabar, pulsa «Transcribir y crear informe» en
-                  Grabar. Los subtítulos finales también aparecen aquí.
-                </p>
-              )}
+                <textarea aria-label="Transcripción completa" className={field + " leading-relaxed resize-y"}
+                  rows={tab === "record" ? 4 : 8} readOnly
+                  value={originalText}
+                  placeholder="Aquí aparecerá la transcripción literal. Pulsa Transcribir audios después de guardar un audio, o activa los subtítulos en vivo antes de grabar." />
+                {tab === "transcript" && (busy || processing) && <p role="status" className="text-sm text-indigo-200">{processing ? "Transcribiendo audios…" : "Procesando…"}</p>}
+                <p className="text-xs text-gray-400">Texto original, separado del resumen. Puede contener errores de reconocimiento; el audio es la referencia.</p>
+                {draft.takes.length > 0 && !allAudiosProcessed && (
+                  <p className="text-amber-200 text-sm">Hay audios pendientes de transcribir. El texto mostrado puede estar incompleto.</p>
+                )}
+                {tab === "transcript" && draft.takes.length > 0 && !allAudiosProcessed && (
+                  <button className={button + " w-full bg-emerald-700"}
+                    disabled={active || busy || processing || suspended || audioReady !== true || !!backup}
+                    onClick={() => void process()}>Transcribir audios</button>
+                )}
+              </section>
+              <section className="rounded-xl border border-indigo-700 bg-logia-800 p-3 space-y-2">
+                <h3 className="font-bold">Resumen de IA</h3>
+                <textarea aria-label="Resumen de IA" className={field + " leading-relaxed resize-y"}
+                  rows={tab === "record" ? 4 : 8} readOnly
+                  value={draft.fields.filter((f) => f.value.trim()).map((f) => f.title + "\n" + f.value).join("\n\n")}
+                  placeholder="Todavía no hay resumen. Cuando termine la tenida, pulsa Resumir con IA." />
+                <button className={button + " w-full bg-indigo-700"}
+                  disabled={locked || !draft.texts.length || (draft.takes.length > 0 && !allAudiosProcessed)}
+                  onClick={() => void updateReport()}>
+                  {busy ? "Procesando…" : "Resumir con IA"}
+                </button>
+                <p className="text-xs text-gray-400">Solo se genera al pulsar el botón y confirmar que terminó la tenida. Usa el texto, sin volver a enviar el audio.</p>
+                {reportExists && <button className={button + " w-full"} onClick={() => setTab("report")}>Revisar acta y tareas</button>}
+              </section>
             </div>
           )}
           {tab === "report" && (
@@ -962,10 +968,12 @@ export default function Secretariat({
               </div>
               {!reportExists && (
                 <p className="text-sm text-gray-400">
-                  Graba y procesa la reunión para preparar el informe. También
-                  puedes completarlo manualmente.
+                  Transcribe los audios y pulsa Resumir con IA cuando termine la tenida. También puedes completar el acta manualmente.
                 </p>
               )}
+              <button className={button + " w-full bg-indigo-700"}
+                disabled={locked || !draft.texts.length || (draft.takes.length > 0 && !allAudiosProcessed)}
+                onClick={() => void updateReport()}>Resumir con IA</button>
               {draft.fields.map((f) => (
                 <section
                   key={f.id}
