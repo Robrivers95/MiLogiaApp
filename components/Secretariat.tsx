@@ -450,12 +450,6 @@ export default function Secretariat({
   const process = () =>
     action(async () => {
       const d = dref.current!;
-      if (
-        !window.confirm(
-          "¿Procesar los audios de esta reunión para obtener la transcripción completa y el informe? Se subirán para analizarlos con IA.",
-        )
-      )
-        return;
       const fingerprint = audioFingerprint(d),
         failed = job?.state === "failed" || timedOut;
       const previous = d.audioJob;
@@ -936,7 +930,7 @@ export default function Secretariat({
                 Se conserva aparte del informe. Puede contener errores de
                 reconocimiento; el audio es la referencia.
               </p>
-              {draft.originalTranscript && !allAudiosProcessed && (
+              {draft.takes.length > 0 && draft.originalTranscript && !allAudiosProcessed && (
                 <p className="text-amber-200 text-sm">
                   Hay audios que aún no se han procesado. Vuelve a Grabar para
                   obtener la transcripción completa.
@@ -1248,11 +1242,8 @@ export default function Secretariat({
       {speakerSheet && (
         <div
           className="fixed inset-0 z-[140] bg-black/70 flex items-end sm:items-center justify-center"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Quién está hablando"
         >
-          <div className="bg-logia-800 border border-logia-700 rounded-t-2xl sm:rounded-2xl p-4 w-full sm:max-w-lg max-h-[80dvh] flex flex-col gap-3">
+          <div role="dialog" aria-modal="true" aria-label="Quién está hablando" className="bg-logia-800 border border-logia-700 rounded-t-2xl sm:rounded-2xl p-4 w-full sm:max-w-lg max-h-[80dvh] flex flex-col gap-3">
             <div className="flex justify-between items-center">
               <h3 className="font-bold">Quién está hablando</h3>
               <button className={button} onClick={() => setSpeakerSheet(false)}>
@@ -1323,11 +1314,8 @@ export default function Secretariat({
       {library && (
         <div
           className="fixed inset-0 z-[140] bg-black/70 flex items-center justify-center p-3"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Mis reuniones"
         >
-          <div className="rounded-xl border border-logia-700 bg-logia-800 p-4 w-full max-w-lg max-h-[80dvh] flex flex-col gap-3">
+          <div role="dialog" aria-modal="true" aria-label="Mis reuniones" className="rounded-xl border border-logia-700 bg-logia-800 p-4 w-full max-w-lg max-h-[80dvh] flex flex-col gap-3">
             <div className="flex justify-between items-center">
               <h3 className="font-bold">Mis reuniones</h3>
               <button className={button} onClick={() => setLibrary(false)}>

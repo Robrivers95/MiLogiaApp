@@ -14,11 +14,13 @@ Los subtítulos en vivo son opcionales y dependen del reconocimiento de voz del 
 
 ## Un botón para transcribir y preparar el informe
 
-Cuando termines los audios, pulsa **Transcribir y crear informe** y confirma. La app sube los archivos finalizados y los envía juntos al servidor. Los archivos ya subidos no se vuelven a subir si conservan el mismo tamaño e identificador.
+Cuando termines los audios, pulsa **Transcribir y crear informe**. La app sube los archivos finalizados y los envía juntos al servidor. Los archivos ya subidos no se vuelven a subir si conservan el mismo tamaño e identificador.
 
 Una única solicitud de generación a Gemini recibe los audios en orden y devuelve **la transcripción original y los campos del informe**. No se hacen una llamada de transcripción y otra de resumen. Esto reduce solicitudes, pero no significa un token ni una tarifa fija: los datos y tokens dependen de la duración y el plan de Google. No se garantiza que una reunión larga quepa en las cuotas gratuitas.
 
-La app mantiene la transcripción original sin edición, el informe editable y los audios por separado. La transcripción de IA también puede contener errores: el audio es la referencia. Los informes son borradores y requieren revisión humana. Las tareas de acuerdos se preparan mediante el flujo de confirmación editable existente; procesar audio nunca crea tareas ni movimientos financieros.
+La app mantiene la transcripción original sin edición, el informe editable y los audios por separado. La transcripción de IA también puede contener errores: el audio es la referencia. El modelo de audio se configura con `GEMINI_AUDIO_MODEL`; por defecto se usa `gemini-3.1-flash-lite`, que tiene nivel gratuito. Las respuestas temporales 503 de Google se muestran como fallo recuperable y no disparan nuevas llamadas de generación por sí solas.
+
+Los informes son borradores y requieren revisión humana. Las tareas de acuerdos se preparan mediante el flujo de confirmación editable existente; procesar audio nunca crea tareas ni movimientos financieros.
 
 Los campos manuales se conservan. El formato del informe se configura en un panel plegado: títulos, instrucciones y puntos de llenado manual. Para modificar solo el informe después de transcribir, usa **Actualizar informe usando solo el texto**, evitando volver a enviar los audios. Si agregas más audio después de procesar, se requiere un nuevo análisis de la grabación completa.
 
