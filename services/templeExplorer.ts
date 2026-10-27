@@ -14,6 +14,6 @@ export const TEMPLE_START: TemplePosition = {x:5,y:12};
 export function templeStep(p:TemplePosition,dx:number,dy:number):TemplePosition {
   if(Math.abs(dx)+Math.abs(dy)!==1) return p;
   const n={x:p.x+dx,y:p.y+dy};
-  return n.x<1||n.x>9||n.y<1||n.y>12||TEMPLE_POINTS.some(s=>s.x===n.x&&s.y===n.y)?p:n;
+  return n.x<1||n.x>9||n.y<1||n.y>12||((n.x===1||n.x===9)&&[3,4,6,7,8,9].includes(n.y))||TEMPLE_POINTS.some(s=>s.x===n.x&&s.y===n.y)?p:n;
 }
 export const nearbyTemplePoint=(p:TemplePosition)=>TEMPLE_POINTS.find(s=>Math.abs(s.x-p.x)+Math.abs(s.y-p.y)===1);
