@@ -11,7 +11,7 @@ const people = Array.from({ length: 35 }, (_, i) => ({
   groupId: "test",
 }));
 const cloudMock = `export const meetingCloud={members:async()=>${JSON.stringify(people)},present:async()=>['m0','m1'],aiStatus:async()=>true,list:async()=>[],save:async d=>{window.__savedMeeting=d;return 1;},organize:async d=>{window.__summaryCalls=(window.__summaryCalls||0)+1;return {fields:d.fields.filter(f=>!f.manualOnly&&f.origin!=='manual').map(f=>({id:f.id,value:'Resumen actualizado',evidenceIds:d.texts.map(t=>t.id)}))}}};`;
-const audioMock = `import {meetingAudio} from ${JSON.stringify(process.cwd() + "/services/meetingLocal.ts")};export const meetingAudioCloud={status:async()=>true,start:async(d,id,progress)=>{const key='job:'+id;if(!sessionStorage.getItem(key)){for(const take of d.takes){const blob=await meetingAudio(d.id,take.id,take.mime);if(!blob.size)throw Error('No audio');}window.__requestedAudioFields=d.fields.length;window.__audioUploads=(window.__audioUploads||0)+d.takes.length;window.__generationCalls=(window.__generationCalls||0)+1;const result={texts:d.takes.map((take,i)=>({id:'text'+i,atMs:take.offsetMs,text:'Texto original del audio '+(i+1),speaker:null,source:'import'})),originalTranscript:d.takes.map((take,i)=>'Texto original del audio '+(i+1)).join('\\n\\n'),fields:d.fields.map(f=>({id:f.id,value:'Resumen de '+f.title,evidenceIds:['text0']}))};sessionStorage.setItem(key,JSON.stringify({state:'done',uid:d.ownerUid,input:{fields:d.fields},result}));}progress(100);return {jobId:id};},watch:(id,receive)=>{const timer=setTimeout(()=>receive(JSON.parse(sessionStorage.getItem('job:'+id))),80);return()=>clearTimeout(timer);}};export const audioFingerprint=d=>JSON.stringify({takes:d.takes,fields:d.fields.map(f=>({id:f.id,title:f.title,instruction:f.instruction}))});`;
+const audioMock = `import {meetingAudio} from ${JSON.stringify(process.cwd() + "/services/meetingLocal.ts")};export const meetingAudioCloud={status:async()=>true,start:async(d,id,progress)=>{const key='job:'+id;if(!sessionStorage.getItem(key)){for(const take of d.takes){const blob=await meetingAudio(d.id,take.id,take.mime);if(!blob.size)throw Error('No audio');}window.__requestedAudioFields=d.fields.length;window.__audioUploads=(window.__audioUploads||0)+d.takes.length;window.__generationCalls=(window.__generationCalls||0)+1;const result={texts:d.takes.map((take,i)=>({id:'text'+i,atMs:take.offsetMs,text:'Texto original del audio '+(i+1),speaker:null,source:'import'})),originalTranscript:d.takes.map((take,i)=>'Texto original del audio '+(i+1)).join('\\n\\n'),fields:d.fields.map(f=>({id:f.id,value:'Resumen de '+f.title,evidenceIds:['text0']}))};sessionStorage.setItem(key,JSON.stringify({state:'done',uid:d.ownerUid,input:{fields:d.fields},result}));}progress(100);if(window.__disconnectOnce){window.__disconnectOnce=false;throw Error("Se perdió la conexión. Reconecta la transcripción.");}return {jobId:id};},watch:(id,receive)=>{const timer=setTimeout(()=>receive(JSON.parse(sessionStorage.getItem('job:'+id))),80);return()=>clearTimeout(timer);}};export const audioFingerprint=d=>JSON.stringify({takes:d.takes,fields:d.fields.map(f=>({id:f.id,title:f.title,instruction:f.instruction}))});`;
 await build({
   entryPoints: ["tests/secretariat-mobile-fixture.tsx"],
   outfile: "tests/secretariat-mobile-browser.js",
@@ -232,9 +232,19 @@ try {
     readFileSync(await download.path()).length > 100,
     "second audio is a real independently downloadable recording",
   );
+  assert.equal(await page.getByRole("button", {name:"Resumir con IA",exact:true}).isDisabled(), true);
+  await page.getByText("Primero pulsa Terminar tenida.", {exact:false}).waitFor();
+  await page.getByRole("button", {name:"Terminar tenida",exact:true}).click();
+  await page.getByText("Tenida terminada", {exact:true}).waitFor();
+  await page.getByText("Falta transcribir los audios.", {exact:false}).waitFor();
+  assert.equal(await page.evaluate(() => window.__summaryCalls || 0), 0);
+  await page.evaluate(() => {window.__disconnectOnce=true;});
   await page
     .getByRole("button", { name: "Transcribir audios", exact: true })
     .click();
+  await page.getByRole("alert").filter({hasText:"Se perdió la conexión"}).waitFor();
+  await page.getByRole("button", {name:"Reconectar transcripción",exact:true}).click();
+
   await page
     .getByText("Transcripción completa guardada.", {
       exact: false,
@@ -299,6 +309,8 @@ try {
       .isDisabled(),
     true,
   );
+  assert.equal(await recorder.getByRole("button", {name:"Grabar otro audio",exact:true}).isDisabled(), true, "finished meeting remains finished after reload");
+  await recorder.getByRole("button", {name:"Continuar tenida",exact:true}).click();
   assert.equal(
     await recorder
       .getByRole("button", { name: "Grabar otro audio", exact: true })
@@ -308,15 +320,17 @@ try {
   await recorder.getByRole("button", {name:"Grabar otro audio",exact:true}).click();
   await recorder.getByRole("button", {name:"Terminar audio",exact:true}).waitFor();
   await page.waitForTimeout(400);
-  await recorder.getByRole("button", {name:"Terminar audio",exact:true}).click();
+  await recorder.getByRole("button", {name:"Pausar",exact:true}).click();
+  await recorder.getByRole("button", {name:"Terminar tenida",exact:true}).click();
   await recorder.getByRole("button", {name:"Grabar otro audio",exact:true}).waitFor();
   assert.equal(await page.getByRole("button", {name:"Resumir con IA",exact:true}).isDisabled(), true, "new untranscribed audio must be included before another summary");
   assert.match(await page.getByLabel("Resumen de IA", {exact:true}).inputValue(), /Informe corregido a mano/, "previous acta survives extra audio");
   assert.equal(await page.evaluate(() => window.__summaryCalls || 0), 0);
   assert.equal(await page.evaluate(() => window.__generationCalls || 0), 0);
+  await page.getByText("Tenida terminada", {exact:true}).waitFor();
   assert.deepEqual(errors, []);
   console.log(
-    "Compact secretary browser passed: visible mobile controls, real native pause/resume and finish while paused, second audio preserved/downloadable, live interim captions, present-member picker, transcription-only multi-audio generation, explicit confirmed text-only summary, two visible read-only text boxes and editable acta, durable reload without another model call and 320/390/1440 widths.",
+    "Compact secretary browser passed: visible mobile controls, real native pause/resume and finish while paused, second audio preserved/downloadable, live interim captions, present-member picker, transcription-only multi-audio generation, explicit persisted meeting end (including paused recording), exact request reconnect after lost response, confirmed text-only summary, two visible read-only text boxes and editable acta, durable reload without another model call and 320/390/1440 widths.",
   );
 } finally {
   await browser?.close();

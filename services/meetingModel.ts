@@ -49,6 +49,7 @@ export interface MeetingDraft {
   cloudVersion?: number;
   notes: string;
   reviewedAt?: string;
+  endedAt?: string;
   originalTranscript?: string;
   transcriptSource?: "audio" | "browser" | "import";
   audioJob?: {
@@ -56,6 +57,7 @@ export interface MeetingDraft {
     fingerprint: string;
     applied?: boolean;
     started?: boolean;
+    requestedAt?: number;
   };
   processedTakeIds?: string[];
 }
@@ -288,6 +290,7 @@ export function restoreMeetingBackup(
     durationMs:
       Number.isFinite(d.durationMs) && d.durationMs >= 0 ? d.durationMs : 0,
     takes: [],
+    ...(typeof d.endedAt === "string" && d.endedAt.length <= 40 && Number.isFinite(Date.parse(d.endedAt)) ? { endedAt: d.endedAt } : {}),
     ...(typeof d.originalTranscript === "string" &&
     d.originalTranscript.length <= 200000
       ? { originalTranscript: d.originalTranscript }

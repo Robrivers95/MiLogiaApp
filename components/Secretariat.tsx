@@ -110,7 +110,9 @@ export default function Secretariat({
     saving = useRef(Promise.resolve()),
     saveTimer = useRef<any>(),
     recorder = useRef<MeetingRecorder>(),
-    flight = useRef(false);
+    flight = useRef(false),
+    endAfterAudio = useRef(false),
+    watchSince = useRef(Date.now());
   const [status, setStatus] = useState<
       "idle" | "starting" | "recording" | "paused" | "stopping"
     >("idle"),
@@ -146,8 +148,8 @@ export default function Secretariat({
     active = status !== "idle";
   const timedOut =
     job &&
-    ["preparing", "transcribing"].includes(job.state) &&
-    now - Number(job.startedAt) > 600000;
+    ["queued", "preparing", "transcribing"].includes(job.state) &&
+    now - Number(job.startedAt || job.createdAt || draft?.audioJob?.requestedAt || watchSince.current) > 600000;
   const processing =
     !!draft?.audioJob?.started &&
     !draft.audioJob.applied &&
@@ -210,6 +212,7 @@ export default function Secretariat({
     setLibrary(false);
     setTab("record");
     setTaskCapture(false);
+    endAfterAudio.current = false;
     setBackup(undefined);
     setOnlyPresent(false);
     setSearch("");
@@ -292,6 +295,7 @@ export default function Secretariat({
   useEffect(() => {
     const current = draft?.audioJob;
     if (advanced || !current?.started || !allowed) return;
+    watchSince.current = Date.now();
     return meetingAudioCloud.watch(
       current.id,
       (value) => {
@@ -367,7 +371,7 @@ export default function Secretariat({
       open(next);
     });
   const start = async () => {
-    if (statusRef.current !== "idle" || locked || !dref.current) return;
+    if (statusRef.current !== "idle" || locked || !dref.current || dref.current.endedAt) return;
     setError("");
     setNotice("");
     setCaption("");
@@ -395,6 +399,12 @@ export default function Secretariat({
         setStatus(value);
         if (value === "paused") setElapsed(recorder.current?.elapsed() || 0);
         if (value === "idle") {
+          if (endAfterAudio.current) {
+            endAfterAudio.current = false;
+            change((d) => ({ ...d, endedAt: new Date().toISOString() }));
+            void persist().catch((e) => setError(e.message));
+            setNotice("Tenida terminada. Transcribe los audios pendientes y después pulsa Resumir con IA.");
+          }
           setElapsed(dref.current?.durationMs || 0);
           setLevel(0);
           if (dref.current?.takes.length)
@@ -430,6 +440,20 @@ export default function Secretariat({
       setError((e as Error).message);
     }
   };
+  const finishMeeting = () => {
+    if (busy || processing || suspended || ["starting", "stopping"].includes(statusRef.current)) return;
+    if (!window.confirm("¿Terminar la tenida? Se guardará el audio actual. Esto no genera un resumen; podrás continuar la tenida si faltó algo.")) return;
+    if (["recording", "paused"].includes(statusRef.current)) {
+      endAfterAudio.current = true;
+      recorder.current?.stop();
+    } else {
+      void action(async () => {
+        change((d) => ({ ...d, endedAt: new Date().toISOString() }));
+        await persist();
+        setNotice("Tenida terminada. Transcribe los audios pendientes y después pulsa Resumir con IA.");
+      });
+    }
+  };
   const mark = (person: User | null) => {
     const value = person ? { uid: person.uid, name: person.name } : null;
     setSpeaker(value);
@@ -460,12 +484,16 @@ export default function Secretariat({
         )
       )
         return;
+      // Reconnect the same immutable request after an uncertain network response.
+      if (previous && !previous.applied && !failed && previous.fingerprint !== fingerprint)
+        throw Error("Hay una transcripción anterior pendiente. Espera su resultado antes de iniciar otra.");
       const requestId =
         previous?.fingerprint === fingerprint && !failed ? previous.id : uid();
+      const requestedAt = previous?.id === requestId ? previous.requestedAt || Date.now() : Date.now();
       setUpload(0);
       change((old) => ({
         ...old,
-        audioJob: { id: requestId, fingerprint, started: false },
+        audioJob: { id: requestId, fingerprint, started: false, requestedAt },
       }));
       await persist();
       await meetingAudioCloud.start(d, requestId, (n) => {
@@ -473,7 +501,7 @@ export default function Secretariat({
       });
       change((old) => ({
         ...old,
-        audioJob: { id: requestId, fingerprint, started: true },
+        audioJob: { id: requestId, fingerprint, started: true, requestedAt },
       }));
       await persist();
       setJob({ state: "queued" });
@@ -481,11 +509,12 @@ export default function Secretariat({
   const updateReport = () =>
     action(async () => {
       const snapshot = dref.current!;
+      if (!snapshot.endedAt) throw Error("Primero pulsa Terminar tenida.");
       if (snapshot.takes.some((t) => !snapshot.processedTakeIds?.includes(t.id)))
         throw Error("Primero transcribe los audios pendientes para incluir toda la tenida.");
       if (!snapshot.texts.length)
         throw Error("Primero obtén una transcripción.");
-      if (!window.confirm("¿Ya terminó la tenida? Se generará el resumen con IA usando la transcripción actual. Los campos corregidos manualmente se conservan.")) return;
+      if (!window.confirm("¿Generar el resumen con IA de esta tenida terminada? Se usará la transcripción actual y se conservarán los campos corregidos manualmente.")) return;
       const result = await meetingCloud.organize(snapshot);
       change((d) => ({
         ...d,
@@ -553,6 +582,16 @@ export default function Secretariat({
   const allAudiosProcessed =
     !!draft?.takes.length &&
     draft.takes.every((t) => draft.processedTakeIds?.includes(t.id));
+  const needsTranscription = !!draft?.takes.length && !allAudiosProcessed;
+  const summaryBlock = suspended ? "Solo lectura: no se pueden generar resúmenes."
+    : active ? "Termina el audio actual o pulsa Terminar tenida."
+    : busy ? "Hay una operación en curso. Espera a que termine."
+    : processing ? "La transcripción está en proceso. El resumen se habilitará cuando esté lista."
+    : waitingToConfirm ? "Falta confirmar la transcripción con el servidor. Pulsa Reconectar transcripción."
+    : !draft?.endedAt ? "Primero pulsa Terminar tenida. No es lo mismo que Terminar audio."
+    : needsTranscription ? "Falta transcribir los audios. Pulsa Transcribir audios; después se habilitará el resumen."
+    : !draft?.texts.length ? "Aún no hay transcripción. Graba un audio o importa el texto en las opciones avanzadas."
+    : "";
   return (
     <div className="p-3 space-y-3 pb-6" aria-label="Secretaría simple">
       <div className="flex items-center justify-between gap-2">
@@ -716,7 +755,7 @@ export default function Secretariat({
                 ) : (
                   <button
                     className={button + " bg-red-700 w-full"}
-                    disabled={locked}
+                    disabled={locked || !!draft.endedAt}
                     onClick={() => void start()}
                   >
                     {status === "stopping"
@@ -726,6 +765,21 @@ export default function Secretariat({
                         : "Grabar"}
                   </button>
                 )}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-gray-300">{draft.endedAt ? "Tenida terminada" : "Tenida en curso"}</span>
+                  {draft.endedAt ? (
+                    <button className={button} disabled={locked}
+                      onClick={() => void action(async () => {
+                        change((d) => { const next = {...d}; delete next.endedAt; return next; });
+                        await persist();
+                        setNotice("Tenida en curso. Puedes grabar otro audio sin perder los anteriores.");
+                      })}>Continuar tenida</button>
+                  ) : (
+                    <button className={button + " bg-indigo-700"}
+                      disabled={busy || processing || suspended || ["starting", "stopping"].includes(status) || (!draft.takes.length && !draft.texts.length)}
+                      onClick={finishMeeting}>Terminar tenida</button>
+                  )}
+                </div>
                 <button
                   className={
                     button + " w-full text-left flex justify-between gap-2"
@@ -833,7 +887,7 @@ export default function Secretariat({
                       : job?.state === "failed" || timedOut
                         ? "Reintentar transcripción"
                         : draft.audioJob && !draft.audioJob.started
-                          ? "Continuar proceso"
+                          ? "Reconectar transcripción"
                           : "Transcribir audios"}
                   </button>
                   <p className="text-xs text-gray-400">
@@ -932,11 +986,6 @@ export default function Secretariat({
                 {draft.takes.length > 0 && !allAudiosProcessed && (
                   <p className="text-amber-200 text-sm">Hay audios pendientes de transcribir. El texto mostrado puede estar incompleto.</p>
                 )}
-                {tab === "transcript" && draft.takes.length > 0 && !allAudiosProcessed && (
-                  <button className={button + " w-full bg-emerald-700"}
-                    disabled={active || busy || processing || suspended || audioReady !== true || !!backup}
-                    onClick={() => void process()}>Transcribir audios</button>
-                )}
               </section>
               <section className="rounded-xl border border-indigo-700 bg-logia-800 p-3 space-y-2">
                 <h3 className="font-bold">Resumen de IA</h3>
@@ -945,11 +994,23 @@ export default function Secretariat({
                   value={draft.fields.filter((f) => f.value.trim()).map((f) => f.title + "\n" + f.value).join("\n\n")}
                   placeholder="Todavía no hay resumen. Cuando termine la tenida, pulsa Resumir con IA." />
                 <button className={button + " w-full bg-indigo-700"}
-                  disabled={locked || !draft.texts.length || (draft.takes.length > 0 && !allAudiosProcessed)}
+                  disabled={locked || !draft.endedAt || !draft.texts.length || needsTranscription}
                   onClick={() => void updateReport()}>
                   {busy ? "Procesando…" : "Resumir con IA"}
                 </button>
-                <p className="text-xs text-gray-400">Solo se genera al pulsar el botón y confirmar que terminó la tenida. Usa el texto, sin volver a enviar el audio.</p>
+                {summaryBlock ? <p role="status" className="text-sm text-amber-200">{summaryBlock}</p> : <p className="text-xs text-gray-400">Listo para resumir. Usa solo el texto, sin volver a enviar el audio.</p>}
+                {tab === "transcript" && !draft.endedAt && !active && !busy && !processing && !suspended && (
+                  <button className={button + " w-full"} onClick={finishMeeting}
+                    disabled={!draft.takes.length && !draft.texts.length}>Terminar tenida</button>
+                )}
+                {tab === "transcript" && needsTranscription && !active && !busy && !processing && !suspended && (
+                  <button className={button + " w-full bg-emerald-700"}
+                    disabled={audioReady !== true || !!backup}
+                    onClick={() => void process()}>
+                    {waitingToConfirm ? "Reconectar transcripción" : job?.state === "failed" || timedOut ? "Reintentar transcripción" : "Transcribir audios"}
+                  </button>
+                )}
+                {error && <p className="text-sm text-red-200">{error}</p>}
                 {reportExists && <button className={button + " w-full"} onClick={() => setTab("report")}>Revisar acta y tareas</button>}
               </section>
             </div>
@@ -972,8 +1033,9 @@ export default function Secretariat({
                 </p>
               )}
               <button className={button + " w-full bg-indigo-700"}
-                disabled={locked || !draft.texts.length || (draft.takes.length > 0 && !allAudiosProcessed)}
+                disabled={locked || !draft.endedAt || !draft.texts.length || needsTranscription}
                 onClick={() => void updateReport()}>Resumir con IA</button>
+              {summaryBlock && <p className="text-sm text-amber-200">{summaryBlock} <button className="underline" onClick={() => setTab("transcript")}>Ver transcripción y pasos pendientes</button></p>}
               {draft.fields.map((f) => (
                 <section
                   key={f.id}

@@ -109,7 +109,7 @@ export const meetingAudioCloud = {
     onSnapshot(
       doc(db, "meetingAudioJobs", id),
       (snapshot) => {
-        if (snapshot.exists()) receive(snapshot.data());
+        receive(snapshot.exists() ? snapshot.data() : { state: "missing" });
       },
       error,
     ),
