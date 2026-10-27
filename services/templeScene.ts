@@ -33,7 +33,9 @@ export class TempleScene {
   this.box(-8,3.2,0,.25,6.4,28,'#314766');this.box(8,3.2,0,.25,6.4,28,'#314766');this.box(0,3.2,-14,16,6.4,.25,'#344e72');
   this.box(-4.9,3.2,14,6.2,6.4,.25,'#344e72');this.box(4.9,3.2,14,6.2,6.4,.25,'#344e72');this.box(0,5.2,14,3.6,2.4,.25,'#344e72');
   this.box(0,6.5,0,16,.1,28,'#172c4e');
-  for(let i=0;i<85;i++){const x=Math.sin(i*37.7)*7.6,z=Math.cos(i*19.3)*13.6;this.sphere(x,6.36,z,.025+(i%3)*.01,'#fff1c0');}
+  for(const x of [-6.1,6.1]){this.box(x,3,-13.8,1.5,5.8,.08,'#7b3849');for(const edge of [-.73,.73])this.box(x+edge,3,-13.73,.045,5.8,.03,'#c3a164');}
+  let starSeed=7331;const starRandom=()=>{starSeed=(Math.imul(starSeed,1664525)+1013904223)>>>0;return starSeed/4294967296;};
+  for(let i=0;i<85;i++){const x=(starRandom()-.5)*15.2,z=(starRandom()-.5)*27.2;this.sphere(x,6.36,z,.025+(i%3)*.01,'#fff1c0');}
   for(const x of [-7.75,7.75]){this.box(x,5.55,0,.1,.12,27.8,'#d0b36a');for(let z=-12;z<=12;z+=3)this.sphere(x,5.55,z,.12,'#d0b36a');}
   // Checkerboard: one small procedural texture, no per-tile meshes.
   const c=document.createElement('canvas');c.width=c.height=128;const ctx=c.getContext('2d')!;ctx.fillStyle='#e8dfc8';ctx.fillRect(0,0,128,128);ctx.fillStyle='#273248';ctx.fillRect(0,0,64,64);ctx.fillRect(64,64,64,64);const tex=new T.CanvasTexture(c);tex.wrapS=tex.wrapT=T.RepeatWrapping;tex.repeat.set(4,8);tex.colorSpace=T.SRGBColorSpace;this.textures.add(tex);const mat=new T.MeshLambertMaterial({map:tex});this.materials.add(mat);const pave=this.mesh(new T.PlaneGeometry(5.6,13),mat,0,.012,1);pave.rotation.x=-Math.PI/2;
@@ -50,7 +52,7 @@ export class TempleScene {
   for(const z of [-7,-3,1,5]){this.chair(-5.1,z,0,Math.PI/2);this.chair(-5.1,z+.8,0,Math.PI/2);this.chair(5.1,z,0,-Math.PI/2);this.chair(5.1,z+.8,0,-Math.PI/2);}
   this.desk(-4,-9.6,'Secretaría');this.desk(4,-9.6,'Elocuencia');this.desk(-4.1,12.3,'Primer Vigilante');this.desk(5.9,3,'Segundo Vigilante');
   this.label('Norte',-6,4,0,1.5);this.label('Sur',6,4,0,1.5);this.label('Occidente',0,4.6,13.7,2.1);
-  this.sphere(-2.6,4.9,-13.72,.38,'#f6d98c');this.label('☾',2.6,4.9,-13.7,1.0);this.label('△  G',0,5.8,-13.7,1.5);
+  this.sphere(2.6,4.9,-13.72,.38,'#f6d98c');this.label('☾',-2.6,4.9,-13.7,1.0);this.label('△  G',0,5.8,-13.7,1.5);
   const bowl=this.mesh(new T.SphereGeometry(.7,16,8,0,Math.PI*2,Math.PI/2,Math.PI/2),this.material('#c6a65c'),-4,.8,5);bowl.material.side=T.DoubleSide;for(let i=0;i<12;i++){const angle=i*Math.PI/6;this.box(-4+Math.cos(angle)*.5,.28,5+Math.sin(angle)*.5,.18,.48,.28,'#b79b5c');this.sphere(-4+Math.cos(angle)*.65,.48,5+Math.sin(angle)*.65,.12,'#b79b5c');}
   this.portraits();
  }
@@ -58,7 +60,7 @@ export class TempleScene {
   const configs=[{x:0,z:-13.7,angle:0,index:0,title:'Minerva · Sabiduría'},{x:-4.1,z:13.7,angle:Math.PI,index:1,title:'Hércules · Fuerza'},{x:7.7,z:3,angle:-Math.PI/2,index:2,title:'Venus · Belleza'}];
   for(const p of configs){const tex=base.clone();tex.repeat.set(1/3,1);tex.offset.set(p.index/3,0);tex.needsUpdate=true;this.textures.add(tex);const m=new T.MeshBasicMaterial({map:tex});this.materials.add(m);const frame=this.box(p.x,3.6,p.z,2.35,2.45,.12,'#bd9954');frame.rotation.y=p.angle;const image=this.mesh(new T.PlaneGeometry(2.1,2.2),m,p.x+Math.sin(p.angle)*.08,3.6,p.z+Math.cos(p.angle)*.08);image.rotation.y=p.angle;this.label(p.title,p.x-Math.sin(p.angle)*.12,2.15,p.z+Math.cos(p.angle)*.12,2.8);}
  },undefined,()=>this.failed('No cargaron los cuadros. Puedes seguir explorando y consultar las fichas.'));}
- private buildAvatar(){this.scene.add(this.player);this.box(0,.95,0,.5,.65,.32,'#5376a5',this.player);this.box(0,.84,-.18,.38,.36,.025,'#f3ecda',this.player);this.sphere(0,1.52,0,.22,'#dbb18b',this.player);this.sphere(0,1.65,.025,.19,'#362e29',this.player);
+ private buildAvatar(){this.scene.add(this.player);this.box(0,.95,0,.5,.65,.32,'#5376a5',this.player);this.box(0,.84,-.18,.38,.36,.025,'#f3ecda',this.player);this.box(0,.96,.18,.42,.05,.025,'#f3ecda',this.player);this.sphere(0,1.52,0,.22,'#dbb18b',this.player);this.sphere(0,1.65,.025,.19,'#362e29',this.player);
   const limb=(x:number,y:number,w:number,h:number,color:string)=>{const g=new T.Group();g.position.set(x,y,0);this.player.add(g);this.box(0,-h/2,0,w,h,w,color,g);return g;};return [limb(-.14,.67,.16,.6,'#243750'),limb(.14,.67,.16,.6,'#243750'),limb(-.34,1.23,.13,.55,'#5376a5'),limb(.34,1.23,.13,.55,'#5376a5')];}
  input(forward:number,strafe:number,turn=0){this.forward=forward;this.strafe=strafe;this.turn=turn;}
  look(dx:number,dy:number){this.body.yaw+=dx;this.pitch=T.MathUtils.clamp(this.pitch+dy,-.75,.75);}
