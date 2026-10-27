@@ -10,6 +10,17 @@ service firebase.storage {
              request.resource.contentType == 'application/pdf';
     }
 
+    // Raw uploads are private to their author. The trusted audio service
+    // separately checks lodge, secretary/admin role, session and suspension
+    // before it creates a processing job or sends any bytes to Gemini.
+    match /meetingAudio/{groupId}/{ownerUid}/{meetingId}/{takeId} {
+      allow read, delete: if isSignedIn() && request.auth.uid == ownerUid;
+      allow create: if resource == null && isSignedIn() && request.auth.uid == ownerUid &&
+        request.resource.size > 0 && request.resource.size <= 60 * 1024 * 1024 &&
+        request.resource.contentType.matches('audio/(mp4|m4a|x-m4a|webm|mpeg|mp3|wav|ogg|aac)(;.*)?');
+      allow update: if false;
+    }
+
     // Biblioteca de Alejandría uploads. Existing files elsewhere are left untouched.
     match /library/{groupId}/{userId}/{fileName} {
       allow read: if isSignedIn();
@@ -38,8 +49,8 @@ service firebase.storage {
     }
 
     // Existing receipt and notice uploads must retain their current behavior.
-    match /{allPaths=**} {
-      allow read, write: if isSignedIn();
+    match /{root}/{allPaths=**} {
+      allow read, write: if root != 'meetingAudio' && isSignedIn();
     }
   }
 }

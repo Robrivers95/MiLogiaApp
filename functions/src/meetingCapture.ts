@@ -227,7 +227,7 @@ export const captureWithAI = functions
       const previous = (await tx.get(lock)).data();
       if (
         now - Number(previous?.startedAt || 0) < 60000 ||
-        (previous?.inProgress && now - Number(previous.startedAt) < 120000)
+        (previous?.inProgress && now - Number(previous.startedAt) < (previous.kind === "audio" ? 600000 : 120000))
       )
         return fail(
           "resource-exhausted",

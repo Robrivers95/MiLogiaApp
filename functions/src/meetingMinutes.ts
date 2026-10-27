@@ -68,7 +68,7 @@ export const organizeMeetingMinutes = functions
     const now = Date.now();
     await db.runTransaction(async (tx) => {
       const previous = (await tx.get(lock)).data();
-      if (previous?.inProgress && now - Number(previous.startedAt) < 120000)
+      if (previous?.inProgress && now - Number(previous.startedAt) < (previous.kind === "audio" ? 600000 : 120000))
         return fail(
           "aborted",
           "Ya hay un análisis en curso. Espera a que termine.",

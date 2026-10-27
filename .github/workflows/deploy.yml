@@ -41,6 +41,8 @@ jobs:
         run: node tests/secretariat.mjs && node tests/secretariat-backend.mjs && node tests/secretariat-recorder.mjs
       - name: Capture proposals and confirmed task transactions
         run: node tests/task-capture.mjs && node tests/task-capture-backend.mjs
+      - name: Multi-audio transcription policy and queue guards
+        run: node tests/secretariat-audio.mjs && node tests/secretariat-audio-backend.mjs
       - name: Treasury report tests
         run: node tests/treasury-report.mjs
       - name: Verify account feature deployment gate

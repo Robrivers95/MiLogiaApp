@@ -59,6 +59,11 @@ service cloud.firestore {
            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('lodgeRole','sin_cargo') == 'secretario')));
     }
     match /taskCaptureRequests/{requestId} { allow read, write: if false; }
+    match /meetingAudioRequestLocks/{userId} { allow read, write: if false; }
+    match /meetingAudioJobs/{jobId} {
+      allow get: if isSignedIn() && resource.data.uid == request.auth.uid && canUseMinutes(resource.data.groupId);
+      allow list, write: if false;
+    }
     match /secretariatAnalysisLocks/{userId} { allow read, write: if false; }
 
     match /users/{userId} {
