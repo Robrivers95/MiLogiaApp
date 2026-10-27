@@ -1,5 +1,5 @@
 import * as T from 'three';
-import {WORLD_START,WORLD_POINTS,WORLD_OBSTACLES,ZODIAC_COLUMNS,moveBody,floorHeight,nearWorldPoint,ROOM_AREAS,ROOM_WALLS,canInspect,pointVisible} from './templeWorld';
+import {WORLD_START,WORLD_POINTS,WORLD_OBSTACLES,ZODIAC_COLUMNS,moveBody,floorHeight,nearWorldPoint,ROOM_AREAS,ROOM_WALLS,canInspect} from './templeWorld';
 import type {Body,WorldPoint} from './templeWorld';
 export type ScreenMarker={id:string;x:number;y:number;near:boolean;distance:number};
 export class TempleScene {
@@ -106,7 +106,7 @@ export class TempleScene {
  }
  private zodiacArt(){new T.TextureLoader().load('/temple/zodiac.webp',base=>{if(this.dead){base.dispose();return;}base.colorSpace=T.SRGBColorSpace;this.textures.add(base);ZODIAC_COLUMNS.forEach((p,i)=>{const tex=base.clone();tex.repeat.set(.246,1/3-.004);tex.offset.set((i%4)/4+.002,1-(Math.floor(i/4)+1)/3+.002);tex.needsUpdate=true;this.textures.add(tex);const m=new T.MeshBasicMaterial({map:tex});this.materials.add(m);const direction=p.x<0?1:-1,angle=direction*Math.PI/2;const frame=this.box(p.x+direction*.39,3.1,p.z,.075,1.18,1.18,'#c6aa6d');const image=this.mesh(new T.PlaneGeometry(1.08,1.08),m,p.x+direction*.44,3.1,p.z);image.rotation.y=angle;});},undefined,()=>this.failed('No cargaron las ilustraciones zodiacales. Las fichas siguen disponibles.'));}
  private markers():ScreenMarker[]{
-  this.camera.updateMatrixWorld();const result:ScreenMarker[]=[];for(const p of WORLD_POINTS){const distance=Math.hypot(p.x-this.body.x,p.z-this.body.z);if(distance>12||!pointVisible(this.body,p))continue;const v=new T.Vector3(p.x,floorHeight(p.z,p.x)+(p.markerY||1.75),p.z).project(this.camera);if(v.z< -1||v.z>1||Math.abs(v.x)>.95||v.y> .85||v.y< -.65)continue;let y=(1-v.y)*50;const x=(v.x+1)*50;for(const old of result)if(Math.abs(old.x-x)<6&&Math.abs(old.y-y)<7)y=Math.max(12,y-7);result.push({id:p.id,x,y,near:canInspect(this.body,p),distance});}return result;
+  this.camera.updateMatrixWorld();const result:ScreenMarker[]=[];for(const p of WORLD_POINTS){const distance=Math.hypot(p.x-this.body.x,p.z-this.body.z);if(!canInspect(this.body,p))continue;const v=new T.Vector3(p.x,floorHeight(p.z,p.x)+(p.markerY||1.75),p.z).project(this.camera);if(v.z< -1||v.z>1||Math.abs(v.x)>.95||v.y> .85||v.y< -.65)continue;let y=(1-v.y)*50;const x=(v.x+1)*50;for(const old of result)if(Math.abs(old.x-x)<6&&Math.abs(old.y-y)<7)y=Math.max(12,y-7);result.push({id:p.id,x,y,near:true,distance});}return result;
  }
  private portraits(){new T.TextureLoader().load('/temple/virtudes.webp',base=>{if(this.dead){base.dispose();return;}base.colorSpace=T.SRGBColorSpace;this.textures.add(base);
   const configs=[{x:0,z:-13.7,angle:0,index:0,title:'Minerva · Sabiduría'},{x:-4.1,z:13.7,angle:Math.PI,index:1,title:'Hércules · Fuerza'},{x:7.7,z:3,angle:-Math.PI/2,index:2,title:'Venus · Belleza'}];
