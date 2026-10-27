@@ -28,3 +28,22 @@ Prompt final: «One coherent panoramic triptych mural texture, three equal verti
 - Navegador: WebGL2 real con cámara al hombro, movimiento teclado/palanca, giro, neutral al soltar, ficha B con fuente, visor PDF y 320/390/1440 px.
 - Backend del lector: PDF original y hash, sesión, actividad, pertenencia a logia y revocación; sin escrituras ni lectura de rutas proporcionadas por clientes. Emuladores existentes de audios, actas y comprobantes conservados.
 - Build de producción; prueba real del iPhone/micrófono sigue dependiendo del dispositivo. Si WebGL no está disponible, se informa del problema; el PDF sigue disponible.
+
+
+## Ampliación de puestos, salas y consultas
+
+El mapa incluye 65 puntos de lectura de primer grado. Se añadieron las fichas de dignidades y oficiales descritos en las páginas 11–12 y su relación con las joyas del catecismo (85–86): Venerable Maestro, ambos Vigilantes, Secretario, Orador, Tesorero, Hospitalario, Maestro de Ceremonias, Porta Estandarte, Expertos, Diáconos, Diputado, Ecónomo y Guardas Templo Interior y Exterior. Las cinco gradas del Primer Vigilante, tres del Segundo, podios de Secretario/Orador y los útiles/candelabros distinguen sus puestos. Se añadieron pebetero, símbolos del altar, triángulos con ojo, borlas, herramientas, mandil, número tres y otras lecturas del simbolismo (98–101).
+
+Por la puerta de Occidente se camina al Atrio y después a la Sala de Pasos Perdidos. Desde esta última se accede al Cuarto de Reflexiones/Cámara Negra y a la Sala de Banquetes. Las puertas conectan físicamente las salas y la cámara evita atravesar las paredes. La distribución relativa de las salas anexas se adapta para el juego: el PDF determina la secuencia Sala de Pasos Perdidos → Atrio → Templo, pero no sus medidas. El apartado de las páginas 14–15 se titula «Cuarto de Reflexiones o Cámara Negra»; se representan juntos con ambos nombres. El salón de banquetes es la dependencia opcional de la descripción.
+
+Cada elemento con información muestra un punto proyectado sobre la escena. Los puntos se activan cerca (2.2 unidades) y se comprueban distancia y paredes al pulsarlos. Los elementos fuera de alcance no abren fichas. Los objetos cercanos tienen botones independientes bajo el recorrido para seleccionar puestos, herramientas y símbolos próximos sin depender de un único vecino. Las lecturas se guardan por identificador, conservando los puntos ya visitados.
+
+## Ilustraciones y mitología zodiacal
+
+`public/temple/zodiac.webp` es un atlas de doce ilustraciones originales generado con la herramienta incorporada, en cuatro columnas y tres filas. Se aplica una ilustración a cada columna y a su ficha. La narración mitológica se muestra bajo el título «Relato mitológico · complemento cultural» con una referencia externa. Se diferencia de lo atribuido a la liturgia y reconoce variantes de los relatos; no propone horóscopos, predicciones ni significados masónicos individuales inventados.
+
+Fuentes complementarias consultadas: Theoi, Star Myths (https://www.theoi.com/greek-mythology/star-myths.html); Higino, Astronomica 2.20, para Aries (https://www.theoi.com/Text/HyginusAstronomica2.html); Arato, Fenómenos 96–136, para Virgo (https://www.theoi.com/Text/AratusPhaenomena.html); Theoi/Croto, con fuentes antiguas, para Sagitario (https://www.theoi.com/Georgikos/SatyrosKrotos.html); Ian Ridpath, Star Tales/Capricornus (https://www.ianridpath.com/startales/capricornus.html).
+
+Prompt del atlas: «One coherent zodiac illustration atlas, precise 4-column by 3-row grid of equal square panels, classical copperplate illustration with antique gold and midnight blue. Row 1: golden ram, white bull, twin brothers, crab. Row 2: lion, maiden with wheat, balanced scales, scorpion. Row 3: centaur archer, sea-goat, water-bearer with amphora, two linked fish. No words, numbers, glyphs, UI or nudity.»
+
+Verificación adicional: acceso por colisiones reales a los 65 puntos; cinco zonas conectadas; impedimento de consultas a través de paredes; elecciones múltiples en un mismo entorno; prueba Chromium caminando desde el templo al Atrio, Sala de Pasos Perdidos, Cuarto de Reflexiones y Sala de Banquetes; ilustración/fuente de Virgo y píxeles dibujados en las vistas de celular y escritorio.

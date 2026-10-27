@@ -26,6 +26,8 @@ on:
       - 'components/TempleExplorer.tsx'
       - 'services/templeExplorer.ts'
       - 'services/templeWorld.ts'
+      - 'services/zodiacMyths.ts'
+      - 'public/temple/**'
       - 'services/templeScene.ts'
       - 'services/firstDegreePdf.ts'
       - 'components/FirstDegreePdf.tsx'
