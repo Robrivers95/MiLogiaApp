@@ -47,6 +47,14 @@ try {
       result: { originalTranscript: "Texto privado" },
     });
   });
+  await env.withSecurityRulesDisabled(async ctx=>{
+    await uploadBytes(ref(ctx.storage(),'templeStudy/liturgia-primer-grado.pdf'),new Uint8Array([37,80,68,70]),{contentType:'application/pdf'});
+  });
+  const reader=env.authenticatedContext('reader').storage();
+  await assertSucceeds(getBytes(ref(reader,'templeStudy/liturgia-primer-grado.pdf')));
+  await assertFails(getBytes(ref(env.unauthenticatedContext().storage(),'templeStudy/liturgia-primer-grado.pdf')));
+  await assertFails(uploadBytes(ref(reader,'templeStudy/liturgia-primer-grado.pdf'),new Uint8Array([1]),{contentType:'application/pdf'}));
+  await assertFails(uploadBytes(ref(reader,'templeStudy/other.pdf'),new Uint8Array([1]),{contentType:'application/pdf'}));
   const sec = env.authenticatedContext("sec", { auth_time: 1000 }),
     other = env.authenticatedContext("other", { auth_time: 1000 }),
     foreign = env.authenticatedContext("foreign", { auth_time: 1000 });
