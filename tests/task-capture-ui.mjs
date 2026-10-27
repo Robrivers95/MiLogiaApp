@@ -65,9 +65,11 @@ try {
     await page.goto(url + query);
     await page.evaluate(() => sessionStorage.clear());
     await page.reload();
+    if (!query.includes("role=viewer")) {
     await page
       .getByRole("heading", { name: "Captura por texto y tareas", exact: true })
       .waitFor();
+    }
   };
   const prepare = async () => {
     await page
