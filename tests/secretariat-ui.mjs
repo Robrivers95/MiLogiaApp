@@ -19,12 +19,12 @@ await build({
     {
       name: "isolated-meeting-cloud",
       setup(b) {
-        b.onResolve({ filter: /\/meetingCloud$/ }, (args) => ({
+        b.onResolve({ filter: /\/(meetingCloud|taskCaptureCloud)$/ }, (args) => ({
           path: args.path,
           namespace: "mock",
         }));
-        b.onLoad({ filter: /.*/, namespace: "mock" }, () => ({
-          contents: mock,
+        b.onLoad({ filter: /.*/, namespace: "mock" }, (args) => ({
+          contents: args.path.endsWith("taskCaptureCloud") ? "export const taskCaptureCloud={};" : mock,
         }));
       },
     },

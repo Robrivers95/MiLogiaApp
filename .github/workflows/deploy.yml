@@ -39,6 +39,8 @@ jobs:
         run: node tests/account-recovery.mjs
       - name: Modular secretary and AI guards
         run: node tests/secretariat.mjs && node tests/secretariat-backend.mjs && node tests/secretariat-recorder.mjs
+      - name: Capture proposals and confirmed task transactions
+        run: node tests/task-capture.mjs && node tests/task-capture-backend.mjs
       - name: Treasury report tests
         run: node tests/treasury-report.mjs
       - name: Verify account feature deployment gate

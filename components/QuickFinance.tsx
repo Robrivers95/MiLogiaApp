@@ -23,7 +23,8 @@ export default function QuickFinance({user,suspended}: Props) {
   const [busy,setBusy] = useState(false); const [loading,setLoading] = useState(false); const [error,setError] = useState(''); const [message,setMessage] = useState('');
   const captureId = useRef(''); const inFlight = useRef(false); const panel = useRef<HTMLDivElement>(null); const opener = useRef<HTMLButtonElement>(null);
   const requestSequence = useRef(0); const [locked,setLocked] = useState(false);
-  const changeInput = (patch: Partial<CaptureInput>) => { setInput(value=>({...value,...patch})); setError(''); };
+  const [aiDraft,setAiDraft]=useState(false),[aiReviewed,setAiReviewed]=useState(false);
+  const changeInput = (patch: Partial<CaptureInput>) => { setInput(value=>({...value,...patch})); setAiReviewed(false);setError(''); };
   const select = (entry: TreasuryEntry) => {if(entry.id === captureId.current){captureId.current='';setLocked(false);setInput(empty());setPhoto(undefined);}setSelected(entry);setDescription(entry.description);setCategory(entry.category);setPayee(entry.payee || '');setNotes(entry.notes || '');setMemberId(entry.memberId || '');setQuota('');setError('');};
   const refresh = async () => {
     const sequence = ++requestSequence.current;setLoading(true);
@@ -42,6 +43,18 @@ export default function QuickFinance({user,suspended}: Props) {
     const edit = (event: Event) => {setOpen(true);setTab('history');const id=(event as CustomEvent).detail?.id;void refresh().then(list=>{const entry=list.find(item=>item.id===id);if(entry)select(entry);}).catch(e=>setError(e.message));};
     window.addEventListener('open-quick-finance',edit);return()=>window.removeEventListener('open-quick-finance',edit);
   },[allowed,user.groupId]);
+  useEffect(()=>{
+    if(!allowed)return;
+    const prepare=(event:Event)=>{
+      const {groupId,proposal}=((event as CustomEvent).detail||{});
+      if(groupId!==user.groupId||!proposal||inFlight.current)return;
+      if(captureId.current){setOpen(true);setError('Resuelve el guardado pendiente antes de abrir otra propuesta.');return;}
+      if(open&&!window.confirm('¿Reemplazar el formulario abierto por la propuesta de IA?'))return;
+      setInput({type:proposal.type==='income'?'income':'expense',amount:Number(proposal.amount)||0,date:proposal.date||'',notes:String(proposal.notes||'').slice(0,2000),memberId:String(proposal.memberId||''),paymentMethod:proposal.paymentMethod||'',accountId:''});
+      setAiDraft(true);setAiReviewed(false);setSelected(undefined);setPhoto(undefined);setTab('new');setError('');setMessage('');setOpen(true);
+    };
+    window.addEventListener('prepare-finance-capture',prepare);return()=>window.removeEventListener('prepare-finance-capture',prepare);
+  },[allowed,user.groupId,open]);
   useEffect(()=>{
     setPayments([]);setQuota('');let active=true;
     if(open && selected?.type === 'income' && selected.quickStatus !== 'applied' && memberId){setLoading(true);quickFinanceService.payments(user.groupId,memberId).then(list=>{if(active)setPayments(list);}).catch(e=>{if(active)setError(e.message);}).finally(()=>{if(active)setLoading(false);});}
@@ -66,12 +79,14 @@ export default function QuickFinance({user,suspended}: Props) {
     finally{inFlight.current=false;setBusy(false);}
   };
   const save = () => action(async()=>{
+    if(aiDraft&&!aiReviewed)throw new Error('Revisa la propuesta y confirma los datos antes de guardar.');
+    if(!['cash','card','transfer'].includes(input.paymentMethod))throw new Error('Selecciona el método de pago.');
     captureAmount(input.amount);validCaptureDate(input.date);
     if(photo && (!photo.type.startsWith('image/') || photo.size > 8*1024*1024)) throw new Error('Selecciona una imagen de máximo 8 MB.');
     if(!captureId.current)captureId.current=crypto.randomUUID();
     setLocked(true);
     await quickFinanceService.save(user.groupId,captureId.current,input,photo);
-    captureId.current='';setLocked(false);setInput(empty());setPhoto(undefined);setTab('history');
+    captureId.current='';setLocked(false);setInput(empty());setPhoto(undefined);setAiDraft(false);setAiReviewed(false);setTab('history');
   },'Captura guardada. Ya está incluida en tesorería y puedes completarla después.');
   const quotaOptions = payments.flatMap(source=>{
     const p=normalizePayment(source);const debt=Math.max(0,p.amount-p.paidRegular!);
@@ -87,19 +102,21 @@ export default function QuickFinance({user,suspended}: Props) {
         {error && <p role="alert" className="text-red-300">{error}</p>}{message && <p role="status" className="text-emerald-300">{message}</p>}
         {loading && <p role="status" className="text-gray-400">Cargando…</p>}
         {tab==='new' ? <form onSubmit={e=>{e.preventDefault();void save();}} className="space-y-3">
+          {aiDraft&&<p className="text-indigo-200 text-sm">Propuesta de IA: corrige los datos antes de confirmar. Esto crea un movimiento en tesorería; para aplicarlo a una cuota, abre la captura guardada y selecciona el periodo y la cuota.</p>}
           <fieldset disabled={busy} className="space-y-3 min-w-0">
             <label className="block">Tipo<select aria-label="Tipo" className={field} value={input.type} onChange={e=>changeInput({type:e.target.value as CaptureInput['type'],memberId:''})}><option value="expense">Gasto</option><option value="income">Ingreso</option></select></label>
             <label className="block">Monto<input className={field} type="number" inputMode="decimal" min="0.01" max="999999999" step="0.01" required value={input.amount || ''} onChange={e=>changeInput({amount:Number(e.target.value)})}/></label>
             <label className="block">Fecha<input className={field} type="date" required value={input.date} onChange={e=>changeInput({date:e.target.value})}/></label>
             <label className="block">Nota opcional<textarea className={field} maxLength={2000} value={input.notes} onChange={e=>changeInput({notes:e.target.value})}/></label>
-            <label className="block">Método<select aria-label="Método" className={field} value={input.paymentMethod} onChange={e=>changeInput({paymentMethod:e.target.value as CaptureInput['paymentMethod']})}><option value="cash">Efectivo</option><option value="card">Tarjeta</option><option value="transfer">Transferencia</option></select></label>
+            <label className="block">Método<select required aria-label="Método" className={field} value={input.paymentMethod} onChange={e=>changeInput({paymentMethod:e.target.value as CaptureInput['paymentMethod']})}><option disabled value="">Selecciona el método</option><option value="cash">Efectivo</option><option value="card">Tarjeta</option><option value="transfer">Transferencia</option></select></label>
             {input.type==='income' && <label className="block">Miembro opcional<select aria-label="Miembro opcional" className={field} value={input.memberId} onChange={e=>changeInput({memberId:e.target.value})}><option value="">Sin miembro</option>{members.map(member=><option key={member.uid} value={member.uid}>{member.name}</option>)}</select></label>}
             <label className="block">Cuenta o caja opcional<select aria-label="Cuenta o caja opcional" className={field} value={input.accountId} onChange={e=>changeInput({accountId:e.target.value})}><option value="">Solo tesorería</option>{accounts.map(account=><option key={account.id} value={account.id}>{account.name} · {money(account.amount)}</option>)}</select></label>
             <p className="text-xs text-gray-400">Se incluye en tesorería al guardar. Si eliges una cuenta o caja, suma o resta al saldo actual una sola vez. Para un movimiento ya incluido en ese saldo, elige Solo tesorería.</p>
             <label className="block">Foto de cámara o galería (opcional)<input className={field} type="file" accept="image/*" onChange={e=>setPhoto(e.target.files?.[0])}/></label>
           </fieldset>
+          {aiDraft&&<label className="flex gap-3 items-start"><input type="checkbox" disabled={busy} checked={aiReviewed} onChange={e=>setAiReviewed(e.target.checked)}/><span>Revisé y confirmo el monto, fecha, miembro y método de esta captura.</span></label>}
           {locked && !busy && <p className="text-sm text-amber-300">No se confirmó el guardado. Reintenta o revisa esta captura en Capturas antes de registrar otro movimiento.</p>}
-          <button className={`${button} w-full`} disabled={busy || loading} type="submit">{busy?'Guardando…':locked?'Reintentar guardado':'Guardar pendiente'}</button>
+          <button className={`${button} w-full`} disabled={busy || loading || (aiDraft&&!aiReviewed)} type="submit">{busy?'Guardando…':locked?'Reintentar guardado':aiDraft?'Confirmar y guardar captura':'Guardar pendiente'}</button>
         </form> : selected ? <div className="space-y-3">
           <button disabled={busy} className="text-indigo-300 p-2" onClick={()=>setSelected(undefined)}>← Volver a capturas</button>
           <p className="font-bold">{selected.type==='income'?'Ingreso':'Gasto'} · {money(selected.amount)} · {selected.date}</p>

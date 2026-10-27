@@ -25,5 +25,12 @@ try{
  await assertSucceeds(updateDoc(doc(admin,'users/member'),{active:true}));
  await assertSucceeds(updateDoc(doc(admin,'users/member'),{lodgeRole:'sin_cargo'}));
  await assertFails(getDoc(doc(member,'groups/lodge/minutes/minute')));
+ await assertSucceeds(setDoc(doc(admin,'groups/lodge/tasks/test'),{title:'Tarea',groupId:'lodge'}));
+ await assertSucceeds(getDoc(doc(member,'groups/lodge/tasks/test')));
+ await assertFails(getDoc(doc(env.authenticatedContext('foreign',{auth_time:1000}).firestore(),'groups/lodge/tasks/test')));
+ await assertFails(setDoc(doc(member,'groups/lodge/tasks/direct'),{title:'Sin confirmación'}));
+ await assertFails(setDoc(doc(admin,'groups/other/tasks/foreign'),{title:'Otra logia'}));
+ await assertFails(setDoc(doc(member,'taskCaptureRequests/fake'),{confirmed:true}));
+ await assertFails(getDoc(doc(admin,'taskCaptureRequests/fake')));
  assert.ok(true);console.log('Firestore emulator passed: role escalation blocked, scoped admin, own profile editing, private server recovery state/audit, forced password gate and old-session revocation, lodge logo permissions.');
 }finally{await env.cleanup();}

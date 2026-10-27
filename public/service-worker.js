@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mi-logia-v2-beta-secretariat-20261026';
+const CACHE_NAME = 'mi-logia-v2-beta-task-capture-20261027';
 const urlsToCache = [
   '/',
   '/index.html',
