@@ -173,3 +173,5 @@ export const sendNotificationToGroup = functions.https.onRequest(async (req, res
   }
 });
 
+
+export {templeReadingService} from './templeReading';

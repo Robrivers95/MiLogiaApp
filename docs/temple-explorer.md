@@ -14,7 +14,7 @@ Las 26 fichas incluyen referencias a páginas del PDF; las explicaciones fueron 
 
 ## PDF en la app
 
-**Liturgia de Primer Grado · PDF** está en el encabezado del juego, en las fichas (página de referencia) y en Biblioteca. Ofrece visor, abrir en otra pestaña y descarga. Se conserva el original de 756720 bytes, SHA-256 `eca9fa5e4cc9b2028e4d9297ba064006d568a8a74736199ecd0bf06224b0f117`, sin modificar sus páginas. CI verifica el hash, publica los bytes nativos en el documento `templeReadings/primer-grado` y los relee para confirmar la integridad. El original cabe por debajo de 1 MiB sin conversión a base64 en el valor almacenado. Se utiliza Firestore, ya autorizado, porque la identidad de deploy no dispone de `storage.objects.create`. La app descarga los bytes con sesión, valida su SHA-256 y crea un enlace temporal local. Las reglas exigen un miembro activo (o Admin Master), niegan listados y todas las escrituras desde clientes. La copia fuente forma parte del repositorio del proyecto.
+**Liturgia de Primer Grado · PDF** está en el encabezado del juego, en las fichas (página de referencia) y en Biblioteca. Ofrece visor, abrir en otra pestaña y descarga. Se conserva el original de 756720 bytes, SHA-256 `eca9fa5e4cc9b2028e4d9297ba064006d568a8a74736199ecd0bf06224b0f117`, sin modificar sus páginas. El PDF se incluye como archivo inmutable del backend en `functions/assets/liturgia-primer-grado.pdf`. `templeReadingService` comprueba sesión, miembro activo/logia (o Admin Master), estado de contraseña y vigencia del token antes de leerlo. No recibe rutas del cliente y no escribe en Storage ni Firestore. Valida el hash del adjunto y devuelve sus bytes al lector autenticado; el navegador vuelve a verificar el SHA-256 antes de crear un enlace temporal local. Esta solución utiliza las funciones ya autorizadas y no requiere nuevos permisos de escritura de archivos o documentos para la cuenta de despliegue. La copia fuente forma parte del repositorio del proyecto.
 
 ## Arte
 
@@ -26,5 +26,5 @@ Prompt final: «One coherent panoramic triptych mural texture, three equal verti
 
 - Política: 26 puntos alcanzables con colisiones reales; doce columnas/seis por pared; tres figuras; movimiento continuo, giro, límite de tiempo de fotograma y altura de las gradas.
 - Navegador: WebGL2 real con cámara al hombro, movimiento teclado/palanca, giro, neutral al soltar, ficha B con fuente, visor PDF y 320/390/1440 px.
-- Emuladores: PDF legible por miembro activo, anónimo denegado y escritura desde clientes denegada; protecciones de audios y comprobantes conservadas.
+- Backend del lector: PDF original y hash, sesión, actividad, pertenencia a logia y revocación; sin escrituras ni lectura de rutas proporcionadas por clientes. Emuladores existentes de audios, actas y comprobantes conservados.
 - Build de producción; prueba real del iPhone/micrófono sigue dependiendo del dispositivo. Si WebGL no está disponible, se informa del problema; el PDF sigue disponible.

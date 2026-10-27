@@ -3,12 +3,12 @@ import {WORLD_START,WORLD_POINTS,WORLD_OBSTACLES,ZODIAC_COLUMNS,moveBody,floorHe
 import type {Body,WorldPoint} from './templeWorld';
 export class TempleScene {
  private renderer:T.WebGLRenderer;private scene=new T.Scene();private camera=new T.PerspectiveCamera(68,1,.08,70);private player=new T.Group();
- private body:Body={...WORLD_START};private forward=0;private strafe=0;private turn=0;private pitch=0;private paused=false;private frame=0;private dead=false;private last=0;private reportAt=0;private walk=0;
+ private body:Body={...WORLD_START};private forward=0;private strafe=0;private turn=0;private pitch=0;private paused=false;private frame=0;private dead=false;private last=0;private reportAt=0;private walk=0;private renderedFrames=0;
  private geometries=new Set<T.BufferGeometry>();private materials=new Set<T.Material>();private textures=new Set<T.Texture>();private resize:ResizeObserver;
  private leftLeg:T.Group;private rightLeg:T.Group;private leftArm:T.Group;private rightArm:T.Group;
  constructor(private host:HTMLElement,private report:(body:Body,point?:WorldPoint)=>void,private failed:(s:string)=>void){
   this.renderer=new T.WebGLRenderer({antialias:true,alpha:false,powerPreference:'low-power'});this.renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.5));this.renderer.outputColorSpace=T.SRGBColorSpace;
-  this.renderer.setClearColor('#1d2b43');this.renderer.domElement.setAttribute('aria-label','Templo 3D con cámara detrás del avatar');host.appendChild(this.renderer.domElement);
+  this.renderer.domElement.style.width='100%';this.renderer.domElement.style.height='100%';this.renderer.setClearColor('#1d2b43');this.renderer.domElement.setAttribute('aria-label','Templo 3D con cámara detrás del avatar');host.appendChild(this.renderer.domElement);
   this.scene.background=new T.Color('#1d2b43');this.scene.fog=new T.Fog('#243047',32,62);
   this.scene.add(new T.HemisphereLight('#e7edff','#857561',2.2));const sun=new T.DirectionalLight('#ffe4b6',2.1);sun.position.set(2,6,5);this.scene.add(sun);
   this.buildTemple();const limbs=this.buildAvatar();[this.leftLeg,this.rightLeg,this.leftArm,this.rightArm]=limbs;
@@ -68,7 +68,7 @@ export class TempleScene {
  private animate=(now:number)=>{if(this.dead)return;this.frame=requestAnimationFrame(this.animate);if(now-this.last<1000/40)return;const dt=Math.min((now-this.last)/1000,.06);this.last=now;if(document.hidden)return;
   if(!this.paused){const old=this.body;this.body=moveBody(this.body,this.forward,this.strafe,this.turn,dt);if(Math.hypot(old.x-this.body.x,old.z-this.body.z)>.001)this.walk+=dt*8;else this.walk=0;}
   const p=this.body,h=floorHeight(p.z);this.player.position.set(p.x,h,p.z);this.player.rotation.y=-p.yaw;this.leftLeg.rotation.x=Math.sin(this.walk)*.45;this.rightLeg.rotation.x=-Math.sin(this.walk)*.45;this.leftArm.rotation.x=-Math.sin(this.walk)*.3;this.rightArm.rotation.x=Math.sin(this.walk)*.3;
-  const desired=new T.Vector3(T.MathUtils.clamp(p.x-Math.sin(p.yaw)*3.4+Math.cos(p.yaw)*.65,-7.6,7.6),h+2.1,T.MathUtils.clamp(p.z+Math.cos(p.yaw)*3.4+Math.sin(p.yaw)*.65,-13.6,13.6));this.camera.position.lerp(desired,1-Math.exp(-dt*12));this.camera.lookAt(p.x+Math.sin(p.yaw)*2,h+1.25+this.pitch,p.z-Math.cos(p.yaw)*2);this.renderer.render(this.scene,this.camera);
+  const desired=new T.Vector3(T.MathUtils.clamp(p.x-Math.sin(p.yaw)*3.4+Math.cos(p.yaw)*.65,-7.6,7.6),h+2.1,T.MathUtils.clamp(p.z+Math.cos(p.yaw)*3.4+Math.sin(p.yaw)*.65,-13.6,13.6));this.camera.position.lerp(desired,1-Math.exp(-dt*12));this.camera.lookAt(p.x+Math.sin(p.yaw)*2,h+1.25+this.pitch,p.z-Math.cos(p.yaw)*2);this.renderer.render(this.scene,this.camera);this.renderer.domElement.dataset.drawCalls=String(this.renderer.info.render.calls);this.renderer.domElement.dataset.frame=String(++this.renderedFrames);
   if(now-this.reportAt>100){this.reportAt=now;this.report({...p},nearWorldPoint(p));}
  };
  dispose(){this.dead=true;cancelAnimationFrame(this.frame);this.resize.disconnect();this.renderer.domElement.removeEventListener('webglcontextlost',this.contextLost);this.geometries.forEach(g=>g.dispose());this.materials.forEach(m=>m.dispose());this.textures.forEach(t=>t.dispose());this.renderer.dispose();this.renderer.domElement.remove();}
