@@ -58,6 +58,7 @@ service cloud.firestore {
           (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('lodgeRole','sin_cargo') == 'secretario')));
     }
+    match /taskCaptureRequests/{requestId} { allow read, write: if false; }
     match /secretariatAnalysisLocks/{userId} { allow read, write: if false; }
 
     match /users/{userId} {
@@ -149,8 +150,11 @@ service cloud.firestore {
       }
 
       match /tasks/{taskId} {
-        allow read: if isSignedIn();
-        allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
+        allow read: if isSignedIn() && (isMaster() ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId);
+        // Member-created tasks require the server confirmation callable.
+        allow write: if isAdminOrMaster() && (isMaster() ||
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId && isGroupActive(groupId)));
       }
     }
 

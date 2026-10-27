@@ -9,6 +9,7 @@ import {MEMBER_ACCESS_ENABLED} from './services/features';
 import RequiredPasswordChange from './components/RequiredPasswordChange';
 import {validLodgeLogo} from './services/lodgeIdentity';
 import Secretariat from './components/Secretariat';
+import CaptureAssistant from './components/CaptureAssistant';
 import {canUseSecretariat} from './services/meetingModel';
 import Auth from './components/Auth';
 import Layout from './components/Layout';
@@ -157,6 +158,7 @@ const App: React.FC = () => {
         groupName={groupName}
         groupLogo={groupLogo}
       >
+        {view === 'capture' && <CaptureAssistant key={`${user.uid}:${activeUserContext.groupId}`} user={activeUserContext} suspended={groupSuspended}/>}
         {view === 'secretariat' && canUseSecretariat(activeUserContext) && <Secretariat key={`${user.uid}:${activeUserContext.groupId}`} user={activeUserContext} suspended={groupSuspended}/>}
         {view === 'secretariat' && !canUseSecretariat(activeUserContext) && <p className="p-5 text-red-300">Este apartado requiere autorización de Secretaría.</p>}
         {view === 'home' && <Dashboard user={activeUserContext} />}

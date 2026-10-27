@@ -6,6 +6,7 @@ import {MasonicSeal,TempleBackdrop} from './MasonicIdentity';
 import LodgeLogoEditor from './LodgeLogoEditor';
 import {canUseSecretariat} from '../services/meetingModel';
 import QuickFinance from './QuickFinance';
+import {canCapture} from '../services/taskCapture';
 
 interface Props {
   user: User;
@@ -67,7 +68,7 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
     { id: 'library', label: 'Biblioteca', icon: 'library' },
     ...(canManage ? [{ id: 'admin', label: 'Gestionar', icon: 'admin' }] : []),
   ];
-  const communityActive = ['notices', 'attendance','secretariat'].includes(currentView);
+  const communityActive = ['notices', 'attendance','secretariat','capture'].includes(currentView);
   const navigate = (id: string) => { if (id === 'community') { setShowCommunity(value => !value); setShowMore(false); } else { onNavigate(id); setShowMore(false); setShowCommunity(false); } };
 
   return (
@@ -96,6 +97,7 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
         <div className="flex items-center justify-between px-2 py-2"><h2 className="font-bold">Comunidad</h2><button onClick={() => setShowCommunity(false)} className="text-gray-400 p-2" aria-label="Cerrar comunidad">×</button></div>
         <button onClick={() => navigate('notices')} className="w-full text-left rounded-lg p-3 hover:bg-logia-700"><span className="block text-sm font-semibold">Avisos</span><span className="text-xs text-gray-400">Comunicados de la Logia</span></button>
         <button onClick={() => navigate('attendance')} className="w-full text-left rounded-lg p-3 hover:bg-logia-700"><span className="block text-sm font-semibold">Mi asistencia</span><span className="text-xs text-gray-400">Consulta tus reuniones</span></button>
+        {canCapture(user)&&<button onClick={()=>navigate('capture')} className="w-full text-left rounded-lg p-3 hover:bg-logia-700"><span className="block text-sm font-semibold">Captura y tareas</span><span className="text-xs text-gray-400">Texto, acuerdos y compromisos con revisión</span></button>}
         {canUseSecretariat(user)&&<button onClick={()=>navigate('secretariat')} className="w-full text-left rounded-lg p-3 hover:bg-logia-700"><span className="block text-sm font-semibold">Secretaría y actas</span><span className="text-xs text-gray-400">Tenidas, turnos y transcripciones</span></button>}
       </section>}
       <nav className="fixed bottom-0 left-0 w-full bg-logia-800 border-t border-logia-700 z-30" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }} aria-label="Navegación principal">

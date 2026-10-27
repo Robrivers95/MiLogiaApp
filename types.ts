@@ -107,6 +107,11 @@ export interface PaymentReceipt {
 }
 
 export interface Task {
+  dueDate?: string;
+  kind?: 'task' | 'agreement' | 'commitment';
+  confirmedBy?: string;
+  confirmedAt?: string;
+  captureRequestId?: string;
   id: string;
   groupId: string;
   title: string;

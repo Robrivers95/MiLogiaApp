@@ -1,3 +1,4 @@
+import CaptureAssistant from './CaptureAssistant';
 import WhatsAppReminders from './WhatsAppReminders';
 import { canUseWhatsApp } from '../services/whatsappReminders';
 import ExistingFeeAssignment from './ExistingFeeAssignment';
@@ -26,6 +27,8 @@ interface Props {
 
 const Admin: React.FC<Props> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
+  const [showTaskCapture,setShowTaskCapture]=useState(false);
+  useEffect(()=>{const refresh=()=>{if(activeTab==='tasks')void loadTasks();};window.addEventListener('tasks-updated',refresh);return()=>window.removeEventListener('tasks-updated',refresh);},[activeTab,user.groupId]);
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
@@ -3474,6 +3477,8 @@ const Admin: React.FC<Props> = ({ user }) => {
         {activeTab === 'tasks' && (
           <div className="space-y-6">
             <h3 className="text-lg font-bold text-white">Gestión de Tareas</h3>
+            <button disabled={isReadOnly} className="p-3 rounded border border-logia-700 text-indigo-300" onClick={()=>setShowTaskCapture(value=>!value)}>{showTaskCapture?'Cerrar captura por texto':'Capturar tareas, acuerdos y compromisos por texto'}</button>
+            {showTaskCapture&&<CaptureAssistant user={user} suspended={isReadOnly} embedded/>}
             <div className="bg-logia-800 rounded-xl p-5 border border-logia-700 shadow-lg space-y-4">
               <h4 className="font-bold text-white">{editingTask ? 'Editar tarea' : 'Asignar tarea'}</h4>
               <input type="text" placeholder="Título de la tarea *" value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} disabled={isReadOnly} className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white font-bold" />
@@ -3497,7 +3502,7 @@ const Admin: React.FC<Props> = ({ user }) => {
             </div>
             <div className="bg-logia-800 rounded-xl border border-logia-700 shadow-lg overflow-hidden">
               <div className="p-4 border-b border-logia-700"><h4 className="font-bold text-white">Lista de Tareas ({tasks.filter(t => !t.completed).length} pendientes / {tasks.filter(t => t.completed).length} completadas)</h4></div>
-              <div className="p-4 space-y-2">{tasks.length === 0 ? <p className="text-gray-400 text-center py-4">No hay tareas creadas</p> : tasks.map(task => <div key={task.id} className={(task.completed ? 'bg-logia-900/50' : 'bg-logia-900') + ' border border-logia-700 p-4 rounded flex items-start gap-3'}><input type="checkbox" checked={task.completed} onChange={() => handleToggleTask(task.id, task.completed)} disabled={isReadOnly} className="mt-1 w-5 h-5" /><div className="flex-1"><div className="flex flex-wrap items-center gap-2"><h5 className={'font-bold ' + (task.completed ? 'text-gray-500 line-through' : 'text-white')}>{task.title}</h5>{task.assignmentMode === 'team' && <span className="text-[10px] bg-purple-900/50 text-purple-300 border border-purple-600/40 rounded px-2 py-1">👥 Equipo</span>}</div>{task.description && <p className="text-sm text-gray-400 mt-1">{task.description}</p>}<p className="text-xs text-blue-300 mt-2">{task.assignmentMode === 'team' ? 'Equipo: ' + (task.assignedToNames || []).join(', ') : task.assignedToName ? '👤 ' + task.assignedToName : 'Sin asignar'}</p></div><div className="flex gap-2"><button onClick={() => handleEditTask(task)} disabled={isReadOnly || task.assignmentMode === 'team'} className="p-2 bg-logia-800 rounded border border-logia-700 disabled:opacity-30">✏️</button><button onClick={() => handleDeleteTask(task.id)} disabled={isReadOnly} className="p-2 bg-red-600 rounded">🗑️</button></div></div>)}</div>
+              <div className="p-4 space-y-2">{tasks.length === 0 ? <p className="text-gray-400 text-center py-4">No hay tareas creadas</p> : tasks.map(task => <div key={task.id} className={(task.completed ? 'bg-logia-900/50' : 'bg-logia-900') + ' border border-logia-700 p-4 rounded flex items-start gap-3'}><input type="checkbox" checked={task.completed} onChange={() => handleToggleTask(task.id, task.completed)} disabled={isReadOnly} className="mt-1 w-5 h-5" /><div className="flex-1"><div className="flex flex-wrap items-center gap-2"><h5 className={'font-bold ' + (task.completed ? 'text-gray-500 line-through' : 'text-white')}>{task.title}</h5>{task.assignmentMode === 'team' && <span className="text-[10px] bg-purple-900/50 text-purple-300 border border-purple-600/40 rounded px-2 py-1">👥 Equipo</span>}</div>{task.description && <p className="text-sm text-gray-400 mt-1">{task.description}</p>}{task.dueDate && <p className="text-xs text-amber-300 mt-2">Fecha límite: {task.dueDate}</p>}<p className="text-xs text-blue-300 mt-2">{task.assignmentMode === 'team' ? 'Equipo: ' + (task.assignedToNames || []).join(', ') : task.assignedToName ? '👤 ' + task.assignedToName : 'Sin asignar'}</p></div><div className="flex gap-2"><button onClick={() => handleEditTask(task)} disabled={isReadOnly || task.assignmentMode === 'team'} className="p-2 bg-logia-800 rounded border border-logia-700 disabled:opacity-30">✏️</button><button onClick={() => handleDeleteTask(task.id)} disabled={isReadOnly} className="p-2 bg-red-600 rounded">🗑️</button></div></div>)}</div>
             </div>
           </div>
         )}

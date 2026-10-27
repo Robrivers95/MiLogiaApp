@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import CaptureAssistant from "./CaptureAssistant";
 import type { User } from "../types";
 import {
   MeetingDraft,
@@ -34,6 +35,7 @@ export default function Secretariat({
   user: User;
   suspended?: boolean;
 }) {
+  const [taskCapture,setTaskCapture] = useState(false);
   const [draft, setDraft] = useState<MeetingDraft>();
   const draftRef = useRef<MeetingDraft>();
   const [drafts, setDrafts] = useState<MeetingDraft[]>([]);
@@ -1282,6 +1284,10 @@ export default function Secretariat({
                   </button>
                 </div>
               )}
+              <div className="bg-logia-800 p-4 rounded-xl space-y-3">
+                <button className={button} disabled={locked} onClick={()=>setTaskCapture(value=>!value)}>{taskCapture?'Cerrar preparación de tareas':'Preparar tareas de acuerdos y compromisos'}</button>
+                {taskCapture&&<CaptureAssistant key={draft.id} user={user} suspended={suspended} embedded initialText={draft.fields.filter(f=>/acuerd|comprom/i.test(f.title)).map(f=>f.title+'\n'+f.value).join('\n\n')}/>}
+              </div>
               <div className="bg-logia-800 p-4 rounded-xl space-y-3">
                 <label className="block text-sm">
                   Notas adicionales del secretario

@@ -26,6 +26,9 @@ const Dashboard: React.FC<Props> = ({ user }) => {
       }
     };
     loadMyTasks();
+    const refresh=()=>void loadMyTasks();
+    window.addEventListener('tasks-updated',refresh);
+    return()=>window.removeEventListener('tasks-updated',refresh);
   }, [user.uid, user.groupId]);
 
   const isMaster = user.role === 'master';
@@ -98,6 +101,7 @@ const Dashboard: React.FC<Props> = ({ user }) => {
                   <p className="text-gray-400 text-xs mt-1">{task.description}</p>
                 )}
                 <p className="text-gray-500 text-xs mt-1">
+                  {task.dueDate && <span>Fecha límite: {task.dueDate} · </span>}
                   Creada: {new Date(task.createdAt).toLocaleDateString('es-MX')}
                 </p>
               </div>

@@ -24,6 +24,9 @@ on:
       - 'tests/secretariat*'
       - 'services/meeting*'
       - 'components/Secretariat.tsx'
+      - 'components/CaptureAssistant.tsx'
+      - 'services/taskCapture*'
+      - 'tests/task-capture*'
       - 'App.tsx'
       - 'styles/**'
       - 'components/Layout.tsx'
@@ -64,6 +67,8 @@ jobs:
         run: node tests/member-access-session-ui.mjs
       - name: Verify recorder and modular secretary editor
         run: node tests/secretariat-ui.mjs
+      - name: Verify corrected and confirmed task capture
+        run: node tests/task-capture-ui.mjs
       - name: Save screenshots
         if: always()
         uses: actions/upload-artifact@v4
