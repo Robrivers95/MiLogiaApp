@@ -42,6 +42,8 @@ class FakeRecorder {
   start() {
     this.state = "recording";
   }
+  pause() { this.state="paused"; }
+  resume() { this.state="recording"; }
   stop() {
     this.state = "inactive";
     this.ondataavailable({ data: new Blob(["final-audio"]) });
@@ -155,6 +157,29 @@ assert.equal(stored.length, 2);
 assert.ok(h.warnings.some((m) => m.includes("interrumpió")));
 assert.equal(h.backups.length, 0);
 assert.ok(h.persisted >= 2);
+h = harness();
+await h.r.start(false);
+now += 1000;
+h.r.pause();
+const pausedAt=h.r.elapsed();
+now += 10000;
+assert.equal(h.r.elapsed(),pausedAt,'paused wall time is excluded');
+h.r.resume();
+now += 2000;
+h.r.pause();
+h.r.stop();
+await h.done;
+assert.equal(h.draft.takes[0].durationMs,3000,'ending from paused state finalizes only recorded time');
+assert.equal(h.draft.takes[0].complete,true);
+assert.deepEqual(h.states.slice(-4),['recording','paused','stopping','idle']);
+const total=h.draft.durationMs;
+await h.r.start(false);
+now += 1000;
+h.r.stop();
+for(let i=0;i<30&&h.draft.takes[1]?.complete!==true;i++)await new Promise(r=>setTimeout(r,1));
+assert.equal(h.draft.takes.length,2,'a second audio does not replace the first');
+assert.equal(h.draft.takes[1].offsetMs,total);
+assert.equal(h.draft.durationMs,total+1000);
 failSave = true;
 h = harness();
 await h.r.start(false);

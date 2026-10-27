@@ -6,6 +6,7 @@ admin.initializeApp();
 export {adminMemberAccess,finishMemberPasswordChange} from './accountRecovery';
 export {organizeMeetingMinutes} from './meetingMinutes';
 export {captureWithAI} from './meetingCapture';
+export {meetingAudioService,processMeetingAudio} from './meetingAudio';
 
 /**
  * Cloud Function para enviar notificaciones push

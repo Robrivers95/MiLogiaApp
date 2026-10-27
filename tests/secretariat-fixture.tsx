@@ -1,6 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import Secretariat from "../components/Secretariat";
+import Secretariat from "../components/SecretariatAdvanced";
 import "../styles/temple.css";
 const params = new URLSearchParams(location.search);
 const user = {

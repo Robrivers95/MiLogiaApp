@@ -10,7 +10,10 @@ export interface RecorderCallbacks {
   draft: () => MeetingDraft;
   change: (edit: (d: MeetingDraft) => MeetingDraft) => void;
   warning: (text: string) => void;
-  state: (value: "starting" | "recording" | "stopping" | "idle") => void;
+  state: (
+    value: "starting" | "recording" | "paused" | "stopping" | "idle",
+  ) => void;
+  caption?: (text: string) => void;
   meter: (value: number) => void;
   backup: (take: AudioTake, blob: Blob) => void;
   persist: () => Promise<unknown>;
@@ -29,11 +32,43 @@ export class MeetingRecorder {
   private wake: any;
   private write = Promise.resolve();
   private saveFailed = false;
+  private pausedAt = 0;
+  private pausedTotal = 0;
+  private endedAt = 0;
+  private ending = false;
+  private speechWanted = false;
+  private speechEpoch = 0;
   constructor(private callbacks: RecorderCallbacks) {}
   elapsed() {
-    return this.stopped
-      ? this.offset
-      : this.offset + Math.max(0, performance.now() - this.startedAt);
+    return this.stopped ? this.offset : this.offset + this.takeElapsed();
+  }
+  private takeElapsed() {
+    return Math.max(
+      0,
+      (this.endedAt || this.pausedAt || performance.now()) -
+        this.startedAt -
+        this.pausedTotal,
+    );
+  }
+  pause() {
+    if (this.stopped || this.ending || this.media?.state !== "recording")
+      return;
+    this.media.pause();
+    this.pausedAt = performance.now();
+    this.speechEpoch++;
+    try {
+      this.speech?.stop();
+    } catch {}
+    this.callbacks.caption?.("");
+    this.callbacks.state("paused");
+  }
+  resume() {
+    if (this.stopped || this.ending || this.media?.state !== "paused") return;
+    this.media.resume();
+    this.pausedTotal += performance.now() - this.pausedAt;
+    this.pausedAt = 0;
+    this.callbacks.state("recording");
+    if (this.speechWanted) this.startSpeech();
   }
   async start(transcribe: boolean) {
     if (this.disposed || !this.stopped) return;
@@ -53,6 +88,7 @@ export class MeetingRecorder {
       });
       if (this.disposed) {
         stream.getTracks().forEach((t) => t.stop());
+        this.callbacks.state("idle");
         return;
       }
       this.stream = stream;
@@ -86,10 +122,7 @@ export class MeetingRecorder {
         if (!event.data.size) return;
         chunks.push(event.data);
         const n = sequence++;
-        const capturedDuration = Math.max(
-          0,
-          performance.now() - this.startedAt,
-        );
+        const capturedDuration = this.takeElapsed();
         this.write = this.write
           .then(async () => {
             await saveMeetingChunk(draftId, take.id, n, event.data);
@@ -114,7 +147,7 @@ export class MeetingRecorder {
       media.onstop = async () => {
         if (finalizing) return;
         finalizing = true;
-        const duration = Math.max(0, performance.now() - this.startedAt);
+        const duration = this.takeElapsed();
         this.offset = take.offsetMs + duration;
         this.stopped = true;
         this.cleanup();
@@ -172,6 +205,11 @@ export class MeetingRecorder {
         };
       });
       this.startedAt = performance.now();
+      this.pausedAt = 0;
+      this.pausedTotal = 0;
+      this.endedAt = 0;
+      this.ending = false;
+      this.speechWanted = transcribe;
       this.stopped = false;
       media.start(5000);
       this.callbacks.change((d) => ({
@@ -221,6 +259,7 @@ export class MeetingRecorder {
     }
   }
   private startSpeech() {
+    const epoch = ++this.speechEpoch;
     const Recognition =
       (window as any).SpeechRecognition ||
       (window as any).webkitSpeechRecognition;
@@ -231,7 +270,13 @@ export class MeetingRecorder {
       return;
     }
     const launch = () => {
-      if (this.stopped || this.disposed) return;
+      if (
+        this.stopped ||
+        this.disposed ||
+        this.pausedAt ||
+        epoch !== this.speechEpoch
+      )
+        return;
       const recognition = new Recognition();
       this.speech = recognition;
       const session = uid();
@@ -255,6 +300,7 @@ export class MeetingRecorder {
         };
       };
       recognition.onresult = (event: any) => {
+        if (epoch !== this.speechEpoch) return;
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const result = event.results[i];
           if (!anchors.has(i)) {
@@ -267,8 +313,9 @@ export class MeetingRecorder {
               },
             );
           }
-          if (!result.isFinal) continue;
           const text = String(result[0]?.transcript || "").trim();
+          if (text) this.callbacks.caption?.(text);
+          if (!result.isFinal) continue;
           if (!text) continue;
           const anchor = anchors.get(i)!;
           const block: MeetingText = {
@@ -305,7 +352,13 @@ export class MeetingRecorder {
         );
       };
       recognition.onend = () => {
-        if (allowed && !this.stopped && !this.disposed)
+        if (
+          allowed &&
+          !this.stopped &&
+          !this.disposed &&
+          !this.pausedAt &&
+          epoch === this.speechEpoch
+        )
           this.timer = setTimeout(launch, 400);
       };
       try {
@@ -320,7 +373,9 @@ export class MeetingRecorder {
     launch();
   }
   stop() {
-    if (this.stopped) return;
+    if (this.stopped || this.ending) return;
+    this.ending = true;
+    this.endedAt = this.pausedAt || performance.now();
     this.callbacks.state("stopping");
     try {
       this.speech?.stop();
@@ -342,6 +397,7 @@ export class MeetingRecorder {
     void this.audioContext?.close().catch(() => {});
     void this.wake?.release().catch(() => {});
     this.callbacks.meter(0);
+    this.callbacks.caption?.("");
   }
   dispose() {
     this.disposed = true;

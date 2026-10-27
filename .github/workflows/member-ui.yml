@@ -24,6 +24,7 @@ on:
       - 'tests/secretariat*'
       - 'services/meeting*'
       - 'components/Secretariat.tsx'
+      - 'components/SecretariatAdvanced.tsx'
       - 'components/CaptureAssistant.tsx'
       - 'services/taskCapture*'
       - 'tests/task-capture*'
@@ -69,6 +70,8 @@ jobs:
         run: node tests/secretariat-ui.mjs
       - name: Verify corrected and confirmed task capture
         run: node tests/task-capture-ui.mjs
+      - name: Verify compact mobile secretary and multi-audio flow
+        run: node tests/secretariat-mobile-ui.mjs
       - name: Save screenshots
         if: always()
         uses: actions/upload-artifact@v4

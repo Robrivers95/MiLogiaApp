@@ -1,33 +1,100 @@
 import React, { useEffect, useRef, useState } from "react";
-import CaptureAssistant from "./CaptureAssistant";
 import type { User } from "../types";
-import {
+import type {
   MeetingDraft,
-  MeetingSpeaker,
   MeetingField,
-  MeetingText,
-  canUseSecretariat,
+  MeetingSpeaker,
+  AudioTake,
+} from "../services/meetingModel";
+import {
   newMeeting,
-  uid,
+  canUseSecretariat,
   clock,
-  parseTranscript,
-  meetingPrompt,
+  uid,
+  speakerAt,
   meetingTextExport,
-  restoreMeetingBackup,
 } from "../services/meetingModel";
 import {
   saveMeetingLocal,
   listMeetingsLocal,
   meetingAudio,
   downloadMeetingFile,
-  deleteMeetingLocal,
 } from "../services/meetingLocal";
 import { MeetingRecorder } from "../services/meetingRecorder";
 import { meetingCloud } from "../services/meetingCloud";
-const input =
-  "w-full rounded-lg border border-logia-700 bg-logia-900 p-3 text-base";
+import {
+  meetingAudioCloud,
+  audioFingerprint,
+} from "../services/meetingAudioCloud";
+import CaptureAssistant from "./CaptureAssistant";
+import SecretariatAdvanced from "./SecretariatAdvanced";
+const field =
+  "w-full min-w-0 rounded-lg border border-logia-700 bg-logia-900 p-3 text-base";
 const button =
-  "rounded-lg border border-logia-700 p-3 text-sm disabled:opacity-40";
+  "rounded-lg border border-logia-700 px-3 py-3 text-sm font-semibold disabled:opacity-40";
+const transcript = (d: MeetingDraft) =>
+  d.texts
+    .map(
+      (t) =>
+        `${t.atMs === null ? "" : `[${clock(t.atMs)}] `}${t.speaker?.name || "Sin identificar"}: ${t.text}`,
+    )
+    .join("\n\n");
+function SavedAudio({
+  draftId,
+  take,
+  index,
+}: {
+  draftId: string;
+  take: AudioTake;
+  index: number;
+}) {
+  const [url, setUrl] = useState(""),
+    [error, setError] = useState("");
+  useEffect(() => {
+    let canceled = false,
+      url = "";
+    void meetingAudio(draftId, take.id, take.mime)
+      .then((blob) => {
+        if (!blob.size)
+          throw Error("No hay audio disponible en este dispositivo.");
+        if (canceled) return;
+        url = URL.createObjectURL(blob);
+        setUrl(url);
+      })
+      .catch((e) => setError(e.message));
+    return () => {
+      canceled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [draftId, take.id, take.mime]);
+  return (
+    <div className="space-y-2 border-t border-logia-700 pt-3">
+      <p className="text-sm">
+        Audio {index + 1} · {clock(take.durationMs)}{" "}
+        {!take.complete && "· Recuperado: revisa que se escuche"}
+      </p>
+      {error && <p className="text-amber-300 text-sm">{error}</p>}
+      {url && (
+        <>
+          <audio
+            controls
+            preload="metadata"
+            src={url}
+            className="w-full"
+            aria-label={`Escuchar audio ${index + 1}`}
+          />
+          <a
+            className="inline-block text-sm text-indigo-300 underline p-1"
+            href={url}
+            download={`audio-${index + 1}.${take.mime.includes("mp4") ? "m4a" : "webm"}`}
+          >
+            Descargar audio {index + 1}
+          </a>
+        </>
+      )}
+    </div>
+  );
+}
 export default function Secretariat({
   user,
   suspended = false,
@@ -35,160 +102,182 @@ export default function Secretariat({
   user: User;
   suspended?: boolean;
 }) {
-  const [taskCapture,setTaskCapture] = useState(false);
-  const [draft, setDraft] = useState<MeetingDraft>();
-  const draftRef = useRef<MeetingDraft>();
-  const [drafts, setDrafts] = useState<MeetingDraft[]>([]);
-  const [members, setMembers] = useState<User[]>([]);
-  const [search, setSearch] = useState("");
-  const [onlyPresent, setOnlyPresent] = useState(false);
-  const [tab, setTab] = useState("record");
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [saved, setSaved] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [ready, setReady] = useState(false);
+  const [draft, setDraft] = useState<MeetingDraft>(),
+    [drafts, setDrafts] = useState<MeetingDraft[]>([]),
+    [ready, setReady] = useState(false);
+  const dref = useRef<MeetingDraft>(),
+    alive = useRef(true),
+    saving = useRef(Promise.resolve()),
+    saveTimer = useRef<any>(),
+    recorder = useRef<MeetingRecorder>(),
+    flight = useRef(false);
   const [status, setStatus] = useState<
-    "idle" | "starting" | "recording" | "stopping"
-  >("idle");
-  const statusRef = useRef(status);
+      "idle" | "starting" | "recording" | "paused" | "stopping"
+    >("idle"),
+    statusRef = useRef(status);
   statusRef.current = status;
-  const [elapsed, setElapsed] = useState(0);
-  const [level, setLevel] = useState(0);
-  const [dictate, setDictate] = useState(false);
-  const [selected, setSelected] = useState<MeetingSpeaker | null>(null);
-  const [paste, setPaste] = useState("");
-  const [backup, setBackup] = useState<{ take: any; blob: Blob }>();
-  const [review, setReview] = useState(false);
-  const [aiReady, setAiReady] = useState<boolean | null>(null);
-  const checkAI = async () => {
-    setAiReady(null);
-    try {
-      setAiReady(await meetingCloud.aiStatus(user.groupId));
-    } catch {
-      setAiReady(false);
-    }
-  };
-  const [importOffset, setImportOffset] = useState("0");
-  const [copyPrompt, setCopyPrompt] = useState(false);
-  const recorder = useRef<MeetingRecorder>();
-  const saveTimer = useRef<ReturnType<typeof setTimeout>>();
-  const saving = useRef(Promise.resolve());
-  const alive = useRef(true);
+  const [elapsed, setElapsed] = useState(0),
+    [level, setLevel] = useState(0),
+    [captions, setCaptions] = useState(false),
+    [caption, setCaption] = useState("");
+  const [tab, setTab] = useState<"record" | "transcript" | "report">("record"),
+    [notice, setNotice] = useState(""),
+    [error, setError] = useState(""),
+    [busy, setBusy] = useState(false),
+    [upload, setUpload] = useState(0);
+  const [people, setPeople] = useState<User[]>([]),
+    [speaker, setSpeaker] = useState<MeetingSpeaker | null>(null),
+    [speakerSheet, setSpeakerSheet] = useState(false),
+    [search, setSearch] = useState(""),
+    [onlyPresent, setOnlyPresent] = useState(false),
+    [library, setLibrary] = useState(false);
+  const [job, setJob] = useState<any>(),
+    [now, setNow] = useState(Date.now()),
+    [audioReady, setAudioReady] = useState<boolean | null>(null),
+    [editing, setEditing] = useState(false),
+    [taskCapture, setTaskCapture] = useState(false),
+    [advanced, setAdvanced] = useState(false),
+    [backup, setBackup] = useState<{ take: AudioTake; blob: Blob }>();
+  const [review, setReview] = useState(false),
+    [audioListOpen, setAudioListOpen] = useState(false);
+  const advancedRef = useRef(false);
+  advancedRef.current = advanced;
+  const allowed = canUseSecretariat(user),
+    active = status !== "idle";
+  const timedOut =
+    job &&
+    ["preparing", "transcribing"].includes(job.state) &&
+    now - Number(job.startedAt) > 600000;
+  const processing =
+    !!draft?.audioJob?.started &&
+    !draft.audioJob.applied &&
+    !["failed", "missing"].includes(job?.state) &&
+    !timedOut;
+  const waitingToConfirm =
+    !!draft?.audioJob &&
+    !draft.audioJob.applied &&
+    job?.state !== "failed" &&
+    !timedOut;
+  const locked = active || busy || processing || waitingToConfirm || suspended;
   const persist = () => {
-    const d = draftRef.current;
-    if (!d) return Promise.resolve();
-    const operation = saving.current
+    const value = dref.current;
+    if (!value) return Promise.resolve();
+    const next = saving.current
       .catch(() => {})
-      .then(() => saveMeetingLocal(d))
+      .then(() => saveMeetingLocal(value))
       .then(() => {
-        if (alive.current) {
-          setSaved("Guardado en este dispositivo");
+        if (alive.current)
           setDrafts((list) =>
-            [d, ...list.filter((item) => item.id !== d.id)].sort(
+            [value, ...list.filter((d) => d.id !== value.id)].sort(
               (a, b) => b.updatedAt - a.updatedAt,
             ),
           );
-        }
       });
-    saving.current = operation;
-    return operation;
+    saving.current = next;
+    return next;
   };
   const change = (edit: (d: MeetingDraft) => MeetingDraft) => {
-    const old = draftRef.current;
+    const old = dref.current;
     if (!old) return;
-    const next = edit(old);
-    if (next === old) return;
-    const updated = {
-      ...next,
+    const next = {
+      ...edit(old),
       updatedAt: Date.now(),
       revision: old.revision + 1,
-      reviewedAt: undefined,
     };
-    delete updated.reviewedAt;
-    draftRef.current = updated;
-    setDraft(updated);
-    setReview(false);
-    setSaved("Guardando…");
+    delete next.reviewedAt;
+    dref.current = next;
+    if (alive.current) {
+      setDraft(next);
+      setReview(false);
+    }
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(
       () =>
         void persist().catch((e) => {
-          setSaved("No guardado");
-          setError(e.message);
+          if (alive.current) setError(e.message);
         }),
-      300,
+      250,
     );
   };
-  const open = (value: MeetingDraft) => {
-    draftRef.current = value;
-    setDraft(value);
-    setSelected(null);
-    setElapsed(value.durationMs || 0);
+  const open = (d: MeetingDraft) => {
+    dref.current = d;
+    setDraft(d);
+    setElapsed(d.durationMs || 0);
+    setSpeaker(speakerAt(d.marks, d.durationMs) || null);
+    setJob(undefined);
     setError("");
     setNotice("");
-    setReview(false);
-    setBackup(undefined);
+    setLibrary(false);
     setTab("record");
+    setTaskCapture(false);
+    setBackup(undefined);
+    setOnlyPresent(false);
+    setSearch("");
+  };
+  const checkAI = async () => {
+    setAudioReady(null);
+    try {
+      const value = await meetingAudioCloud.status(user.groupId);
+      if (alive.current) setAudioReady(value);
+    } catch {
+      if (alive.current) setAudioReady(false);
+    }
   };
   useEffect(() => {
-    let canceled = false;
     alive.current = true;
-    let stopAI = false;
-    meetingCloud
-      .aiStatus(user.groupId)
-      .then((value) => {
-        if (!stopAI) setAiReady(value);
-      })
-      .catch(() => {
-        if (!stopAI) setAiReady(false);
-      });
-    (async () => {
-      try {
-        const list = await listMeetingsLocal(user.uid, user.groupId);
+    let canceled = false;
+    if (!allowed) return;
+    void listMeetingsLocal(user.uid, user.groupId)
+      .then((list) => {
         if (canceled) return;
         setDrafts(list);
+        if (list[0]) open(list[0]);
         setReady(true);
-        const interrupted = list.filter((d) =>
-          d.takes.some((t) => !t.complete),
-        );
-        if (interrupted.length)
-          setNotice(
-            "Hay un audio que no alcanzó a cerrarse. Ábrelo y descarga los fragmentos recuperados para revisarlos.",
-          );
-      } catch (e) {
-        if (!canceled) setError((e as Error).message);
-      }
-      try {
-        const people = await meetingCloud.members(user.groupId);
-        if (!canceled) setMembers(people);
-      } catch {
-        if (!canceled)
-          setNotice(
-            "No se pudo cargar la lista de miembros. Puedes grabar con turnos sin identificar y asignarlos después.",
-          );
-      }
-    })();
+      })
+      .catch((e) => {
+        if (!canceled) setError(e.message);
+      });
+    void meetingCloud
+      .members(user.groupId)
+      .then((m) => {
+        if (!canceled) setPeople(m);
+      })
+      .catch(() => {
+        if (!canceled) setNotice("Puedes grabar sin elegir quién habla.");
+      });
+    void checkAI();
     return () => {
       canceled = true;
-      stopAI = true;
       alive.current = false;
       clearTimeout(saveTimer.current);
       recorder.current?.dispose();
-      void persist().catch(() => {});
+      if (!advancedRef.current) void persist().catch(() => {});
     };
-  }, [user.uid, user.groupId]);
+  }, [user.uid, user.groupId, allowed]);
+  useEffect(() => {
+    if (status !== "recording") return;
+    const timer = setInterval(
+      () => setElapsed(recorder.current?.elapsed() || 0),
+      250,
+    );
+    return () => clearInterval(timer);
+  }, [status]);
+  useEffect(() => {
+    if (!processing) return;
+    const timer = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(timer);
+  }, [processing]);
   useEffect(() => {
     const guard = (event: Event) => {
-      if (statusRef.current !== "idle") {
+      if (statusRef.current !== "idle" || flight.current) {
         event.preventDefault();
         setError(
-          "Pausa o termina la grabación antes de cambiar de sección o cerrar sesión.",
+          "Termina el audio antes de salir. Puedes grabar otro después.",
         );
       }
     };
     const unload = (event: BeforeUnloadEvent) => {
-      if (statusRef.current !== "idle") {
+      if (statusRef.current !== "idle" || flight.current) {
         event.preventDefault();
         event.returnValue = "";
       }
@@ -201,1218 +290,1068 @@ export default function Secretariat({
     };
   }, []);
   useEffect(() => {
-    if (status !== "recording") return;
-    const timer = setInterval(
-      () => setElapsed(recorder.current?.elapsed() || 0),
-      250,
+    const current = draft?.audioJob;
+    if (advanced || !current?.started || !allowed) return;
+    return meetingAudioCloud.watch(
+      current.id,
+      (value) => {
+        if (!alive.current || dref.current?.audioJob?.id !== current.id) return;
+        setJob(value);
+        if (value.state === "done" && !dref.current.audioJob.applied) {
+          const result = value.result;
+          if (
+            !Array.isArray(result?.texts) ||
+            !Array.isArray(result?.fields) ||
+            typeof result.originalTranscript !== "string"
+          ) {
+            setError("No se pudo leer el resultado. Conserva los audios.");
+            return;
+          }
+          const ids = new Set(value.input?.fields?.map((f: any) => f.id) || []);
+          change((d) => ({
+            ...d,
+            texts: result.texts,
+            originalTranscript: result.originalTranscript,
+            transcriptSource: "audio",
+            fields: d.fields.map((f) => {
+              const found = result.fields.find((r: any) => r.id === f.id);
+              return found &&
+                ids.has(f.id) &&
+                !f.manualOnly &&
+                f.origin !== "manual"
+                ? { ...f, ...found, origin: "ai" }
+                : f;
+            }),
+            processedTakeIds: d.takes.map((t) => t.id),
+            audioJob: { ...d.audioJob!, applied: true },
+          }));
+          void persist().catch((e) => setError(e.message));
+          setNotice(
+            "Transcripción original e informe guardados por separado. Revisa el borrador.",
+          );
+          setTab("report");
+        }
+        if (value.state === "failed")
+          setError(
+            value.error ||
+              "No se pudo completar el proceso. Los audios se conservan.",
+          );
+      },
+      (e) => {
+        if (alive.current) {
+          setError(e.message);
+          setJob({ state: "missing" });
+        }
+      },
     );
-    return () => clearInterval(timer);
-  }, [status]);
-  if (!canUseSecretariat(user))
-    return (
-      <p className="p-5 text-red-300">
-        Este apartado requiere autorización de Secretario, Admin o Master.
-      </p>
-    );
-  const locked = busy || status !== "idle" || suspended;
-  const refresh = async () =>
-    setDrafts(await listMeetingsLocal(user.uid, user.groupId));
-  const make = async () => {
+  }, [draft?.audioJob?.id, draft?.audioJob?.started, allowed, advanced]);
+  const action = async (work: () => Promise<void>) => {
+    if (flight.current || suspended) return;
+    flight.current = true;
+    setBusy(true);
+    setError("");
     try {
+      await work();
+    } catch (e) {
+      if (alive.current) setError((e as Error).message);
+    } finally {
+      flight.current = false;
+      if (alive.current) setBusy(false);
+    }
+  };
+  const make = () =>
+    action(async () => {
       await persist();
       const next = newMeeting(user.uid, user.groupId);
       await saveMeetingLocal(next);
       open(next);
-      await refresh();
+    });
+  const start = async () => {
+    if (statusRef.current !== "idle" || locked || !dref.current) return;
+    setError("");
+    setNotice("");
+    setCaption("");
+    recorder.current?.dispose();
+    const r = new MeetingRecorder({
+      draft: () => dref.current!,
+      change,
+      persist,
+      meter: (v) => {
+        if (alive.current) setLevel(v);
+      },
+      caption: (t) => {
+        if (alive.current) setCaption(t.slice(-180));
+      },
+      warning: (t) => {
+        if (alive.current) setNotice(t);
+      },
+      backup: (take, blob) => {
+        if (alive.current) setBackup({ take, blob });
+      },
+      state: (value) => {
+        if (recorder.current !== r) return;
+        statusRef.current = value;
+        if (!alive.current) return;
+        setStatus(value);
+        if (value === "paused") setElapsed(recorder.current?.elapsed() || 0);
+        if (value === "idle") {
+          setElapsed(dref.current?.durationMs || 0);
+          setLevel(0);
+          if (dref.current?.takes.length)
+            setNotice(
+              (current) =>
+                current ||
+                "Audio guardado. Puedes grabar otro o procesar la reunión.",
+            );
+          const d = dref.current;
+          if (
+            d &&
+            d.transcriptSource !== "audio" &&
+            d.texts.some((t) => t.source === "dictation")
+          ) {
+            change((old) => ({
+              ...old,
+              originalTranscript: transcript(old),
+              transcriptSource: "browser",
+            }));
+            void persist().catch((e) => setError(e.message));
+          }
+        }
+      },
+    });
+    recorder.current = r;
+    change((d) => ({
+      ...d,
+      marks: [...d.marks, { id: uid(), atMs: d.durationMs || 0, speaker }],
+    }));
+    try {
+      await r.start(captions);
     } catch (e) {
       setError((e as Error).message);
     }
   };
-  const memberSpeaker = (id: string) => {
-    const u = members.find((m) => m.uid === id);
-    return u ? { uid: u.uid, name: u.name } : null;
-  };
-  const mark = (speaker: MeetingSpeaker | null) => {
-    setSelected(speaker);
-    if (status === "recording")
+  const mark = (person: User | null) => {
+    const value = person ? { uid: person.uid, name: person.name } : null;
+    setSpeaker(value);
+    if (["recording", "paused"].includes(status))
       change((d) => ({
         ...d,
         marks: [
           ...d.marks,
-          { id: uid(), atMs: recorder.current?.elapsed() || 0, speaker },
+          {
+            id: uid(),
+            atMs: recorder.current?.elapsed() || d.durationMs,
+            speaker: value,
+          },
         ],
       }));
+    setSpeakerSheet(false);
   };
-  const start = async () => {
-    setError("");
-    setNotice("");
-    setCopyPrompt(false);
-    const d = draftRef.current;
-    if (!d) return;
-    recorder.current?.dispose();
-    const r = new MeetingRecorder({
-      draft: () => draftRef.current!,
-      change,
-      warning: setNotice,
-      state: (value) => {
-        statusRef.current = value;
-        setStatus(value);
-      },
-      meter: setLevel,
-      backup: (take, blob) => setBackup({ take, blob }),
-      persist,
-    });
-    recorder.current = r;
-    change((old) => ({
-      ...old,
-      marks: [
-        ...old.marks,
-        { id: uid(), atMs: old.durationMs || 0, speaker: selected },
-      ],
-    }));
-    try {
-      await r.start(dictate);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-  const importText = (text: string) => {
-    try {
-      const blocks = parseTranscript(
-        text,
-        draftRef.current!.marks,
-        Number(importOffset),
-      );
-      if (draftRef.current!.texts.length + blocks.length > 1200)
-        throw Error("Hay demasiados segmentos; divide la transcripción.");
+  const process = () =>
+    action(async () => {
+      const d = dref.current!;
+      const fingerprint = audioFingerprint(d),
+        failed = job?.state === "failed" || timedOut;
+      const previous = d.audioJob;
       if (
-        draftRef.current!.texts.reduce((n, t) => n + t.text.length, 0) +
-          text.length >
-        120000
-      )
-        throw Error("La transcripción supera el límite de esta acta.");
-      change((d) => ({ ...d, texts: [...d.texts, ...blocks] }));
-      setPaste("");
-      setNotice(
-        "Texto añadido. El texto sin tiempos requiere asignar el hablante manualmente. Los tiempos SRT/VTT se comparan con el inicio total de la grabación.",
-      );
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-  const fieldChange = (id: string, patch: Partial<MeetingField>) =>
-    change((d) => ({
-      ...d,
-      fields: d.fields.map((f) => (f.id === id ? { ...f, ...patch } : f)),
-    }));
-  const analyze = async () => {
-    const snapshot = draftRef.current!;
-    if (!snapshot.texts.some((t) => t.text.trim())) {
-      setError("Primero añade o transcribe las intervenciones.");
-      return;
-    }
-    if (!snapshot.fields.some((f) => !f.manualOnly && f.origin !== "manual")) {
-      setError(
-        "Añade al menos un campo para extraer. Los campos que ya editaste manualmente se conservan.",
-      );
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      await persist();
-      const result = await meetingCloud.organize(snapshot);
-      if (draftRef.current!.revision !== snapshot.revision)
-        throw Error(
-          "El acta cambió durante el análisis. Repite el análisis para usar la versión actual.",
-        );
-      const allowed = new Set(
-        snapshot.fields
-          .filter((f) => !f.manualOnly && f.origin !== "manual")
-          .map((f) => f.id),
-      );
-      const evidence = new Set(snapshot.texts.map((t) => t.id));
-      if (
-        !Array.isArray(result.fields) ||
-        result.fields.some(
-          (f) =>
-            !allowed.has(f.id) ||
-            typeof f.value !== "string" ||
-            !Array.isArray(f.evidenceIds) ||
-            f.evidenceIds.some((id) => !evidence.has(id)),
+        failed &&
+        !window.confirm(
+          "Este intento no terminó. Volver a analizar puede consumir datos y tokens nuevamente. ¿Reintentar?",
         )
       )
-        throw Error(
-          "La respuesta de IA no tiene el formato esperado. Se conservaron tus datos.",
-        );
+        return;
+      const requestId =
+        previous?.fingerprint === fingerprint && !failed ? previous.id : uid();
+      setUpload(0);
+      change((old) => ({
+        ...old,
+        audioJob: { id: requestId, fingerprint, started: false },
+      }));
+      await persist();
+      await meetingAudioCloud.start(d, requestId, (n) => {
+        if (alive.current) setUpload(n);
+      });
+      change((old) => ({
+        ...old,
+        audioJob: { id: requestId, fingerprint, started: true },
+      }));
+      await persist();
+      setJob({ state: "queued" });
+    });
+  const updateReport = () =>
+    action(async () => {
+      const snapshot = dref.current!;
+      if (!snapshot.texts.length)
+        throw Error("Primero obtén una transcripción.");
+      const result = await meetingCloud.organize(snapshot);
       change((d) => ({
         ...d,
         fields: d.fields.map((f) => {
           const value = result.fields.find((r) => r.id === f.id);
-          return value && allowed.has(f.id)
+          return value && !f.manualOnly && f.origin !== "manual"
             ? { ...f, ...value, origin: "ai" }
             : f;
         }),
       }));
       await persist();
-      setNotice(
-        "Borrador de IA listo. Revisa nombres, comentarios, acuerdos y compromisos antes de aprobar.",
-      );
-    } catch (e) {
-      setError((e as Error).message);
-      setCopyPrompt(true);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const visible = members.filter(
-    (m) =>
-      (!onlyPresent || draft?.presentUids.includes(m.uid)) &&
-      m.name.toLocaleLowerCase("es").includes(search.toLocaleLowerCase("es")),
+      setNotice("Informe actualizado. La transcripción original se conserva.");
+    });
+  const patchField = (id: string, patch: Partial<MeetingField>) =>
+    change((d) => ({
+      ...d,
+      fields: d.fields.map((f) => (f.id === id ? { ...f, ...patch } : f)),
+    }));
+  const saveCloud = () =>
+    action(async () => {
+      const version = await meetingCloud.save(dref.current!);
+      const next = { ...dref.current!, cloudVersion: version };
+      dref.current = next;
+      setDraft(next);
+      await persist();
+      setNotice("Transcripción e informe guardados en la logia.");
+    });
+  const exportText = (value: string, name: string) =>
+    downloadMeetingFile(
+      new Blob([value], { type: "text/plain;charset=utf-8" }),
+      `${name}-${draft?.date}.txt`,
+    );
+  if (!allowed)
+    return (
+      <p className="p-4">
+        Este apartado requiere Secretario, Admin o Admin Master.
+      </p>
+    );
+  if (advanced)
+    return (
+      <SecretariatAdvanced
+        user={user}
+        suspended={suspended}
+        onSimple={(value) => {
+          setAdvanced(false);
+          if (value) open(value);
+          void listMeetingsLocal(user.uid, user.groupId).then(setDrafts);
+        }}
+      />
+    );
+  const speechAvailable =
+    typeof window !== "undefined" &&
+    !!(
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition
+    );
+  const visible = people.filter(
+    (p) =>
+      (!onlyPresent || draft?.presentUids.includes(p.uid)) &&
+      p.name.toLocaleLowerCase("es").includes(search.toLocaleLowerCase("es")),
   );
+  const reportExists = draft?.fields.some((f) => f.value.trim());
+  const allAudiosProcessed =
+    !!draft?.takes.length &&
+    draft.takes.every((t) => draft.processedTakeIds?.includes(t.id));
   return (
-    <div className="p-4 space-y-4 pb-8">
-      <div className="flex flex-wrap justify-between gap-3 items-center">
-        <div>
-          <h2 className="text-2xl font-bold">Secretaría · Actas de tenida</h2>
-          <p className="text-sm text-gray-400">
-            Audio, turnos, transcripción y un formato que tú defines.
-          </p>
+    <div className="p-3 space-y-3 pb-6" aria-label="Secretaría simple">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-bold text-lg">Secretaría y actas</h2>
+        <div className="flex gap-1">
+          <button
+            className={button}
+            disabled={locked || !ready}
+            onClick={() => setLibrary(true)}
+          >
+            Mis reuniones
+          </button>
+          <button
+            className={button}
+            disabled={locked || !ready}
+            onClick={() => void make()}
+          >
+            Nueva
+          </button>
         </div>
-        <button
-          className={button}
-          disabled={!ready || locked}
-          onClick={() => void make()}
-        >
-          Nueva tenida
-        </button>
       </div>
       {error && (
         <p
           role="alert"
-          className="p-3 bg-red-950/60 text-red-200 rounded-lg break-words"
+          className="text-red-200 text-sm bg-red-950/50 rounded-lg p-3 break-words"
         >
           {error}
         </p>
       )}
       {notice && (
-        <p
+        <div
           role="status"
-          className="p-3 bg-logia-800 border border-logia-700 text-gray-200 rounded-lg text-sm"
+          className="flex gap-2 items-start text-sm text-emerald-200"
         >
-          {notice}
-        </p>
-      )}
-      <details className="bg-logia-800 border border-logia-700 rounded-lg p-3">
-        <summary className="cursor-pointer font-semibold">
-          Mis borradores en este dispositivo ({drafts.length})
-        </summary>
-        <div className="space-y-2 mt-3">
-          {drafts.map((item) => (
-            <div key={item.id} className="flex gap-2">
-              <button
-                disabled={busy || status !== "idle"}
-                className={button + " flex-1 text-left min-w-0 break-words"}
-                onClick={async () => {
-                  try {
-                    await persist();
-                    const items = await listMeetingsLocal(
-                      user.uid,
-                      user.groupId,
-                    );
-                    const latest = items.find((d) => d.id === item.id);
-                    if (latest) open(latest);
-                  } catch (e) {
-                    setError((e as Error).message);
-                  }
-                }}
-              >
-                {item.date} · {item.title}
-              </button>
-              <button
-                disabled={locked}
-                className={button}
-                aria-label={`Eliminar borrador ${item.title}`}
-                onClick={async () => {
-                  if (
-                    !confirm(
-                      "¿Eliminar el borrador y su audio de este dispositivo? Las copias descargadas o guardadas en la logia permanecen.",
-                    )
-                  )
-                    return;
-                  try {
-                    await deleteMeetingLocal(item.id);
-                    if (draft?.id === item.id) {
-                      draftRef.current = undefined;
-                      setDraft(undefined);
-                    }
-                    await refresh();
-                  } catch (e) {
-                    setError((e as Error).message);
-                  }
-                }}
-              >
-                Eliminar
-              </button>
-            </div>
-          ))}
+          <p className="flex-1">{notice}</p>
           <button
-            disabled={locked}
-            className={button}
-            onClick={() => void refresh().catch((e) => setError(e.message))}
+            className="px-2"
+            aria-label="Cerrar aviso"
+            onClick={() => setNotice("")}
           >
-            Actualizar borradores
+            ×
           </button>
-          <label className="block text-sm mt-3">
-            Restaurar respaldo de acta (JSON)
-            <input
-              aria-label="Restaurar respaldo de acta"
-              type="file"
-              accept=".json,application/json"
-              disabled={locked || !ready}
-              className="block w-full mt-2 text-sm"
-              onChange={async (e) => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                try {
-                  if (f.size > 1000000) throw Error("El respaldo supera 1 MB.");
-                  await persist();
-                  const restored = restoreMeetingBackup(
-                    await f.text(),
-                    user.uid,
-                    user.groupId,
-                  );
-                  await saveMeetingLocal(restored);
-                  open(restored);
-                  await refresh();
-                  setNotice(
-                    "Se restauró una copia del texto, formato y turnos. Los archivos de audio se conservan por separado.",
-                  );
-                } catch (error) {
-                  setError((error as Error).message);
-                }
-                e.target.value = "";
-              }}
-            />
-          </label>
         </div>
-      </details>
+      )}
+      {suspended && <p className="text-amber-300 text-sm">Solo lectura.</p>}
       {!draft ? (
-        <section className="bg-logia-800 rounded-xl p-5 space-y-3">
+        <div className="rounded-xl border border-logia-700 bg-logia-800 p-5 space-y-4">
           <p>
-            Crea una tenida para comenzar. El audio se conserva en este
-            dispositivo; descarga un respaldo al terminar.
+            Graba la reunión. Al terminar podrás obtener su transcripción y un
+            informe, y confirmar las tareas que salgan de ahí.
           </p>
           <button
-            disabled={busy}
-            className={button}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                const items = await meetingCloud.list(user.groupId);
-                if (!items.length)
-                  setNotice("Todavía no hay actas guardadas en la logia.");
-                const local = await listMeetingsLocal(user.uid, user.groupId);
-                for (const item of items)
-                  if (!local.some((d) => d.id === item.id))
-                    await saveMeetingLocal({
-                      ...item,
-                      ownerUid: user.uid,
-                      takes: [],
-                    });
-                if (items.length)
-                  setNotice(
-                    "Actas nuevas traídas. Los borradores locales existentes se conservaron para proteger tus cambios.",
-                  );
-                await refresh();
-              } catch {
-                setError(
-                  "No se pudo consultar el archivo de la logia. El acceso del secretario y las reglas deben estar publicados. Puedes trabajar con borradores locales.",
-                );
-              } finally {
-                setBusy(false);
-              }
-            }}
+            className={button + " bg-indigo-700 w-full"}
+            disabled={!ready || suspended || busy}
+            onClick={() => void make()}
           >
-            Traer actas de la logia
+            Nueva reunión
           </button>
-        </section>
+        </div>
       ) : (
         <>
-          <div className="bg-logia-800 p-4 rounded-xl border border-logia-700 space-y-3">
-            <label className="block text-sm">
-              Título de la tenida
-              <input
-                aria-label="Título de la tenida"
-                className={input}
-                value={draft.title}
-                maxLength={160}
-                disabled={locked}
-                onChange={(e) =>
-                  change((d) => ({ ...d, title: e.target.value }))
-                }
-              />
-            </label>
-            <label className="block text-sm">
-              Fecha de la tenida
-              <input
-                aria-label="Fecha de la tenida"
-                type="date"
-                className={input}
-                value={draft.date}
-                disabled={locked}
-                onChange={(e) =>
-                  change((d) => ({
-                    ...d,
-                    date: e.target.value,
-                    presentUids: [],
-                  }))
-                }
-              />
-            </label>
-            <p className="text-xs text-gray-400">
-              {saved || "Borrador local"}
-              {draft.reviewedAt ? " · Revisado" : " · Pendiente de revisión"}
-            </p>
-          </div>
-          <div
-            role="tablist"
-            aria-label="Preparar acta"
-            className="grid grid-cols-3 gap-2"
+          <nav
+            className="grid grid-cols-3 rounded-xl border border-logia-700 overflow-hidden"
+            aria-label="Pasos de secretaría"
           >
-            {[
-              ["record", "Grabar y turnos"],
-              ["text", "Transcripción"],
-              ["format", "Formato y acta"],
-            ].map(([id, label]) => (
+            {(
+              [
+                ["record", "Grabar"],
+                ["transcript", "Transcripción"],
+                ["report", "Informe y tareas"],
+              ] as const
+            ).map(([id, label]) => (
               <button
                 key={id}
-                role="tab"
-                aria-selected={tab === id}
                 className={
-                  button +
+                  "px-1 py-3 text-sm " +
                   (tab === id
-                    ? " bg-indigo-600 font-semibold"
-                    : " bg-logia-800")
+                    ? "bg-indigo-800 text-white"
+                    : "bg-logia-800 text-gray-300")
                 }
+                aria-current={tab === id ? "step" : undefined}
                 onClick={() => setTab(id)}
               >
                 {label}
               </button>
             ))}
-          </div>
+          </nav>
           {tab === "record" && (
-            <div className="space-y-4">
-              <section className="bg-logia-800 p-4 rounded-xl border border-logia-700 space-y-3">
-                <p className="text-3xl font-mono" aria-label="Tiempo de audio">
-                  {clock(elapsed)}
-                </p>
-                <div
-                  role="meter"
-                  aria-label="Nivel del micrófono"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(level)}
-                  className="h-2 bg-logia-900 rounded overflow-hidden"
-                >
-                  <div
-                    className="h-full bg-green-400"
-                    style={{ width: `${level}%` }}
-                  />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    className={button + " bg-indigo-600 font-semibold"}
-                    disabled={locked || !ready}
-                    onClick={() => void start()}
-                  >
-                    {draft.takes.length
-                      ? "Continuar grabación"
-                      : "Grabar audio"}
-                  </button>
-                  <button
-                    className={button + " bg-red-950/60"}
-                    disabled={status !== "recording"}
-                    onClick={() => recorder.current?.stop()}
-                  >
-                    Pausar y guardar tramo
-                  </button>
-                  <span role="status" className="p-3 text-sm">
-                    {status === "recording"
-                      ? "Grabando"
-                      : status === "starting"
-                        ? "Preparando micrófono…"
-                        : status === "stopping"
-                          ? "Cerrando y guardando audio…"
-                          : "Audio detenido"}
+            <>
+              <div
+                className="bg-logia-800 border border-logia-700 rounded-xl p-4 space-y-3"
+                aria-label="Grabadora"
+                role="region"
+              >
+                <div className="flex justify-between text-xs text-gray-400 gap-2">
+                  <span className="truncate">
+                    {draft.title} · {draft.date}
+                  </span>
+                  <span className="shrink-0">
+                    {draft.takes.length} audio(s)
                   </span>
                 </div>
-                <label className="flex gap-2 items-start text-sm">
-                  <input
-                    type="checkbox"
-                    checked={dictate}
-                    disabled={locked}
-                    onChange={(e) => setDictate(e.target.checked)}
-                  />
-                  Transcribir con el navegador mientras grabo
-                </label>
-                <p className="text-xs text-gray-400">
-                  El dictado no usa tokens de la IA del acta. Depende del
-                  navegador, puede necesitar internet y enviar audio a su
-                  proveedor de reconocimiento. Si no funciona, conserva el audio
-                  e importa una transcripción.
-                </p>
-                <p className="text-xs text-gray-400">
-                  Mantén esta pantalla abierta durante la grabación. Activa No
-                  molestar y prueba antes el micrófono. El navegador puede
-                  interrumpir el audio al bloquear la pantalla, recibir llamadas
-                  o desconectar el micrófono.
-                </p>
-                {backup && (
-                  <button
-                    className={button + " bg-amber-950 text-amber-100"}
-                    onClick={() =>
-                      downloadMeetingFile(
-                        backup.blob,
-                        `respaldo-audio.${backup.take.mime.includes("mp4") ? "m4a" : "webm"}`,
-                      )
-                    }
+                <div className="text-center">
+                  <p className="text-xs uppercase tracking-wide text-gray-300">
+                    {status === "recording"
+                      ? "Grabando"
+                      : status === "paused"
+                        ? "En pausa"
+                        : status === "starting"
+                          ? "Esperando micrófono"
+                          : status === "stopping"
+                            ? "Guardando audio"
+                            : draft.takes.length
+                              ? "Audio guardado"
+                              : "Listo para grabar"}
+                  </p>
+                  <p
+                    className="text-4xl font-mono my-2"
+                    aria-label="Duración de la reunión"
                   >
-                    Descargar respaldo de audio pendiente
-                  </button>
-                )}
-                {draft.takes.map((take, i) => (
+                    {clock(elapsed)}
+                  </p>
+                </div>
+                <div
+                  className="h-1.5 rounded bg-logia-900 overflow-hidden"
+                  aria-label="Nivel del micrófono"
+                >
                   <div
-                    key={take.id}
-                    className="flex flex-wrap gap-2 items-center justify-between border-t border-logia-700 pt-2 text-sm"
-                  >
-                    <span>
-                      Tramo {i + 1} · {clock(take.durationMs)}
-                      {!take.complete ? " · Recuperado o sin cerrar" : ""}
-                    </span>
+                    className="h-full bg-emerald-400 transition-all"
+                    style={{ width: `${status === "recording" ? level : 0}%` }}
+                  />
+                </div>
+                {["recording", "paused"].includes(status) ? (
+                  <div className="grid grid-cols-2 gap-2">
                     <button
-                      className={button}
-                      disabled={status !== "idle"}
-                      onClick={async () => {
-                        try {
-                          const blob = await meetingAudio(
-                            draft.id,
-                            take.id,
-                            take.mime,
-                          );
-                          if (!blob.size)
-                            throw Error("Este tramo no tiene audio guardado.");
-                          downloadMeetingFile(
-                            blob,
-                            `tenida-${draft.date}-tramo-${i + 1}.${take.mime.includes("mp4") ? "m4a" : "webm"}`,
-                          );
-                        } catch (e) {
-                          setError((e as Error).message);
-                        }
+                      className={button + " bg-indigo-700"}
+                      onClick={() => {
+                        if (status === "paused") recorder.current?.resume();
+                        else recorder.current?.pause();
                       }}
                     >
-                      Descargar audio
+                      {status === "paused" ? "Continuar" : "Pausar"}
+                    </button>
+                    <button
+                      className={button + " bg-red-700"}
+                      onClick={() => recorder.current?.stop()}
+                    >
+                      Terminar audio
                     </button>
                   </div>
-                ))}
-              </section>
-              <section className="bg-logia-800 p-4 rounded-xl border border-logia-700 space-y-3">
-                <h3 className="font-bold text-lg">¿Quién tiene la palabra?</h3>
-                <p className="text-sm text-indigo-200">
-                  Seleccionado: {selected?.name || "Sin identificar"}
-                </p>
-                <input
-                  aria-label="Buscar hablante"
-                  placeholder="Buscar hermano…"
-                  value={search}
-                  className={input}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-                <div className="flex flex-wrap gap-2">
+                ) : status === "starting" ? (
                   <button
-                    className={button}
-                    disabled={locked}
-                    onClick={async () => {
-                      setBusy(true);
-                      try {
-                        const ids = await meetingCloud.present(
-                          members,
-                          draft.date,
-                        );
-                        change((d) => ({ ...d, presentUids: ids }));
-                        setOnlyPresent(true);
-                        setNotice(
-                          ids.length
-                            ? `${ids.length} presentes tomados de Asistencia. Puedes ajustar la selección.`
-                            : "No hay presentes registrados para esta fecha. Marca los asistentes manualmente.",
-                        );
-                      } catch {
-                        setError(
-                          "No se pudo consultar Asistencia. Puedes marcar presentes manualmente.",
-                        );
-                      } finally {
-                        setBusy(false);
-                      }
+                    className={button + " w-full"}
+                    onClick={() => {
+                      recorder.current?.dispose();
+                      setStatus("idle");
+                      statusRef.current = "idle";
                     }}
                   >
-                    Tomar presentes de Asistencia
+                    Cancelar inicio
                   </button>
-                  <label className="flex gap-2 items-center text-sm">
+                ) : (
+                  <button
+                    className={button + " bg-red-700 w-full"}
+                    disabled={locked}
+                    onClick={() => void start()}
+                  >
+                    {status === "stopping"
+                      ? "Guardando…"
+                      : draft.takes.length
+                        ? "Grabar otro audio"
+                        : "Grabar"}
+                  </button>
+                )}
+                <button
+                  className={
+                    button + " w-full text-left flex justify-between gap-2"
+                  }
+                  disabled={
+                    busy ||
+                    suspended ||
+                    status === "starting" ||
+                    status === "stopping"
+                  }
+                  onClick={() => setSpeakerSheet(true)}
+                >
+                  <span className="truncate">
+                    Habla: {speaker?.name || "Sin identificar"}
+                  </span>
+                  <span className="shrink-0 text-indigo-300">Cambiar</span>
+                </button>
+                {!active && (
+                  <label className="flex gap-2 text-sm items-start">
                     <input
                       type="checkbox"
-                      checked={onlyPresent}
-                      onChange={(e) => setOnlyPresent(e.target.checked)}
+                      disabled={locked || !speechAvailable}
+                      checked={captions}
+                      onChange={(e) => setCaptions(e.target.checked)}
                     />
-                    Solo presentes ({draft.presentUids.length})
+                    <span>
+                      Ver subtítulos en vivo{" "}
+                      <span className="block text-xs text-gray-400">
+                        {speechAvailable
+                          ? "Opcional. Depende del navegador y puede usar internet."
+                          : "No disponible aquí; podrás transcribir al terminar."}
+                      </span>
+                    </span>
                   </label>
-                </div>
-                <button
-                  className={button}
-                  disabled={busy || suspended}
-                  onClick={() => mark(null)}
-                >
-                  Sin identificar / intervención general
-                </button>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-96 overflow-y-auto">
-                  {visible.map((member) => (
-                    <div
-                      key={member.uid}
-                      className="flex gap-2 items-center border border-logia-700 rounded-lg p-2"
-                    >
-                      <input
-                        aria-label={`Presente: ${member.name}`}
-                        type="checkbox"
-                        checked={draft.presentUids.includes(member.uid)}
-                        disabled={busy || suspended}
-                        onChange={(e) =>
-                          change((d) => ({
-                            ...d,
-                            presentUids: e.target.checked
-                              ? [...d.presentUids, member.uid]
-                              : d.presentUids.filter((id) => id !== member.uid),
-                          }))
-                        }
-                      />
-                      <button
-                        disabled={
-                          busy ||
-                          suspended ||
-                          status === "stopping" ||
-                          status === "starting"
-                        }
-                        aria-pressed={selected?.uid === member.uid}
-                        className={
-                          "flex-1 text-left p-2 rounded break-words min-w-0 " +
-                          (selected?.uid === member.uid ? "bg-indigo-600" : "")
-                        }
-                        onClick={() =>
-                          mark({ uid: member.uid, name: member.name })
-                        }
-                      >
-                        {member.name}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                {!visible.length && (
-                  <p className="text-sm text-gray-400">
-                    No hay miembros que coincidan. Puedes quitar el filtro de
-                    presentes.
-                  </p>
                 )}
-                <details>
-                  <summary className="cursor-pointer text-sm">
-                    Turnos guardados ({draft.marks.length})
-                  </summary>
-                  <div className="space-y-2 mt-2">
-                    {draft.marks.map((m) => (
-                      <div
-                        key={m.id}
-                        className="flex flex-wrap gap-2 text-sm items-center"
-                      >
-                        <span>{clock(m.atMs)}</span>
-                        <select
-                          aria-label={`Hablante del turno ${clock(m.atMs)}`}
-                          disabled={locked}
-                          className={input + " flex-1 min-w-0"}
-                          value={m.speaker?.uid || ""}
-                          onChange={(e) =>
-                            change((d) => ({
-                              ...d,
-                              marks: d.marks.map((x) =>
-                                x.id === m.id
-                                  ? {
-                                      ...x,
-                                      speaker: memberSpeaker(e.target.value),
-                                    }
-                                  : x,
-                              ),
-                            }))
-                          }
-                        >
-                          <option value="">Sin identificar</option>
-                          {members.map((u) => (
-                            <option key={u.uid} value={u.uid}>
-                              {u.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-xs text-gray-400">
-                    Corregir un turno no cambia automáticamente las
-                    intervenciones ya transcritas: revísalas en Transcripción.
-                  </p>
-                </details>
-              </section>
-            </div>
-          )}
-          {tab === "text" && (
-            <section className="space-y-4">
-              <div className="bg-logia-800 p-4 rounded-xl space-y-3">
-                <p className="text-sm">
-                  Importa TXT, SRT o VTT, o pega texto. Los archivos sin tiempos
-                  requieren asignación manual de hablantes.
-                </p>
-                <label className="block text-sm">
-                  Los tiempos del archivo corresponden a
-                  <select
-                    aria-label="Inicio de los tiempos importados"
-                    className={input}
-                    value={importOffset}
-                    disabled={locked}
-                    onChange={(e) => setImportOffset(e.target.value)}
+                {captions && active && (
+                  <div
+                    aria-live="polite"
+                    aria-label="Subtítulos en vivo"
+                    className="rounded-lg bg-logia-900 p-3 text-base min-h-16 max-h-28 overflow-y-auto"
                   >
-                    <option value="0">Inicio de toda la grabación</option>
-                    {draft.takes
-                      .filter((t) => t.offsetMs > 0)
-                      .map((t, i) => (
-                        <option key={t.id} value={String(t.offsetMs)}>
-                          Tramo que inicia en {clock(t.offsetMs)}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <input
-                  aria-label="Importar transcripción"
-                  type="file"
-                  accept=".txt,.srt,.vtt,text/plain,text/vtt"
-                  disabled={locked}
-                  className="block w-full text-sm"
-                  onChange={async (e) => {
-                    const f = e.target.files?.[0];
-                    if (!f) return;
-                    try {
-                      if (f.size > 1024 * 1024)
-                        throw Error(
-                          "La transcripción debe pesar menos de 1 MB.",
-                        );
-                      importText(await f.text());
-                    } catch (error) {
-                      setError((error as Error).message);
-                    }
-                    e.target.value = "";
-                  }}
-                />
-                <textarea
-                  aria-label="Pegar transcripción"
-                  className={input}
-                  rows={4}
-                  disabled={locked}
-                  value={paste}
-                  onChange={(e) => setPaste(e.target.value)}
-                  maxLength={120000}
-                  placeholder="Pega aquí el texto de tu herramienta de transcripción…"
-                />
+                    {caption || "El texto aparecerá aquí mientras hablas…"}
+                  </div>
+                )}
+              </div>
+              {backup && (
                 <button
-                  className={button}
-                  disabled={locked || !paste.trim()}
-                  onClick={() => importText(paste)}
-                >
-                  Añadir texto a la transcripción
-                </button>
-                <button
-                  className={button + " ml-2"}
-                  disabled={locked || draft.texts.length >= 1200}
+                  className={button + " bg-amber-800 w-full"}
                   onClick={() =>
-                    change((d) => ({
-                      ...d,
-                      texts: [
-                        ...d.texts,
-                        {
-                          id: uid(),
-                          atMs: null,
-                          speaker: selected,
-                          text: "",
-                          source: "manual",
-                        },
-                      ],
-                    }))
+                    downloadMeetingFile(
+                      backup.blob,
+                      `respaldo-audio.${backup.take.mime.includes("mp4") ? "m4a" : "webm"}`,
+                    )
                   }
                 >
-                  Añadir intervención manual
+                  Descargar respaldo de audio no guardado
                 </button>
-                <p className="text-xs text-gray-400">
-                  El dictado tiene tiempos aproximados. Revisa la atribución si
-                  cambiaste de hablante a mitad de una frase.
-                </p>
-              </div>
-              {draft.texts.map((block, i) => (
-                <article
-                  key={block.id}
-                  className="bg-logia-800 border border-logia-700 rounded-xl p-4 space-y-2"
-                >
-                  <div className="flex gap-2 justify-between items-center">
-                    <span className="text-xs text-gray-400">
-                      Intervención {i + 1} ·{" "}
-                      {block.atMs === null ? "Sin tiempo" : clock(block.atMs)}
-                    </span>
-                    <button
-                      className="text-red-300 p-2 text-sm"
-                      disabled={locked}
-                      aria-label={`Eliminar intervención ${i + 1}`}
-                      onClick={() => {
-                        if (
-                          confirm(
-                            "¿Eliminar esta intervención del texto? El audio permanece.",
-                          )
-                        )
-                          change((d) => ({
-                            ...d,
-                            texts: d.texts.filter((t) => t.id !== block.id),
-                          }));
-                      }}
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                  <select
-                    aria-label={`Hablante de intervención ${i + 1}`}
-                    className={input}
-                    value={block.speaker?.uid || ""}
-                    disabled={locked}
-                    onChange={(e) =>
-                      change((d) => ({
-                        ...d,
-                        texts: d.texts.map((t) =>
-                          t.id === block.id
-                            ? { ...t, speaker: memberSpeaker(e.target.value) }
-                            : t,
-                        ),
-                      }))
-                    }
-                  >
-                    <option value="">Sin identificar</option>
-                    {block.speaker &&
-                      !members.some((m) => m.uid === block.speaker!.uid) && (
-                        <option value={block.speaker.uid}>
-                          {block.speaker.name}
-                        </option>
-                      )}
-                    {members.map((u) => (
-                      <option key={u.uid} value={u.uid}>
-                        {u.name}
-                      </option>
-                    ))}
-                  </select>
-                  <textarea
-                    aria-label={`Texto de intervención ${i + 1}`}
-                    value={block.text}
-                    rows={3}
-                    maxLength={8000}
-                    disabled={locked}
-                    className={input}
-                    onChange={(e) =>
-                      change((d) => ({
-                        ...d,
-                        texts: d.texts.map((t) =>
-                          t.id === block.id
-                            ? { ...t, text: e.target.value, source: "manual" }
-                            : t,
-                        ),
-                      }))
-                    }
-                  />
-                </article>
-              ))}
-              {!draft.texts.length && (
-                <p className="p-4 text-gray-400">
-                  Todavía no hay texto. Graba con dictado o importa una
-                  transcripción.
+              )}
+              {busy && (
+                <p role="status" className="text-indigo-200 text-sm">
+                  {upload < 100
+                    ? `Subiendo audios: ${upload}%`
+                    : "Preparando el proceso…"}
                 </p>
               )}
-            </section>
-          )}
-          {tab === "format" && (
-            <section className="space-y-4">
-              <p className="text-sm text-gray-300">
-                Define los puntos que debe recopilar la IA. Puedes cambiarlos al
-                inicio o antes del análisis. Los resultados que edites
-                manualmente se conservan en los siguientes análisis.
-              </p>
-              {draft.fields.map((field, i) => (
-                <article
-                  key={field.id}
-                  className="bg-logia-800 border border-logia-700 rounded-xl p-4 space-y-3"
+              {processing && (
+                <div
+                  role="status"
+                  className="bg-indigo-950/40 border border-indigo-700 rounded-lg p-3 text-sm"
                 >
-                  <div className="flex gap-2">
-                    <input
-                      aria-label={`Título del campo ${i + 1}`}
-                      value={field.title}
-                      maxLength={100}
-                      disabled={locked}
-                      className={input}
-                      onChange={(e) =>
-                        fieldChange(field.id, { title: e.target.value })
-                      }
-                    />
-                    <button
-                      className={button}
-                      aria-label={`Quitar campo ${i + 1}`}
-                      disabled={locked}
-                      onClick={() => {
-                        if (
-                          !field.value ||
-                          confirm(
-                            "¿Quitar este campo y su contenido del borrador?",
-                          )
-                        )
-                          change((d) => ({
-                            ...d,
-                            fields: d.fields.filter((f) => f.id !== field.id),
-                          }));
-                      }}
-                    >
-                      ×
-                    </button>
+                  {job?.state === "transcribing"
+                    ? "Transcribiendo y preparando el informe…"
+                    : job?.state === "preparing"
+                      ? "Preparando los audios…"
+                      : "Proceso en espera…"}
+                  <p className="text-xs text-gray-400 mt-1">
+                    Puedes volver después; el resultado se conserva sin repetir
+                    el análisis.
+                  </p>
+                </div>
+              )}
+              {timedOut && (
+                <p className="text-amber-300 text-sm">
+                  El proceso no terminó a tiempo. Los audios se conservan;
+                  puedes intentar de nuevo.
+                </p>
+              )}
+              {draft.takes.length > 0 && status === "idle" && !processing && (
+                <>
+                  <button
+                    className={button + " bg-emerald-700 w-full"}
+                    disabled={
+                      active ||
+                      busy ||
+                      processing ||
+                      suspended ||
+                      audioReady !== true ||
+                      !!backup ||
+                      allAudiosProcessed
+                    }
+                    onClick={() => void process()}
+                  >
+                    {allAudiosProcessed
+                      ? "Transcripción e informe listos"
+                      : job?.state === "failed" || timedOut
+                        ? "Reintentar transcripción e informe"
+                        : draft.audioJob && !draft.audioJob.started
+                          ? "Continuar proceso"
+                          : "Transcribir y crear informe"}
+                  </button>
+                  <p className="text-xs text-gray-400">
+                    Procesa todos los audios juntos en una solicitud de IA. Usa
+                    datos y tokens según su duración. El original y el informe
+                    quedan separados.
+                  </p>
+                </>
+              )}
+              {audioReady === false && (
+                <p className="text-sm text-amber-200">
+                  No se pudo comprobar la conexión de audio con IA.{" "}
+                  <button
+                    className="underline"
+                    disabled={busy}
+                    onClick={() => void checkAI()}
+                  >
+                    Comprobar conexión
+                  </button>
+                </p>
+              )}
+              {draft.takes.length > 0 && (
+                <details
+                  onToggle={(e) => setAudioListOpen(e.currentTarget.open)}
+                  className="rounded-lg border border-logia-700 p-3"
+                >
+                  <summary className="text-sm cursor-pointer">
+                    Audios guardados ({draft.takes.length})
+                  </summary>
+                  <div className="space-y-3 mt-3">
+                    {audioListOpen &&
+                      draft.takes.map((take, i) =>
+                        take.complete || status === "idle" ? (
+                          <SavedAudio
+                            key={take.id}
+                            draftId={draft.id}
+                            take={take}
+                            index={i}
+                          />
+                        ) : (
+                          <p key={take.id} className="text-sm">
+                            Audio {i + 1} en grabación.
+                          </p>
+                        ),
+                      )}
                   </div>
-                  <label className="flex gap-2 text-sm items-center">
+                </details>
+              )}
+              <details className="rounded-lg border border-logia-700 p-3">
+                <summary className="text-sm cursor-pointer">
+                  Nombre y fecha
+                </summary>
+                <fieldset disabled={locked} className="space-y-3 mt-3">
+                  <label className="block text-sm">
+                    Nombre
                     <input
-                      type="checkbox"
-                      disabled={locked}
-                      checked={field.manualOnly}
+                      className={field}
+                      value={draft.title}
+                      maxLength={160}
                       onChange={(e) =>
-                        fieldChange(field.id, { manualOnly: e.target.checked })
+                        change((d) => ({ ...d, title: e.target.value }))
                       }
                     />
-                    Solo llenado manual
                   </label>
-                  {!field.manualOnly && (
-                    <label className="block text-sm">
-                      Qué debe extraer la IA
-                      <textarea
-                        aria-label={`Instrucciones del campo ${i + 1}`}
-                        value={field.instruction}
-                        maxLength={1000}
-                        disabled={locked}
-                        rows={2}
-                        className={input}
-                        onChange={(e) =>
-                          fieldChange(field.id, { instruction: e.target.value })
-                        }
-                      />
-                    </label>
-                  )}
                   <label className="block text-sm">
-                    Contenido del acta
+                    Fecha
+                    <input
+                      className={field}
+                      type="date"
+                      value={draft.date}
+                      onChange={(e) =>
+                        change((d) => ({ ...d, date: e.target.value }))
+                      }
+                    />
+                  </label>
+                </fieldset>
+              </details>
+            </>
+          )}
+          {tab === "transcript" && (
+            <div className="space-y-3">
+              <div className="flex justify-between items-center gap-2">
+                <h3 className="font-bold">Transcripción original</h3>
+                <button
+                  className={button}
+                  disabled={!draft.originalTranscript && !draft.texts.length}
+                  onClick={() =>
+                    exportText(
+                      draft.originalTranscript || transcript(draft),
+                      "transcripcion-original",
+                    )
+                  }
+                >
+                  Descargar
+                </button>
+              </div>
+              <p className="text-xs text-gray-400">
+                Se conserva aparte del informe. Puede contener errores de
+                reconocimiento; el audio es la referencia.
+              </p>
+              {draft.takes.length > 0 && draft.originalTranscript && !allAudiosProcessed && (
+                <p className="text-amber-200 text-sm">
+                  Hay audios que aún no se han procesado. Vuelve a Grabar para
+                  obtener la transcripción completa.
+                </p>
+              )}
+              {draft.originalTranscript || draft.texts.length ? (
+                <div className="whitespace-pre-wrap break-words text-base leading-relaxed rounded-xl border border-logia-700 bg-logia-800 p-4">
+                  {draft.originalTranscript || transcript(draft)}
+                </div>
+              ) : (
+                <p className="text-gray-400 text-sm">
+                  Después de grabar, pulsa «Transcribir y crear informe» en
+                  Grabar. Los subtítulos finales también aparecen aquí.
+                </p>
+              )}
+            </div>
+          )}
+          {tab === "report" && (
+            <div className="space-y-3">
+              <div className="flex justify-between gap-2 items-center">
+                <h3 className="font-bold">Informe de la reunión</h3>
+                <button
+                  className={button}
+                  disabled={locked}
+                  onClick={() => setEditing((v) => !v)}
+                >
+                  {editing ? "Ver informe" : "Editar"}
+                </button>
+              </div>
+              {!reportExists && (
+                <p className="text-sm text-gray-400">
+                  Graba y procesa la reunión para preparar el informe. También
+                  puedes completarlo manualmente.
+                </p>
+              )}
+              {draft.fields.map((f) => (
+                <section
+                  key={f.id}
+                  className="rounded-xl border border-logia-700 bg-logia-800 p-4"
+                >
+                  <h4 className="text-indigo-200 font-semibold text-sm mb-2">
+                    {f.title}
+                  </h4>
+                  {editing ? (
                     <textarea
-                      aria-label={`Contenido del campo ${i + 1}`}
-                      value={field.value}
-                      rows={4}
+                      aria-label={`Editar ${f.title}`}
+                      className={field}
+                      value={f.value}
+                      rows={3}
                       maxLength={12000}
                       disabled={locked}
-                      className={input}
                       onChange={(e) =>
-                        fieldChange(field.id, {
+                        patchField(f.id, {
                           value: e.target.value,
                           origin: "manual",
-                          evidenceIds: [],
                         })
                       }
                     />
-                  </label>
-                  <p className="text-xs text-gray-400">
-                    {field.origin === "ai"
-                      ? "Borrador generado por IA"
-                      : field.origin === "manual"
-                        ? "Editado manualmente; se conserva al analizar"
-                        : "Pendiente"}
-                  </p>
-                  {field.evidenceIds.length > 0 && (
-                    <p className="text-xs text-indigo-200">
-                      Sustento:{" "}
-                      {field.evidenceIds
-                        .map(
-                          (id) =>
-                            `intervención ${draft.texts.findIndex((t) => t.id === id) + 1}`,
-                        )
-                        .join(", ")}
+                  ) : (
+                    <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">
+                      {f.value || "Pendiente"}
                     </p>
                   )}
-                  {field.origin === "manual" && !field.manualOnly && (
-                    <button
-                      className={button}
-                      disabled={locked}
-                      onClick={() => {
-                        if (
-                          confirm(
-                            "¿Limpiar este contenido para permitir una nueva extracción con IA?",
-                          )
-                        )
-                          fieldChange(field.id, {
+                </section>
+              ))}
+              <label className="block text-sm">
+                Notas adicionales
+                <textarea
+                  className={field}
+                  rows={2}
+                  maxLength={10000}
+                  disabled={locked}
+                  value={draft.notes}
+                  onChange={(e) =>
+                    change((d) => ({ ...d, notes: e.target.value }))
+                  }
+                />
+              </label>
+              <label className="flex gap-2 text-sm items-start">
+                <input
+                  type="checkbox"
+                  disabled={locked || !reportExists}
+                  checked={review || !!draft.reviewedAt}
+                  onChange={(e) => {
+                    setReview(e.target.checked);
+                    if (!e.target.checked && draft.reviewedAt)
+                      change((d) => ({ ...d }));
+                  }}
+                />
+                <span>Revisé el informe, los nombres y los acuerdos.</span>
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  className={button + " bg-indigo-700"}
+                  disabled={locked || (!review && !draft.reviewedAt)}
+                  onClick={() =>
+                    void action(async () => {
+                      const next = {
+                        ...dref.current!,
+                        reviewedAt: new Date().toISOString(),
+                      };
+                      dref.current = next;
+                      setDraft(next);
+                      await persist();
+                      setNotice("Informe marcado como revisado.");
+                    })
+                  }
+                >
+                  Marcar revisado
+                </button>
+                <button
+                  className={button}
+                  disabled={!reportExists}
+                  onClick={() =>
+                    exportText(
+                      `${draft.title}\nFecha: ${draft.date}\n${draft.reviewedAt ? "Revisado por Secretaría" : "BORRADOR PENDIENTE DE REVISIÓN"}\n\n` +
+                        draft.fields
+                          .map((f) => f.title + "\n" + (f.value || "Pendiente"))
+                          .join("\n\n") +
+                        "\n\nNotas\n" +
+                        draft.notes,
+                      "informe",
+                    )
+                  }
+                >
+                  Descargar informe
+                </button>
+              </div>
+              <button
+                className={button + " w-full bg-emerald-800"}
+                disabled={locked || !reportExists}
+                onClick={() => setTaskCapture((v) => !v)}
+              >
+                {taskCapture
+                  ? "Cerrar tareas"
+                  : "Preparar tareas de los acuerdos"}
+              </button>
+              {taskCapture && (
+                <CaptureAssistant
+                  key={draft.id}
+                  user={user}
+                  suspended={suspended || active || processing}
+                  embedded
+                  initialText={draft.fields
+                    .filter((f) => /acuerd|comprom/i.test(f.title))
+                    .map((f) => f.title + "\n" + f.value)
+                    .join("\n\n")}
+                />
+              )}
+              <details className="rounded-lg border border-logia-700 p-3">
+                <summary className="text-sm cursor-pointer">
+                  Formato del informe
+                </summary>
+                <fieldset disabled={locked} className="space-y-3 mt-3">
+                  {draft.fields.map((f, i) => (
+                    <details
+                      key={f.id}
+                      className="border border-logia-700 rounded p-3"
+                    >
+                      <summary className="text-sm">
+                        {i + 1}. {f.title}
+                      </summary>
+                      <div className="space-y-2 mt-2">
+                        <label className="block text-sm">
+                          Título del punto
+                          <input
+                            className={field}
+                            maxLength={100}
+                            value={f.title}
+                            onChange={(e) =>
+                              patchField(f.id, { title: e.target.value })
+                            }
+                          />
+                        </label>
+                        <label className="block text-sm">
+                          Qué debe recopilar la IA
+                          <textarea
+                            className={field}
+                            maxLength={1000}
+                            value={f.instruction}
+                            onChange={(e) =>
+                              patchField(f.id, { instruction: e.target.value })
+                            }
+                          />
+                        </label>
+                        <label className="flex gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={f.manualOnly}
+                            onChange={(e) =>
+                              patchField(f.id, { manualOnly: e.target.checked })
+                            }
+                          />
+                          Solo llenado manual
+                        </label>
+                        {f.origin === "manual" && (
+                          <button
+                            className={button}
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  "¿Permitir que la IA sustituya este campo en el próximo análisis?",
+                                )
+                              )
+                                patchField(f.id, { origin: "empty" });
+                            }}
+                          >
+                            Permitir volver a analizar este punto
+                          </button>
+                        )}
+                        <button
+                          className={button + " text-red-300"}
+                          onClick={() => {
+                            if (
+                              window.confirm("¿Quitar este punto del informe?")
+                            )
+                              change((d) => ({
+                                ...d,
+                                fields: d.fields.filter((x) => x.id !== f.id),
+                              }));
+                          }}
+                        >
+                          Quitar punto
+                        </button>
+                      </div>
+                    </details>
+                  ))}
+                  <button
+                    className={button}
+                    disabled={draft.fields.length >= 15}
+                    onClick={() =>
+                      change((d) => ({
+                        ...d,
+                        fields: [
+                          ...d.fields,
+                          {
+                            id: uid(),
+                            title: "Nuevo punto",
+                            instruction: "",
+                            manualOnly: false,
                             value: "",
                             origin: "empty",
                             evidenceIds: [],
-                          });
-                      }}
-                    >
-                      Limpiar para volver a extraer
-                    </button>
-                  )}
-                </article>
-              ))}
-              <div className="flex flex-wrap gap-2">
-                <button
-                  className={button}
-                  disabled={locked || draft.fields.length >= 15}
-                  onClick={() =>
-                    change((d) => ({
-                      ...d,
-                      fields: [
-                        ...d.fields,
-                        {
-                          id: uid(),
-                          title: "Nuevo punto",
-                          instruction:
-                            "Describe qué debe recopilar aquí la IA.",
-                          manualOnly: false,
-                          value: "",
-                          origin: "empty",
-                          evidenceIds: [],
-                        },
-                      ],
-                    }))
-                  }
-                >
-                  Añadir punto al formato
-                </button>
-                <button
-                  className={button}
-                  disabled={locked}
-                  onClick={async () => {
-                    try {
-                      await persist();
-                      const next = newMeeting(user.uid, user.groupId);
-                      next.fields = draft.fields.map((f) => ({
-                        ...f,
-                        id: uid(),
-                        value: "",
-                        origin: "empty",
-                        evidenceIds: [],
-                      }));
-                      await saveMeetingLocal(next);
-                      open(next);
-                      await refresh();
-                      setNotice(
-                        "Nueva tenida creada con este formato, sin copiar contenidos ni grabaciones anteriores.",
-                      );
-                    } catch (e) {
-                      setError((e as Error).message);
-                    }
-                  }}
-                >
-                  Usar este formato en otra tenida
-                </button>
-                <button
-                  className={button + " bg-indigo-600 font-semibold"}
-                  disabled={locked || !draft.texts.length || aiReady !== true}
-                  onClick={() => void analyze()}
-                >
-                  {busy ? "Analizando…" : "Organizar texto con IA"}
-                </button>
-                <button
-                  className={button}
-                  disabled={locked || !draft.texts.length}
-                  onClick={() => setCopyPrompt((v) => !v)}
-                >
-                  Preparar solicitud para otra IA
-                </button>
-              </div>
-              {aiReady !== true && (
-                <div className="bg-logia-800 border border-logia-700 rounded-lg p-3 space-y-2">
-                  <p className="text-sm text-gray-300">
-                    {aiReady === null
-                      ? "Comprobando la conexión de IA…"
-                      : "La organización automática de actas está pendiente de conexión o configuración. Puedes llenar los campos o preparar una solicitud para otra IA."}
-                  </p>
-                  <button
-                    className={button}
-                    disabled={busy || aiReady === null}
-                    onClick={() => void checkAI()}
-                  >
-                    Comprobar conexión de IA
-                  </button>
-                </div>
-              )}
-              {copyPrompt && (
-                <div className="bg-logia-800 rounded-xl p-4 space-y-2">
-                  <p className="text-sm">
-                    Incluye solo texto, hablantes y campos pendientes. Puedes
-                    copiarlo a tu herramienta de IA y pegar el resultado en los
-                    campos del acta.
-                  </p>
-                  <textarea
-                    aria-label="Solicitud de análisis para IA"
-                    readOnly
-                    rows={6}
-                    className={input}
-                    value={meetingPrompt(draft)}
-                  />
-                  <button
-                    className={button}
-                    onClick={() =>
-                      downloadMeetingFile(
-                        new Blob([meetingPrompt(draft)], {
-                          type: "text/plain;charset=utf-8",
-                        }),
-                        `solicitud-acta-${draft.date}.txt`,
-                      )
+                          },
+                        ],
+                      }))
                     }
                   >
-                    Descargar solicitud
+                    Añadir punto
                   </button>
-                </div>
-              )}
-              <div className="bg-logia-800 p-4 rounded-xl space-y-3">
-                <button className={button} disabled={locked} onClick={()=>setTaskCapture(value=>!value)}>{taskCapture?'Cerrar preparación de tareas':'Preparar tareas de acuerdos y compromisos'}</button>
-                {taskCapture&&<CaptureAssistant key={draft.id} user={user} suspended={suspended} embedded initialText={draft.fields.filter(f=>/acuerd|comprom/i.test(f.title)).map(f=>f.title+'\n'+f.value).join('\n\n')}/>}
-              </div>
-              <div className="bg-logia-800 p-4 rounded-xl space-y-3">
-                <label className="block text-sm">
-                  Notas adicionales del secretario
-                  <textarea
-                    aria-label="Notas adicionales del secretario"
-                    rows={4}
-                    maxLength={10000}
-                    value={draft.notes}
-                    disabled={locked}
-                    className={input}
-                    onChange={(e) =>
-                      change((d) => ({ ...d, notes: e.target.value }))
-                    }
-                  />
-                </label>
-                <label className="flex gap-2 items-start text-sm">
-                  <input
-                    type="checkbox"
-                    checked={review}
-                    disabled={locked}
-                    onChange={(e) => setReview(e.target.checked)}
-                  />
-                  Revisé los nombres, intervenciones, acuerdos y compromisos de
-                  este borrador.
-                </label>
-                <button
-                  className={button}
-                  disabled={
-                    locked ||
-                    !review ||
-                    !draft.fields.some((f) => f.value.trim())
-                  }
-                  onClick={async () => {
-                    const next = {
-                      ...draftRef.current!,
-                      reviewedAt: new Date().toISOString(),
-                      updatedAt: Date.now(),
-                    };
-                    draftRef.current = next;
-                    setDraft(next);
-                    try {
-                      await persist();
-                      setNotice(
-                        "Acta marcada como revisada. Guarda una copia en la logia o descarga el respaldo.",
-                      );
-                    } catch (e) {
-                      setError((e as Error).message);
-                    }
-                  }}
-                >
-                  Marcar acta revisada
-                </button>
-              </div>
-            </section>
+                  <button
+                    className={button + " w-full"}
+                    disabled={!draft.texts.length}
+                    onClick={() => void updateReport()}
+                  >
+                    Actualizar informe usando solo el texto
+                  </button>
+                  <p className="text-xs text-gray-400">
+                    Los puntos corregidos manualmente se conservan. La
+                    transcripción original no se modifica.
+                  </p>
+                </fieldset>
+              </details>
+            </div>
           )}
-          <section className="bg-logia-800 rounded-xl p-4 space-y-3">
-            <div className="flex flex-wrap gap-2">
-              <button
-                className={button}
-                disabled={busy || status !== "idle"}
-                onClick={() => {
-                  downloadMeetingFile(
-                    new Blob([meetingTextExport(draft)], {
-                      type: "text/plain;charset=utf-8",
-                    }),
-                    `acta-${draft.date}.txt`,
-                  );
-                }}
-              >
-                Descargar acta y transcripción
-              </button>
-              <button
-                className={button}
-                disabled={busy || status !== "idle"}
-                onClick={() =>
-                  downloadMeetingFile(
-                    new Blob([JSON.stringify(draft, null, 2)], {
-                      type: "application/json",
-                    }),
-                    `respaldo-acta-${draft.date}.json`,
-                  )
-                }
-              >
-                Descargar respaldo editable
-              </button>
-              <button
-                className={button}
-                disabled={locked}
-                onClick={async () => {
-                  setBusy(true);
-                  setError("");
-                  try {
-                    await persist();
-                    const version = await meetingCloud.save(draftRef.current!);
-                    const synced = {
-                      ...draftRef.current!,
-                      cloudVersion: version,
-                    };
-                    draftRef.current = synced;
-                    setDraft(synced);
-                    await persist();
-                    setNotice(
-                      "Texto del acta guardado en la logia. El audio permanece en este dispositivo; descarga sus tramos como respaldo.",
-                    );
-                  } catch (e) {
-                    setError(
-                      "No se pudo guardar en la logia. " +
-                        ((e as Error).message ||
-                          "Revisa la conexión y los permisos."),
-                    );
-                  } finally {
-                    setBusy(false);
+          {!active && (
+            <details className="border border-logia-700 rounded-lg p-3">
+              <summary className="text-sm cursor-pointer">
+                Guardar, respaldos y más opciones
+              </summary>
+              <div className="space-y-2 mt-3">
+                <button
+                  className={button + " w-full"}
+                  disabled={locked}
+                  onClick={() => void saveCloud()}
+                >
+                  Guardar transcripción e informe en la logia
+                </button>
+                <button
+                  className={button + " w-full"}
+                  onClick={() =>
+                    downloadMeetingFile(
+                      new Blob([JSON.stringify(draft, null, 2)], {
+                        type: "application/json",
+                      }),
+                      `respaldo-${draft.date}.json`,
+                    )
                   }
-                }}
-              >
-                Guardar texto en la logia
+                >
+                  Descargar respaldo de texto
+                </button>
+                <button
+                  className={button + " w-full"}
+                  disabled={locked}
+                  onClick={() =>
+                    void action(async () => {
+                      await persist();
+                      setAdvanced(true);
+                    })
+                  }
+                >
+                  Importar texto y opciones avanzadas
+                </button>
+              </div>
+            </details>
+          )}
+        </>
+      )}
+      {speakerSheet && (
+        <div
+          className="fixed inset-0 z-[140] bg-black/70 flex items-end sm:items-center justify-center"
+        >
+          <div role="dialog" aria-modal="true" aria-label="Quién está hablando" className="bg-logia-800 border border-logia-700 rounded-t-2xl sm:rounded-2xl p-4 w-full sm:max-w-lg max-h-[80dvh] flex flex-col gap-3">
+            <div className="flex justify-between items-center">
+              <h3 className="font-bold">Quién está hablando</h3>
+              <button className={button} onClick={() => setSpeakerSheet(false)}>
+                Cerrar
               </button>
             </div>
-            <p className="text-xs text-gray-400">
-              El audio se guarda localmente y se descarga por tramos. Guardar en
-              la logia comparte el texto con Secretaría, Admin y Master; no
-              publica el audio.
-            </p>
-          </section>
-        </>
+            <input
+              aria-label="Buscar hermano"
+              className={field}
+              placeholder="Buscar hermano"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                className={button + (!onlyPresent ? " bg-indigo-700" : "")}
+                onClick={() => setOnlyPresent(false)}
+              >
+                Miembros activos
+              </button>
+              <button
+                className={button + (onlyPresent ? " bg-indigo-700" : "")}
+                onClick={() => {
+                  setOnlyPresent(true);
+                  void meetingCloud
+                    .present(people, draft!.date)
+                    .then((ids) => change((d) => ({ ...d, presentUids: ids })))
+                    .catch(() =>
+                      setNotice(
+                        "No se pudo consultar la asistencia. Usa miembros activos.",
+                      ),
+                    );
+                }}
+              >
+                Presentes
+              </button>
+            </div>
+            <div className="overflow-y-auto min-h-0 space-y-1">
+              <button
+                className={button + " w-full text-left"}
+                onClick={() => mark(null)}
+              >
+                Sin identificar
+              </button>
+              {visible.map((p) => (
+                <button
+                  key={p.uid}
+                  className={
+                    button +
+                    " w-full text-left " +
+                    (speaker?.uid === p.uid ? "bg-indigo-800" : "")
+                  }
+                  onClick={() => mark(p)}
+                >
+                  {p.name}
+                </button>
+              ))}
+              {!visible.length && (
+                <p className="text-sm text-gray-400 p-3">
+                  No hay presentes registrados o coincidencias. Puedes usar los
+                  miembros activos. Asistencia sigue en su apartado habitual.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {library && (
+        <div
+          className="fixed inset-0 z-[140] bg-black/70 flex items-center justify-center p-3"
+        >
+          <div role="dialog" aria-modal="true" aria-label="Mis reuniones" className="rounded-xl border border-logia-700 bg-logia-800 p-4 w-full max-w-lg max-h-[80dvh] flex flex-col gap-3">
+            <div className="flex justify-between items-center">
+              <h3 className="font-bold">Mis reuniones</h3>
+              <button className={button} onClick={() => setLibrary(false)}>
+                Cerrar
+              </button>
+            </div>
+            <div className="overflow-y-auto space-y-2">
+              {drafts.map((d) => (
+                <button
+                  key={d.id}
+                  className={button + " w-full text-left"}
+                  onClick={() =>
+                    void action(async () => {
+                      await persist();
+                      const list = await listMeetingsLocal(
+                        user.uid,
+                        user.groupId,
+                      );
+                      open(list.find((x) => x.id === d.id) || d);
+                    })
+                  }
+                >
+                  {d.title} · {d.date}
+                  <span className="block text-xs text-gray-400">
+                    {d.takes.length} audio(s) · {clock(d.durationMs)}
+                  </span>
+                </button>
+              ))}
+              {!drafts.length && (
+                <p className="text-sm text-gray-400">
+                  Todavía no hay reuniones en este dispositivo.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

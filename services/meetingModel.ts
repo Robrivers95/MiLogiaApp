@@ -49,6 +49,15 @@ export interface MeetingDraft {
   cloudVersion?: number;
   notes: string;
   reviewedAt?: string;
+  originalTranscript?: string;
+  transcriptSource?: "audio" | "browser" | "import";
+  audioJob?: {
+    id: string;
+    fingerprint: string;
+    applied?: boolean;
+    started?: boolean;
+  };
+  processedTakeIds?: string[];
 }
 export const canUseSecretariat = (
   u: Pick<User, "role" | "lodgeRole" | "active" | "groupId">,
@@ -279,5 +288,9 @@ export function restoreMeetingBackup(
     durationMs:
       Number.isFinite(d.durationMs) && d.durationMs >= 0 ? d.durationMs : 0,
     takes: [],
+    ...(typeof d.originalTranscript === "string" &&
+    d.originalTranscript.length <= 200000
+      ? { originalTranscript: d.originalTranscript }
+      : {}),
   };
 }
