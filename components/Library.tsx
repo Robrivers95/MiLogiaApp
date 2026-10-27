@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import FirstDegreePdf from './FirstDegreePdf';
 import { User, MasonicDegree } from '../types';
 import { db, storage } from '../services/firebase';
 import { addDoc, arrayRemove, arrayUnion, collection, doc, getDoc, getDocs, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore';
@@ -200,6 +201,7 @@ const Library: React.FC<Props> = ({ user }) => {
   return <div className="p-3 pb-24 space-y-3">
     <div className="bg-logia-800 border border-logia-700 rounded-xl p-4">
       <h2 className="text-xl font-bold text-indigo-300">📚 Biblioteca de Alejandría</h2>
+      <FirstDegreePdf/>
       <p className="text-xs text-gray-400 mt-1">Tu grado actual, tomado de Gestión de miembros: <strong>{LABEL[profileDegree]}</strong>.</p>
     </div>
 

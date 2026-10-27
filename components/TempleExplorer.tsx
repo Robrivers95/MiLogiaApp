@@ -1,61 +1,43 @@
 import React,{useEffect,useRef,useState} from 'react';
 import type {User} from '../types';
-import {TEMPLE_POINTS,TEMPLE_START,templeStep,nearbyTemplePoint} from '../services/templeExplorer';
-import type {TemplePosition,TemplePoint} from '../services/templeExplorer';
+import {WORLD_START,WORLD_POINTS} from '../services/templeWorld';
+import type {Body,WorldPoint} from '../services/templeWorld';
+import type {TempleScene} from '../services/templeScene';
+import FirstDegreePdf from './FirstDegreePdf';
 import '../styles/temple-explorer.css';
-
-export default function TempleExplorer({user}:{user:User}) {
-  const [position,setPosition]=useState<TemplePosition>(TEMPLE_START),[lesson,setLesson]=useState<TemplePoint>(),[visited,setVisited]=useState<string[]>([]);
-  const held=useRef<any>(),board=useRef<HTMLDivElement>(null),lessonRef=useRef(lesson);
-  lessonRef.current=lesson;
-  const storageKey=`temple-apprentice:${user.groupId}:${user.uid}`;
-  const near=nearbyTemplePoint(position);
-  useEffect(()=>{
-    setPosition(TEMPLE_START);setLesson(undefined);setVisited([]);
-    try { const values=JSON.parse(localStorage.getItem(storageKey)||'[]');if(Array.isArray(values))setVisited([...new Set(values.filter((v:any)=>TEMPLE_POINTS.some(p=>p.id===v))) ] as string[]); } catch {}
-  },[storageKey]);
-  const stop=()=>{clearInterval(held.current);held.current=undefined;};
-  const move=(dx:number,dy:number)=>{if(!lessonRef.current)setPosition(p=>templeStep(p,dx,dy));};
-  useEffect(()=>{const blur=()=>stop();window.addEventListener('blur',blur);return()=>{stop();window.removeEventListener('blur',blur);};},[]);
-  const openLesson=()=>{
-    if(!near)return;
-    stop();setLesson(near);
-    setVisited(old=>{const next=[...new Set([...old,near.id])];try{localStorage.setItem(storageKey,JSON.stringify(next));}catch{}return next;});
-  };
-  const control=(label:string,glyph:string,dx:number,dy:number)=><button type="button" className="te-direction" aria-label={label} disabled={!!lesson}
-    onPointerDown={e=>{e.preventDefault();e.currentTarget.setPointerCapture(e.pointerId);stop();move(dx,dy);held.current=setInterval(()=>move(dx,dy),160);}}
-    onPointerUp={stop} onPointerCancel={stop} onLostPointerCapture={stop}
-    onClick={e=>{if(e.detail===0)move(dx,dy);}}>{glyph}</button>;
-  return <div className="te-shell">
-    <div className="te-heading"><div><h2>Explorar el templo</h2><p>Recorrido de Aprendiz · {visited.length}/{TEMPLE_POINTS.length} puntos</p></div><span className="te-grade">Grado 1</span></div>
-    <p className="te-guide">Mueve tu avatar con las flechas. Acércate a un símbolo y pulsa Aprender.</p>
-    <div className="te-map" ref={board} tabIndex={0} role="region" aria-label="Templo interactivo de Aprendiz"
-      onKeyDown={e=>{const directions:Record<string,number[]>={ArrowUp:[0,-1],w:[0,-1],ArrowDown:[0,1],s:[0,1],ArrowLeft:[-1,0],a:[-1,0],ArrowRight:[1,0],d:[1,0]};const v=directions[e.key];if(v){e.preventDefault();move(v[0],v[1]);}else if(e.key==='Enter'&&!lesson){e.preventDefault();openLesson();}}}>
-      <svg viewBox="0 0 330 420" role="img" aria-label={`Avatar en columna ${position.x}, fila ${position.y}. Templo ilustrativo, no ritual.`}>
-        <defs><linearGradient id="te-wall" x2="0" y2="1"><stop stopColor="#39465c"/><stop offset="1" stopColor="#202c40"/></linearGradient><pattern id="te-floor" width="60" height="60" patternUnits="userSpaceOnUse"><path d="M0 0H60V60H0Z" fill="#a9abb1"/><path d="M0 0H30V30H0ZM30 30H60V60H30Z" fill="#3c4759"/></pattern></defs>
-        <rect width="330" height="420" rx="16" fill="url(#te-wall)"/><rect x="26" y="26" width="278" height="368" rx="4" fill="#202d41" stroke="#b79856" strokeWidth="2"/>
-        <rect x="76" y="106" width="178" height="208" fill="url(#te-floor)" stroke="#b79856" strokeWidth="3"/>
-        <path d="M39 67H58V304H39ZM272 67H291V304H272Z" fill="#526178"/>
-        {[3,4,6,7,8,9].map(y=><g key={y}><rect x="34" y={y*30+7} width="20" height="18" rx="3" fill="#796542"/><rect x="276" y={y*30+7} width="20" height="18" rx="3" fill="#796542"/></g>)}
-        <text x="165" y="20" textAnchor="middle" fill="#f0d391" fontSize="11" letterSpacing="3">ESTUDIO · RESPETO</text>
-        <path d="M145 396V409H185V396" stroke="#d6b575" strokeWidth="4" fill="none"/>
-        {TEMPLE_POINTS.map(p=><g key={p.id} transform={`translate(${p.x*30+15},${p.y*30+15})`}>
-          {p.id==='b'||p.id==='j'?<><rect x="-11" y="-24" width="22" height="42" rx="4" fill="#d1b77b"/><path d="M-15-24H15M-15 19H15" stroke="#f4dfa9" strokeWidth="5"/></>:<rect x="-14" y="-14" width="28" height="28" rx="6" fill="#1b2941" stroke={near?.id===p.id?'#86efac':'#d6b575'} strokeWidth="2"/>}
-          <text textAnchor="middle" dominantBaseline="central" fill={p.id==='b'||p.id==='j'?'#1e293b':'#f8e3b5'} fontSize="20" fontWeight="700">{p.glyph}</text>
-          {visited.includes(p.id)&&<circle cx="13" cy="-16" r="5" fill="#86efac"/>}
-        </g>)}
-        <g data-testid="temple-avatar" data-x={position.x} data-y={position.y} className="te-avatar" transform={`translate(${position.x*30+15},${position.y*30+15})`}>
-          <ellipse cy="12" rx="11" ry="4" fill="#0006"/><path d="M-6 7L-7 15M6 7L7 15" stroke="#192133" strokeWidth="5" strokeLinecap="round"/>
-          <rect x="-9" y="-3" width="18" height="16" rx="5" fill="#6585bf"/><path d="M-6 3H6V12H-6Z" fill="#fff4dd"/><path d="M-6 3L0 7L6 3" fill="#d2be91"/>
-          <circle cy="-9" r="7" fill="#e5bb90"/><path d="M-7-10Q-5-20 5-15L7-9" fill="#372d2b"/>
-        </g>
-      </svg>
-    </div>
-    <div className="te-controls"><div className="te-dpad"><span/>{control('Mover arriba','↑',0,-1)}<span/>{control('Mover izquierda','←',-1,0)}<span className="te-pad-center">✦</span>{control('Mover derecha','→',1,0)}<span/>{control('Mover abajo','↓',0,1)}<span/></div><div className="te-action"><p aria-live="polite">{near?near.title:'Acércate a un punto dorado'}</p><button className="te-learn" disabled={!near||!!lesson} onClick={openLesson}>Aprender</button><button className="te-reset" onClick={()=>{stop();setPosition(TEMPLE_START);setLesson(undefined);board.current?.focus();}}>Volver a la entrada</button></div></div>
-    <p className="te-note">Solo enseñanza introductoria de Aprendiz. Plano ilustrativo: la ubicación y enseñanza de los símbolos se confirma con tu instructor y el rito de tu taller.</p>
-    {visited.length===TEMPLE_POINTS.length&&<p className="te-complete" role="status">Recorrido completado. Lleva tus reflexiones a tu próxima tenida.</p>}
-    {lesson&&<div className="te-overlay"><section className="te-lesson" role="dialog" aria-modal="true" aria-labelledby="te-lesson-title" onKeyDown={e=>{if(e.key==='Tab'){e.preventDefault();e.currentTarget.querySelector<HTMLButtonElement>('button')?.focus();}if(e.key==='Escape'){setLesson(undefined);board.current?.focus();}}}>
-      <p className="te-grade">Aprendiz · punto {TEMPLE_POINTS.findIndex(p=>p.id===lesson.id)+1}</p><h3 id="te-lesson-title">{lesson.title}</h3><p>{lesson.text}</p><div className="te-reflection">{lesson.reflection}</div><button autoFocus className="te-learn" onClick={()=>{setLesson(undefined);board.current?.focus();}}>Seguir explorando</button>
-    </section></div>}
-  </div>;
+export default function TempleExplorer({user}:{user:User}){
+ const host=useRef<HTMLDivElement>(null),engine=useRef<TempleScene>(),keys=useRef(new Set<string>()),stick=useRef({f:0,s:0}),drag=useRef<{id:number;x:number;y:number}>(),knob=useRef<HTMLSpanElement>(null);
+ const [body,setBody]=useState<Body>(WORLD_START),[near,setNear]=useState<WorldPoint>(),[lesson,setLesson]=useState<WorldPoint>(),[reading,setReading]=useState(false),[visited,setVisited]=useState<string[]>([]),[ready,setReady]=useState(false),[error,setError]=useState(''),[retry,setRetry]=useState(0),[fullscreen,setFullscreen]=useState(false);
+ const sceneRoot=useRef<HTMLDivElement>(null),paused=useRef(false),nearRef=useRef(near);nearRef.current=near;paused.current=!!lesson||reading;
+ const storageKey=`temple-apprentice:${user.groupId}:${user.uid}`;
+ const neutral=()=>{keys.current.clear();stick.current={f:0,s:0};if(knob.current)knob.current.style.transform='translate(0px,0px)';engine.current?.input(0,0,0);};
+ const input=()=>{const k=keys.current;engine.current?.input(stick.current.f+Number(k.has('w')||k.has('arrowup'))-Number(k.has('s')||k.has('arrowdown')),stick.current.s+Number(k.has('d'))-Number(k.has('a')),Number(k.has('arrowright'))-Number(k.has('arrowleft')));};
+ const openLesson=()=>{const point=nearRef.current;if(!point||paused.current)return;neutral();setLesson(point);setVisited(old=>{const next=[...new Set([...old,point.id])];try{localStorage.setItem(storageKey,JSON.stringify(next));}catch{}return next;});};
+ useEffect(()=>{setVisited([]);try{const v=JSON.parse(localStorage.getItem(storageKey)||'[]');if(Array.isArray(v))setVisited([...new Set(v.filter(x=>WORLD_POINTS.some(p=>p.id===x)))]);}catch{}},[storageKey]);
+ useEffect(()=>{let gone=false;setReady(false);setError('');void import('../services/templeScene').then(({TempleScene})=>{if(gone||!host.current)return;try{engine.current=new TempleScene(host.current,(p,n)=>{if(!gone){setBody(p);setNear(n);}},message=>{if(!gone)setError(message);});engine.current.pause(paused.current);setReady(true);}catch{setError('Este navegador no pudo iniciar la vista 3D. Activa la aceleración gráfica o prueba otro navegador. Puedes consultar el PDF.');}}).catch(()=>setError('No se pudo cargar el templo. Revisa la conexión y vuelve a cargar.'));
+  const keydown=(e:KeyboardEvent)=>{if(paused.current||!sceneRoot.current?.contains(document.activeElement)||['INPUT','TEXTAREA','IFRAME'].includes((e.target as HTMLElement)?.tagName))return;const key=e.key.toLowerCase();if(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(key)){e.preventDefault();keys.current.add(key);input();}if(key==='e'&&nearRef.current){e.preventDefault();openLesson();}};
+  const keyup=(e:KeyboardEvent)=>{keys.current.delete(e.key.toLowerCase());input();};const blur=()=>neutral();const visibility=()=>{if(document.hidden)neutral();};window.addEventListener('keydown',keydown);window.addEventListener('keyup',keyup);window.addEventListener('blur',blur);document.addEventListener('visibilitychange',visibility);
+  return()=>{gone=true;neutral();engine.current?.dispose();engine.current=undefined;window.removeEventListener('keydown',keydown);window.removeEventListener('keyup',keyup);window.removeEventListener('blur',blur);document.removeEventListener('visibilitychange',visibility);};
+ },[user.uid,user.groupId,retry]);
+ useEffect(()=>{engine.current?.pause(!!lesson||reading);if(lesson||reading)neutral();},[lesson,reading]);
+ useEffect(()=>{const update=()=>setFullscreen(document.fullscreenElement===sceneRoot.current);document.addEventListener('fullscreenchange',update);return()=>document.removeEventListener('fullscreenchange',update);},[]);
+ const closeLesson=()=>{setLesson(undefined);sceneRoot.current?.focus();};
+ const stickMove=(e:React.PointerEvent<HTMLDivElement>)=>{const rect=e.currentTarget.getBoundingClientRect(),dx=e.clientX-rect.left-rect.width/2,dy=e.clientY-rect.top-rect.height/2,len=Math.max(36,Math.hypot(dx,dy)),x=dx/len,y=dy/len;stick.current={f:-y,s:x};if(knob.current)knob.current.style.transform=`translate(${x*30}px,${y*30}px)`;input();};
+ return <div className="te-shell te-world-shell">
+  <div className="te-heading"><div><h2>Explorar el templo</h2><p>Aprendiz · {visited.length}/{WORLD_POINTS.length} puntos</p></div><FirstDegreePdf onOpenChange={setReading}/></div>
+  <p className="te-guide">Palanca: caminar. Arrastra la vista: girar. PC: WASD, flechas y E para aprender.</p>
+  <div className="te-world" ref={sceneRoot} tabIndex={0} role="region" aria-label="Templo 3D de Aprendiz">
+   <div className="te-viewport" ref={host}
+    onPointerDown={e=>{if(paused.current)return;e.currentTarget.setPointerCapture(e.pointerId);drag.current={id:e.pointerId,x:e.clientX,y:e.clientY};sceneRoot.current?.focus();}}
+    onPointerMove={e=>{const d=drag.current;if(!d||d.id!==e.pointerId||paused.current)return;engine.current?.look((e.clientX-d.x)*.006,-(e.clientY-d.y)*.004);drag.current={id:e.pointerId,x:e.clientX,y:e.clientY};}}
+    onPointerUp={()=>{drag.current=undefined;}} onPointerCancel={()=>{drag.current=undefined;}} onLostPointerCapture={()=>{drag.current=undefined;}}/>
+   <div className="te-world-top"><span>Grado 1 · Cámara al hombro</span><button onClick={()=>{if(document.fullscreenElement)void document.exitFullscreen?.();else if(sceneRoot.current?.requestFullscreen)void sceneRoot.current.requestFullscreen().catch(()=>setError('Tu navegador no admite pantalla completa. Puedes seguir en esta vista.'));else setError('Tu navegador no admite pantalla completa. Puedes seguir en esta vista.');}}>{fullscreen?'Salir de pantalla completa':'Ampliar'}</button></div>
+   {!ready&&!error&&<p className="te-loading" role="status">Preparando el templo…</p>}
+   <div className="te-world-controls"><div className="te-stick" role="group" aria-label="Palanca para caminar" onPointerDown={e=>{if(paused.current||!ready)return;e.preventDefault();e.currentTarget.setPointerCapture(e.pointerId);sceneRoot.current?.focus();stickMove(e);}} onPointerMove={e=>{if(e.currentTarget.hasPointerCapture(e.pointerId)&&!paused.current)stickMove(e);}} onPointerUp={neutral} onPointerCancel={neutral} onLostPointerCapture={neutral}><span className="te-stick-mark">✥</span><span className="te-stick-knob" ref={knob}/></div><div className="te-world-action"><p aria-live="polite">{near?.title||'Acércate a un símbolo'}</p><button className="te-learn" disabled={!near||!ready||!!lesson||reading} onClick={openLesson}>Aprender</button><div className="te-turn"><button aria-label="Girar izquierda" onClick={()=>engine.current?.look(-Math.PI/6,0)}>↶</button><button aria-label="Girar derecha" onClick={()=>engine.current?.look(Math.PI/6,0)}>↷</button></div></div></div>
+   <output className="te-position" data-testid="temple-avatar" data-x={body.x.toFixed(3)} data-z={body.z.toFixed(3)} data-yaw={body.yaw.toFixed(3)}>Cámara detrás del personaje</output>
+   {lesson&&<div className="te-overlay"><section className="te-lesson" role="dialog" aria-modal="true" aria-labelledby="te-lesson-title" onKeyDown={e=>{if(e.key==='Escape')closeLesson();if(e.key==='Tab'){const items=e.currentTarget.querySelectorAll<HTMLElement>('button,a');const first=items[0],last=items[items.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}}}}><p className="te-grade">Aprendiz · Liturgia de primer grado</p><h3 id="te-lesson-title">{lesson.title}</h3>{['minerva','hercules','venus'].includes(lesson.id)&&<div className={`te-portrait te-portrait-${lesson.id}`} style={{backgroundImage:"url('/temple/virtudes.webp')"}} role="img" aria-label={`Ilustración de ${lesson.title}`}/>}<p>{lesson.text}</p><p className="te-source">Referencia: páginas {lesson.pages.join(', ')} del PDF adjunto.{lesson.id.startsWith('zodiac-')&&' El orden de las doce columnas es una adaptación del recorrido.'}</p><FirstDegreePdf page={lesson.pages[0]} onOpenChange={setReading}/><button autoFocus className="te-learn" onClick={closeLesson}>Seguir explorando</button></section></div>}
+  </div>
+  <div className="te-under"><p className="te-note">Templo ilustrado según la distribución que compartiste y tu liturgia. Solo primer grado. Doce columnas zodiacales y tres apoyos simbólicos; las proporciones están adaptadas al juego.</p><button className="te-reset" disabled={!ready} onClick={()=>{neutral();engine.current?.reset();sceneRoot.current?.focus();}}>Volver a la entrada</button></div>
+  {error&&<div role="alert" className="te-error">{error}<button onClick={()=>setRetry(v=>v+1)}>Volver a cargar</button></div>}
+ </div>;
 }
