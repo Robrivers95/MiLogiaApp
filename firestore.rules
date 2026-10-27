@@ -352,6 +352,14 @@ service cloud.firestore {
                        (isSignedIn() && resource.data.challengerUid == request.auth.uid);
     }
 
+    // A single small first-degree PDF, published by the deployment service.
+    match /templeReadings/{readingId} {
+      allow get: if readingId == 'primer-grado' && isSignedIn() &&
+        (isMaster() || (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('active', false) == true));
+      allow list, write: if false;
+    }
+
     match /appConfig/{configId} {
       allow read: if true;
       allow write: if isMaster();

@@ -41,7 +41,7 @@ export class TempleScene {
   for(const x of [-3.1,3.1]){this.box(x,1.2,-8.8,3.4,.13,.17,'#d2ae61');for(let k=-1;k<=1;k++)this.cylinder(x+k*1.15,.61,-8.8,.06,1.2,'#bc954b');}
   this.box(0,.98,-12.8,2,.45,1.4,'#a18b62');this.chair(0,-12.8,1.1);this.box(0,2.0,-13.3,1.4,2,.15,'#bf9d5e');this.desk(0,-11.8,'Oriente',.72);
   for(const p of ZODIAC_COLUMNS){this.box(p.x,.14,p.z,1,.28,1,'#b9a78b');this.cylinder(p.x,2.38,p.z,.3,4.5,'#dbd3bb');this.box(p.x,4.72,p.z,.95,.25,.95,'#d0b073');this.label(`${p.glyph} ${p.title.replace('Columna de ','')}`,p.x,5.05,p.z,1.6);}
-  for(const [x,letter,globe] of [[-2.2,'B','#689889'],[2.2,'J','#698cb8']] as const){this.box(x,.18,9,1,.36,1,'#b18a4e');this.cylinder(x,1.9,9,.32,3.3,'#bd9654');this.box(x,3.6,9,.9,.24,.9,'#d4b677');this.sphere(x,4.08,9,.48,globe);for(let k=0;k<5;k++)this.sphere(x+Math.cos(k*Math.PI*.4)*.33,3.83,9+Math.sin(k*Math.PI*.4)*.33,.10,'#b97450');this.label(letter,x,2.6,8.63,.8);}
+  for(const [x,letter,globe] of [[-2.2,'B','#689889'],[2.2,'J','#698cb8']] as const){this.box(x,.18,9,1,.36,1,'#b18a4e');this.cylinder(x,1.9,9,.32,3.3,'#bd9654');this.box(x,3.6,9,.9,.24,.9,'#d4b677');this.sphere(x,4.08,9,.48,globe);for(let k=0;k<5;k++)this.sphere(x+Math.cos(k*Math.PI*.4)*.33,3.83,9+Math.sin(k*Math.PI*.4)*.33,.10,'#b97450');this.label(letter,x,2.6,8.63,.8);this.label(letter,x,2.6,9.37,.8);}
   const rough=this.mesh(new T.DodecahedronGeometry(.52,0),this.material('#9b927e'),-2.2,.45,10.5);rough.scale.set(1,.8,1);this.box(2.2,.4,10.5,.8,.8,.8,'#c5bda5');
   this.box(0,.6,0,1.35,1.2,1.35,'#bfab88');this.box(0,1.25,0,1.5,.12,1.5,'#803b51');this.box(0,1.35,0,.8,.1,.6,'#e7dcc0');this.label('Altar',0,1.9,0,1.3);
   // Square and compasses resting on the book, in the degree-one arrangement.

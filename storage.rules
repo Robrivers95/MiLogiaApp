@@ -21,12 +21,6 @@ service firebase.storage {
       allow update: if false;
     }
 
-    // The attached first-degree reading is published by CI, never by clients.
-    match /templeStudy/{fileName} {
-      allow read: if isSignedIn() && fileName == 'liturgia-primer-grado.pdf';
-      allow write: if false;
-    }
-
     // Biblioteca de Alejandría uploads. Existing files elsewhere are left untouched.
     match /library/{groupId}/{userId}/{fileName} {
       allow read: if isSignedIn();
@@ -56,7 +50,7 @@ service firebase.storage {
 
     // Existing receipt and notice uploads must retain their current behavior.
     match /{root}/{allPaths=**} {
-      allow read, write: if root != 'meetingAudio' && root != 'templeStudy' && isSignedIn();
+      allow read, write: if root != 'meetingAudio' && isSignedIn();
     }
   }
 }
