@@ -10,8 +10,8 @@ const people = Array.from({ length: 35 }, (_, i) => ({
   active: true,
   groupId: "test",
 }));
-const cloudMock = `export const meetingCloud={members:async()=>${JSON.stringify(people)},present:async()=>['m0','m1'],aiStatus:async()=>true,list:async()=>[],save:async d=>{window.__savedMeeting=d;return 1;},organize:async d=>({fields:d.fields.filter(f=>!f.manualOnly&&f.origin!=='manual').map(f=>({id:f.id,value:'Resumen actualizado',evidenceIds:d.texts.map(t=>t.id)}))})};`;
-const audioMock = `import {meetingAudio} from ${JSON.stringify(process.cwd() + "/services/meetingLocal.ts")};export const meetingAudioCloud={status:async()=>true,start:async(d,id,progress)=>{const key='job:'+id;if(!sessionStorage.getItem(key)){for(const take of d.takes){const blob=await meetingAudio(d.id,take.id,take.mime);if(!blob.size)throw Error('No audio');}window.__audioUploads=(window.__audioUploads||0)+d.takes.length;window.__generationCalls=(window.__generationCalls||0)+1;const result={texts:d.takes.map((take,i)=>({id:'text'+i,atMs:take.offsetMs,text:'Texto original del audio '+(i+1),speaker:null,source:'import'})),originalTranscript:d.takes.map((take,i)=>'Texto original del audio '+(i+1)).join('\\n\\n'),fields:d.fields.map(f=>({id:f.id,value:'Resumen de '+f.title,evidenceIds:['text0']}))};sessionStorage.setItem(key,JSON.stringify({state:'done',uid:d.ownerUid,input:{fields:d.fields},result}));}progress(100);return {jobId:id};},watch:(id,receive)=>{const timer=setTimeout(()=>receive(JSON.parse(sessionStorage.getItem('job:'+id))),80);return()=>clearTimeout(timer);}};export const audioFingerprint=d=>JSON.stringify({takes:d.takes,fields:d.fields.map(f=>({id:f.id,title:f.title,instruction:f.instruction}))});`;
+const cloudMock = `export const meetingCloud={members:async()=>${JSON.stringify(people)},present:async()=>['m0','m1'],aiStatus:async()=>true,list:async()=>[],save:async d=>{window.__savedMeeting=d;return 1;},organize:async d=>{window.__summaryCalls=(window.__summaryCalls||0)+1;return {fields:d.fields.filter(f=>!f.manualOnly&&f.origin!=='manual').map(f=>({id:f.id,value:'Resumen actualizado',evidenceIds:d.texts.map(t=>t.id)}))}}};`;
+const audioMock = `import {meetingAudio} from ${JSON.stringify(process.cwd() + "/services/meetingLocal.ts")};export const meetingAudioCloud={status:async()=>true,start:async(d,id,progress)=>{const key='job:'+id;if(!sessionStorage.getItem(key)){for(const take of d.takes){const blob=await meetingAudio(d.id,take.id,take.mime);if(!blob.size)throw Error('No audio');}window.__requestedAudioFields=d.fields.length;window.__audioUploads=(window.__audioUploads||0)+d.takes.length;window.__generationCalls=(window.__generationCalls||0)+1;const result={texts:d.takes.map((take,i)=>({id:'text'+i,atMs:take.offsetMs,text:'Texto original del audio '+(i+1),speaker:null,source:'import'})),originalTranscript:d.takes.map((take,i)=>'Texto original del audio '+(i+1)).join('\\n\\n'),fields:d.fields.map(f=>({id:f.id,value:'Resumen de '+f.title,evidenceIds:['text0']}))};sessionStorage.setItem(key,JSON.stringify({state:'done',uid:d.ownerUid,input:{fields:d.fields},result}));}progress(100);return {jobId:id};},watch:(id,receive)=>{const timer=setTimeout(()=>receive(JSON.parse(sessionStorage.getItem('job:'+id))),80);return()=>clearTimeout(timer);}};export const audioFingerprint=d=>JSON.stringify({takes:d.takes,fields:d.fields.map(f=>({id:f.id,title:f.title,instruction:f.instruction}))});`;
 await build({
   entryPoints: ["tests/secretariat-mobile-fixture.tsx"],
   outfile: "tests/secretariat-mobile-browser.js",
@@ -84,7 +84,8 @@ try {
   });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  page.on("dialog", (d) => d.accept());
+  let allowSummary = true;
+  page.on("dialog", (d) => allowSummary ? d.accept() : d.dismiss());
   mkdirSync("test-results", { recursive: true });
   await page.addInitScript(() => {
     const Original = window.MediaRecorder;
@@ -194,6 +195,11 @@ try {
     .getByRole("button", { name: "Grabar otro audio", exact: true })
     .waitFor();
   await page.getByText("Audios guardados (2)", { exact: true }).waitFor();
+  assert.equal(await page.getByLabel("Transcripción completa", {exact:true}).count(), 1);
+  assert.equal(await page.getByLabel("Resumen de IA", {exact:true}).inputValue(), "");
+  assert.equal(await page.evaluate(() => window.__generationCalls || 0), 0, "recording does not call Gemini");
+  assert.equal(await page.evaluate(() => window.__summaryCalls || 0), 0, "recording does not create a summary");
+
   for (const width of [320, 390, 1440]) {
     await page.setViewportSize({ width, height: 844 });
     assert.ok(
@@ -227,21 +233,29 @@ try {
     "second audio is a real independently downloadable recording",
   );
   await page
-    .getByRole("button", { name: "Transcribir y crear informe", exact: true })
+    .getByRole("button", { name: "Transcribir audios", exact: true })
     .click();
   await page
-    .getByText("Transcripción original e informe guardados por separado.", {
+    .getByText("Transcripción completa guardada.", {
       exact: false,
     })
     .waitFor();
   assert.equal(await page.evaluate(() => window.__generationCalls), 1);
   assert.equal(await page.evaluate(() => window.__audioUploads), 2);
-  assert.equal(
-    await page
-      .getByRole("heading", { name: "Informe de la reunión", exact: true })
-      .count(),
-    1,
-  );
+  assert.equal(await page.evaluate(() => window.__requestedAudioFields), 0, "audio transcription does not request a summary");
+  assert.equal(await page.evaluate(() => window.__summaryCalls || 0), 0);
+  assert.equal(await page.getByLabel("Resumen de IA", {exact:true}).inputValue(), "");
+  assert.match(await page.getByLabel("Transcripción completa", {exact:true}).inputValue(), /audio 1[\s\S]*audio 2/);
+  allowSummary = false;
+  await page.getByRole("button", {name:"Resumir con IA",exact:true}).click();
+  assert.equal(await page.evaluate(() => window.__summaryCalls || 0), 0, "canceling end-of-meeting confirmation never calls IA");
+  allowSummary = true;
+  await page.getByRole("button", {name:"Resumir con IA",exact:true}).click();
+  await page.getByText("Resumen de IA guardado.", {exact:false}).waitFor();
+  assert.equal(await page.evaluate(() => window.__summaryCalls), 1);
+  assert.equal(await page.evaluate(() => window.__generationCalls), 1, "summary uses text without reprocessing audio");
+  assert.match(await page.getByLabel("Resumen de IA", {exact:true}).inputValue(), /Resumen actualizado/);
+  await page.getByRole("button", {name:"Revisar acta y tareas",exact:true}).click();
   await page.getByRole("button", { name: "Editar", exact: true }).click();
   await page
     .getByLabel("Editar Trazados expuestos", { exact: true })
@@ -250,18 +264,10 @@ try {
     .getByRole("navigation", { name: "Pasos de secretaría" })
     .getByRole("button", { name: "Transcripción", exact: true })
     .click();
-  await page
-    .getByText("Texto original del audio 1", { exact: false })
-    .waitFor();
-  assert.equal(
-    await page.getByRole("textbox").count(),
-    0,
-    "original transcript is read-only",
-  );
-  assert.equal(
-    await page.getByText("Informe corregido a mano", { exact: true }).count(),
-    0,
-  );
+  assert.match(await page.getByLabel("Transcripción completa", {exact:true}).inputValue(), /Texto original del audio 1/);
+  assert.equal(await page.getByLabel("Transcripción completa", {exact:true}).evaluate(e=>e.readOnly), true);
+  assert.match(await page.getByLabel("Resumen de IA", {exact:true}).inputValue(), /Informe corregido a mano/);
+  assert.doesNotMatch(await page.getByLabel("Transcripción completa", {exact:true}).inputValue(), /Informe corregido a mano/);
   const transcriptDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "Descargar", exact: true }).click();
   assert.match(
@@ -272,7 +278,7 @@ try {
   await page.reload();
   await page
     .getByRole("navigation", { name: "Pasos de secretaría" })
-    .getByRole("button", { name: "Informe y tareas", exact: true })
+    .getByRole("button", { name: "Acta y tareas", exact: true })
     .click();
   await page.getByText("Informe corregido a mano", { exact: true }).waitFor();
   assert.equal(
@@ -287,7 +293,7 @@ try {
   assert.equal(
     await page
       .getByRole("button", {
-        name: "Transcripción e informe listos",
+        name: "Audios transcritos",
         exact: true,
       })
       .isDisabled(),
@@ -299,9 +305,18 @@ try {
       .isEnabled(),
     true,
   );
+  await recorder.getByRole("button", {name:"Grabar otro audio",exact:true}).click();
+  await recorder.getByRole("button", {name:"Terminar audio",exact:true}).waitFor();
+  await page.waitForTimeout(400);
+  await recorder.getByRole("button", {name:"Terminar audio",exact:true}).click();
+  await recorder.getByRole("button", {name:"Grabar otro audio",exact:true}).waitFor();
+  assert.equal(await page.getByRole("button", {name:"Resumir con IA",exact:true}).isDisabled(), true, "new untranscribed audio must be included before another summary");
+  assert.match(await page.getByLabel("Resumen de IA", {exact:true}).inputValue(), /Informe corregido a mano/, "previous acta survives extra audio");
+  assert.equal(await page.evaluate(() => window.__summaryCalls || 0), 0);
+  assert.equal(await page.evaluate(() => window.__generationCalls || 0), 0);
   assert.deepEqual(errors, []);
   console.log(
-    "Compact secretary browser passed: visible mobile controls, real native pause/resume and finish while paused, second audio preserved/downloadable, live interim captions, present-member picker, one multi-audio generation, separate original and editable report, durable reload without another model call and 320/390/1440 widths.",
+    "Compact secretary browser passed: visible mobile controls, real native pause/resume and finish while paused, second audio preserved/downloadable, live interim captions, present-member picker, transcription-only multi-audio generation, explicit confirmed text-only summary, two visible read-only text boxes and editable acta, durable reload without another model call and 320/390/1440 widths.",
   );
 } finally {
   await browser?.close();
