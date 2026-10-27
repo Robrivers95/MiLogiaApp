@@ -311,6 +311,7 @@ try {
   );
   assert.equal(await recorder.getByRole("button", {name:"Grabar otro audio",exact:true}).isDisabled(), true, "finished meeting remains finished after reload");
   await recorder.getByRole("button", {name:"Continuar tenida",exact:true}).click();
+  await page.getByText("Tenida en curso. Puedes grabar otro audio sin perder los anteriores.", {exact:true}).waitFor();
   assert.equal(
     await recorder
       .getByRole("button", { name: "Grabar otro audio", exact: true })

@@ -9,6 +9,7 @@ import {MEMBER_ACCESS_ENABLED} from './services/features';
 import RequiredPasswordChange from './components/RequiredPasswordChange';
 import {validLodgeLogo} from './services/lodgeIdentity';
 import Secretariat from './components/Secretariat';
+import TempleExplorer from './components/TempleExplorer';
 import CaptureAssistant from './components/CaptureAssistant';
 import {canUseSecretariat} from './services/meetingModel';
 import Auth from './components/Auth';
@@ -161,6 +162,7 @@ const App: React.FC = () => {
         {view === 'capture' && <CaptureAssistant key={`${user.uid}:${activeUserContext.groupId}`} user={activeUserContext} suspended={groupSuspended}/>}
         {view === 'secretariat' && canUseSecretariat(activeUserContext) && <Secretariat key={`${user.uid}:${activeUserContext.groupId}`} user={activeUserContext} suspended={groupSuspended}/>}
         {view === 'secretariat' && !canUseSecretariat(activeUserContext) && <p className="p-5 text-red-300">Este apartado requiere autorización de Secretaría.</p>}
+        {view === 'temple-explorer' && <TempleExplorer key={`${user.uid}:${activeUserContext.groupId}`} user={activeUserContext}/>}
         {view === 'home' && <Dashboard user={activeUserContext} />}
         {view === 'notices' && <Notices user={activeUserContext} />}
         {view === 'payments' && <Payments user={activeUserContext} />}
