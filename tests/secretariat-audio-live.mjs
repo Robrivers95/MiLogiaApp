@@ -9,7 +9,7 @@ const {
   validateAudioResult,
 } = require("../functions/lib/meetingAudioPolicy.js");
 const key = process.env.MEETING_GEMINI_KEY,
-  model = process.env.MEETING_GEMINI_MODEL || "gemini-flash-latest";
+  model = process.env.MEETING_GEMINI_MODEL || "gemini-3.1-flash-lite";
 if (!key) throw Error("Missing server test key");
 const buffer = Buffer.from(
   readFileSync("tests/fixtures/meeting-smoke.m4a.b64", "utf8").trim(),
@@ -58,7 +58,11 @@ try {
       signal: AbortSignal.timeout(180000),
     },
   );
-  if (!response.ok) throw Error("Gemini audio smoke HTTP " + response.status);
+  if (!response.ok) {
+    const failure=await response.json().catch(()=>({}));
+    const reason=String(failure.error?.message||'').split(key).join('[redacted]').replace(/https?:\/\/\S+/g,'[endpoint]').slice(0,300);
+    throw Error("Gemini audio smoke HTTP " + response.status+': '+reason);
+  }
   const body = await response.json(),
     candidate = body.candidates?.[0];
   if (candidate?.finishReason !== "STOP")

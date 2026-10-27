@@ -2,7 +2,7 @@ name: Verify Gemini audio with synthetic speech
 on:
   push:
     branches: [feat/mobile-secretariat]
-    paths: ['tests/fixtures/meeting-smoke.m4a.b64']
+    paths: ['tests/fixtures/meeting-smoke.m4a.b64', '.github/workflows/meeting-audio-smoke.yml', 'tests/secretariat-audio-live.mjs']
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,5 +21,5 @@ jobs:
       - name: One real transcription and summary using synthetic M4A
         env:
           MEETING_GEMINI_KEY: ${{ secrets.API_KEY_GEMINI_FREE || secrets.GEMINI_API_KEY || secrets.API_KEY }}
-          MEETING_GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          MEETING_GEMINI_MODEL: ${{ vars.GEMINI_AUDIO_MODEL || 'gemini-3.1-flash-lite' }}
         run: node tests/secretariat-audio-live.mjs

@@ -166,7 +166,10 @@ export const processMeetingAudio = functions
     });
     if (!claimed) return;
     const key = process.env.GEMINI_API_KEY || process.env.API_KEY || "",
-      model = process.env.GEMINI_MODEL || "gemini-flash-latest";
+      model =
+        process.env.GEMINI_AUDIO_MODEL ||
+        process.env.GEMINI_MODEL ||
+        "gemini-3.1-flash-lite";
     const deadline = Date.now() + 450000;
     const googleFiles: { name: string; uri: string; mime: string }[] = [];
     const lease = db.doc(`secretariatAnalysisLocks/${initial.uid}`),
@@ -186,7 +189,12 @@ export const processMeetingAudio = functions
           throw Error(
             "Ya hay otro análisis en curso. Espera antes de volver a intentar.",
           );
-        tx.set(lease, { inProgress: true, kind: 'audio', startedAt: Date.now(), operationId });
+        tx.set(lease, {
+          inProgress: true,
+          kind: "audio",
+          startedAt: Date.now(),
+          operationId,
+        });
       });
       ownsLease = true;
       const bucket = admin.storage().bucket(AUDIO_BUCKET);
@@ -260,7 +268,9 @@ export const processMeetingAudio = functions
         throw Error(
           response.status === 429
             ? "Google alcanzó el límite del plan. Conserva los audios e intenta más tarde."
-            : "Google no aceptó el análisis de audio. Revisa el modelo y la conexión.",
+            : response.status >= 500
+              ? "Google está temporalmente saturado. Conserva el audio e intenta más tarde."
+              : "Google no aceptó el análisis de audio. Revisa el modelo y la conexión.",
         );
       const body: any = await response.json(),
         candidate = body.candidates?.[0];

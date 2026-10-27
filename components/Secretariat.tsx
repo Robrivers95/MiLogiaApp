@@ -389,6 +389,7 @@ export default function Secretariat({
         if (alive.current) setBackup({ take, blob });
       },
       state: (value) => {
+        if (recorder.current !== r) return;
         statusRef.current = value;
         if (!alive.current) return;
         setStatus(value);
@@ -1051,9 +1052,10 @@ export default function Secretariat({
                   disabled={!reportExists}
                   onClick={() =>
                     exportText(
-                      draft.fields
-                        .map((f) => f.title + "\n" + (f.value || "Pendiente"))
-                        .join("\n\n") +
+                      `${draft.title}\nFecha: ${draft.date}\n${draft.reviewedAt ? "Revisado por Secretaría" : "BORRADOR PENDIENTE DE REVISIÓN"}\n\n` +
+                        draft.fields
+                          .map((f) => f.title + "\n" + (f.value || "Pendiente"))
+                          .join("\n\n") +
                         "\n\nNotas\n" +
                         draft.notes,
                       "informe",

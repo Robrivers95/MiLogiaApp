@@ -26,6 +26,7 @@ await build({
           (args) => ({ path: args.path, namespace: "mock" }),
         );
         b.onLoad({ filter: /.*/, namespace: "mock" }, (args) => ({
+          resolveDir: process.cwd(),
           contents: args.path.endsWith("meetingAudioCloud")
             ? audioMock
             : args.path.endsWith("taskCaptureCloud")
@@ -48,6 +49,12 @@ writeFileSync(
       '<link rel="stylesheet" href="/tests/secretariat-mobile-browser.css"></head>',
     ),
 );
+if (process.env.LOGIA_TEST_BUILD_ONLY) {
+  for (const suffix of ["js", "html", "css"])
+    rmSync("tests/secretariat-mobile-browser." + suffix, { force: true });
+  console.log("Mobile fixture bundle passed.");
+  process.exit(0);
+}
 const server = spawn(
   process.execPath,
   ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", "5188"],
