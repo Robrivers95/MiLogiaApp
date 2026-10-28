@@ -15,6 +15,7 @@ import AdminProjects from './AdminProjects';
 import AdminNavigation from './AdminNavigation';
 import { AdminTab as Tab } from './adminNavigation';
 import MemberManagement from './MemberManagement';
+import MemberStatusDialog from './MemberStatusDialog';
 import TreasuryReport from './TreasuryReport';
 import { searchMembers, MemberSort } from '../services/memberDirectory';
 
@@ -37,6 +38,8 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [syncing, setSyncing] = useState(false); 
   const [changingMemberStatus, setChangingMemberStatus] = useState(false);
   const memberStatusBusy = React.useRef(false);
+  const [memberStatusChange, setMemberStatusChange] = useState<{member: User; groupId: string; date: string} | null>(null);
+  const [memberStatusError, setMemberStatusError] = useState('');
   const [applyingExtra, setApplyingExtra] = useState(false);
   
   // Financial Stats Cache
@@ -1012,27 +1015,35 @@ const Admin: React.FC<Props> = ({ user }) => {
   const handleToggleActive = async (uid: string, current: boolean) => {
     if (isReadOnly || memberStatusBusy.current) return;
     const targetUser = users.find(u => u.uid === uid);
+    if (!targetUser) {showMessage('No se encontró el hermano. Actualiza la lista.', 'error'); return;}
     const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-    const date = window.prompt(current
-      ? 'Fecha de baja (YYYY-MM-DD). El historial contable se conservará:'
-      : targetUser?.leaveDate
-        ? 'Fecha de reingreso (YYYY-MM-DD). Las cuotas correrán desde esta fecha:'
-        : 'Fecha de entrada (YYYY-MM-DD). Las cuotas correrán desde esta fecha:',
-      (current ? targetUser?.leaveDate : targetUser?.masonicRejoinDate) || today);
-    if (date === null || !date.trim()) return;
+    setMemberStatusError('');
+    setMemberStatusChange({member: {...targetUser, active: current}, groupId: user.groupId,
+      date: (current ? targetUser.leaveDate : targetUser.masonicRejoinDate) || today});
+  };
+
+  const confirmMemberStatus = async (date: string) => {
+    if (!memberStatusChange || memberStatusBusy.current) return;
+    if (isReadOnly || memberStatusChange.groupId !== user.groupId) {
+      setMemberStatusError('La logia o tus permisos cambiaron. Cierra esta ventana y actualiza la lista.'); return;
+    }
+    const {member: targetUser, groupId} = memberStatusChange;
+    const current = targetUser.active;
     memberStatusBusy.current = true;
     setChangingMemberStatus(true);
+    setMemberStatusError('');
     try {
-      await dataService.changeMemberStatus(user.groupId, uid, !current, date.trim());
+      await dataService.changeMemberStatus(groupId, targetUser.uid, !current, date.trim());
+      setMemberStatusChange(null);
       showMessage(current
         ? 'Usuario dado de baja; conserva historial y ya no recibe cargos ni notificaciones.'
         : targetUser?.leaveDate ? 'Usuario reactivado desde la fecha de reingreso.' : 'Hermano aceptado y activado en la logia.');
       await loadUsers();
     } catch (error: any) {
       console.error('Error cambiando estado del miembro', error);
-      showMessage(error?.code === 'permission-denied'
+      setMemberStatusError(error?.code === 'permission-denied'
         ? 'No se pudo guardar: tu sesión no tiene permiso para esta logia. Vuelve a iniciar sesión y reintenta.'
-        : `No se pudo guardar el estado: ${error?.message || 'Intenta de nuevo.'}`, 'error');
+        : `No se pudo guardar el estado: ${error?.message || 'Intenta de nuevo.'}`);
     } finally {
       memberStatusBusy.current = false;
       setChangingMemberStatus(false);
@@ -2618,6 +2629,9 @@ const Admin: React.FC<Props> = ({ user }) => {
 
   return (
     <div className="pb-24">
+      {memberStatusChange && <MemberStatusDialog key={`${memberStatusChange.groupId}:${memberStatusChange.member.uid}`}
+        member={memberStatusChange.member} initialDate={memberStatusChange.date} busy={changingMemberStatus} error={memberStatusError}
+        onConfirm={confirmMemberStatus} onClose={() => {if (!memberStatusBusy.current) {setMemberStatusChange(null); setMemberStatusError('');}}} />}
       <AdminNavigation activeTab={activeTab} onSelect={setActiveTab} pendingCount={pendingUsers.length} readOnly={isReadOnly} />
       <div className="flex flex-wrap justify-between gap-2 px-4 py-2 border-b border-logia-700 text-xs text-gray-400">
         <span>{activeUsers} miembros activos · {mxTime || '--:--'} CDMX</span>
