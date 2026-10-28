@@ -63,10 +63,13 @@ jobs:
       - name: Install Chromium
         timeout-minutes: 5
         run: npx playwright install chromium
+      - name: Install WebKit for mobile admission
+        timeout-minutes: 5
+        run: npx playwright install --with-deps webkit
       - name: Verify responsive member UI
         run: node tests/member-ui.mjs
       - name: Verify administrator admission in the real mobile Admin screen
-        run: node tests/member-admission-ui.mjs
+        run: node tests/member-admission-ui.mjs && LOGIA_ADMISSION_BROWSER=webkit node tests/member-admission-ui.mjs
       - name: Verify WhatsApp reminders
         run: node tests/whatsapp-ui.mjs
       - name: Verify quick finance
