@@ -35,6 +35,8 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [msgType, setMsgType] = useState<'success' | 'error'>('success');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [syncing, setSyncing] = useState(false); 
+  const [changingMemberStatus, setChangingMemberStatus] = useState(false);
+  const memberStatusBusy = React.useRef(false);
   const [applyingExtra, setApplyingExtra] = useState(false);
   
   // Financial Stats Cache
@@ -1008,21 +1010,33 @@ const Admin: React.FC<Props> = ({ user }) => {
   };
 
   const handleToggleActive = async (uid: string, current: boolean) => {
-    if (isReadOnly) return;
+    if (isReadOnly || memberStatusBusy.current) return;
     const targetUser = users.find(u => u.uid === uid);
-    if (!current && targetUser && !targetUser.groupId) await dataService.assignUserToGroup(uid, user.groupId);
-    if (current) {
-      const leaveDate = window.prompt('Fecha de baja (YYYY-MM-DD). El historial contable se conservará:', targetUser?.leaveDate || new Date().toISOString().slice(0, 10));
-      if (!leaveDate) return;
-      await dataService.updateUser(uid, { active: false, leaveDate });
-      showMessage('Usuario dado de baja; conserva historial y ya no recibe cargos ni notificaciones.');
-    } else {
-      const rejoinDate = window.prompt('Fecha de reingreso (YYYY-MM-DD). Las cuotas correrán desde esta fecha:', targetUser?.masonicRejoinDate || new Date().toISOString().slice(0, 10));
-      if (!rejoinDate) return;
-      await dataService.updateUser(uid, { active: true, masonicRejoinDate: rejoinDate, leaveDate: undefined });
-      showMessage('Usuario reactivado desde la fecha de reingreso.');
+    const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    const date = window.prompt(current
+      ? 'Fecha de baja (YYYY-MM-DD). El historial contable se conservará:'
+      : targetUser?.leaveDate
+        ? 'Fecha de reingreso (YYYY-MM-DD). Las cuotas correrán desde esta fecha:'
+        : 'Fecha de entrada (YYYY-MM-DD). Las cuotas correrán desde esta fecha:',
+      (current ? targetUser?.leaveDate : targetUser?.masonicRejoinDate) || today);
+    if (date === null || !date.trim()) return;
+    memberStatusBusy.current = true;
+    setChangingMemberStatus(true);
+    try {
+      await dataService.changeMemberStatus(user.groupId, uid, !current, date.trim());
+      showMessage(current
+        ? 'Usuario dado de baja; conserva historial y ya no recibe cargos ni notificaciones.'
+        : targetUser?.leaveDate ? 'Usuario reactivado desde la fecha de reingreso.' : 'Hermano aceptado y activado en la logia.');
+      await loadUsers();
+    } catch (error: any) {
+      console.error('Error cambiando estado del miembro', error);
+      showMessage(error?.code === 'permission-denied'
+        ? 'No se pudo guardar: tu sesión no tiene permiso para esta logia. Vuelve a iniciar sesión y reintenta.'
+        : `No se pudo guardar el estado: ${error?.message || 'Intenta de nuevo.'}`, 'error');
+    } finally {
+      memberStatusBusy.current = false;
+      setChangingMemberStatus(false);
     }
-    await loadUsers();
   };
   
   const handleChangeRole = async (uid: string, newRole: Role) => {
@@ -2721,9 +2735,10 @@ const Admin: React.FC<Props> = ({ user }) => {
                                 <div className="flex gap-3">
                                     <button 
                                         onClick={() => handleToggleActive(u.uid, u.active)}
-                                        className="bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-6 rounded shadow-lg transform active:scale-95 transition-all"
+                                        disabled={isReadOnly || changingMemberStatus}
+                                        className="bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-6 rounded shadow-lg transform active:scale-95 transition-all disabled:opacity-50"
                                     >
-                                        ✅ Dar Entrada
+                                        {changingMemberStatus ? 'Guardando…' : '✅ Dar Entrada'}
                                     </button>
                                     <button 
                                         onClick={() => handleRejectUser(u.uid)}
