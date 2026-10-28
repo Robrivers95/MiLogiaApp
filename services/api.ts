@@ -1081,6 +1081,35 @@ export const dataService = {
     await updateDoc(doc(db, "users", uid), { active });
   },
 
+  changeMemberStatus: async (groupId: string, uid: string, active: boolean, effectiveDate: string) => {
+    const date = new Date(`${effectiveDate}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate) || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== effectiveDate) {
+      throw new Error('Escribe una fecha válida con formato YYYY-MM-DD.');
+    }
+    const actorUid = auth.currentUser?.uid;
+    if (!groupId || !uid || !actorUid) throw new Error('Selecciona una logia e inicia sesión de nuevo.');
+    // Keep assignment and activation together; canceling or a failed write must not move the profile.
+    await runTransaction(db, async transaction => {
+      const memberRef = doc(db, 'users', uid);
+      const [actorSnap, memberSnap] = await Promise.all([
+        transaction.get(doc(db, 'users', actorUid)), transaction.get(memberRef)
+      ]);
+      if (!actorSnap.exists() || !memberSnap.exists()) throw new Error('No se encontró el perfil. Actualiza la lista.');
+      const actor = actorSnap.data() as User, member = memberSnap.data() as User;
+      const master = actor.role === 'master';
+      if (!master && (actor.role !== 'admin' || !actor.active || actor.groupId !== groupId || member.role === 'master')) {
+        throw new Error('Solo un administrador de esta logia o Admin Master puede cambiar el estado.');
+      }
+      if (member.groupId && member.groupId !== groupId) throw new Error('El hermano pertenece a otra logia. Actualiza la lista.');
+      // Existing rules reserve reassignment of profiles without a lodge to Master.
+      if (!member.groupId && !master) throw new Error('Este perfil no tiene logia asignada. Admin Master debe asignarla antes de dar entrada.');
+      transaction.update(memberRef, {
+        ...(active ? { active: true, masonicRejoinDate: effectiveDate, leaveDate: deleteField() } : { active: false, leaveDate: effectiveDate }),
+        ...(!member.groupId && active ? { groupId } : {})
+      });
+    });
+  },
+
   assignUserToGroup: async (uid: string, groupId: string) => {
     await updateDoc(doc(db, "users", uid), { groupId });
   },
