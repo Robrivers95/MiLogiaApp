@@ -36,7 +36,7 @@ export const incomeCaptureApi={
    const receiptId=`ai-${id}`,urls=source.receiptImageUrls||[],now=new Date().toISOString();
    if(review.kind==='other'){
     const entryRef=doc(db,'groups',groupId,'treasury',receiptId),existing=await tx.get(entryRef);if(existing.exists())throw Error('Ya existe el ingreso vinculado.');
-    tx.set(entryRef,clean({id:receiptId,groupId,date,type:'income',amount,description:payload.concept,category:'otro',allocations:[{source:'tesoro_general',amount}],createdBy:by,createdAt:Date.now(),memberId:review.memberId,memberName:member.data().name,paymentMethod:review.paymentMethod,receiptImageUrls:urls,notes:`Captura IA aprobada. Referencia: ${source.reference||''}`,incomeDraftId:id,accountId:review.accountId}));
+    tx.set(entryRef,clean({id:receiptId,groupId,date,quotaPeriod:review.period,type:'income',amount,description:payload.concept,category:'otro',allocations:[{source:'tesoro_general',amount}],createdBy:by,createdAt:Date.now(),memberId:review.memberId,memberName:member.data().name,paymentMethod:review.paymentMethod,receiptImageUrls:urls,notes:`Captura IA aprobada. Referencia: ${source.reference||''}`,incomeDraftId:id,accountId:review.accountId}));
    }else{
     const ledgerRef=doc(db,'users',review.memberId,'ledger',review.period),proofRef=doc(db,'groups',groupId,'paymentReceipts',receiptId);
     const [ledger,proof]=await Promise.all([tx.get(ledgerRef),tx.get(proofRef)]);

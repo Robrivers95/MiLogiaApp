@@ -11,7 +11,7 @@ export async function analyzeIncome(data:any,uid:string,groupId:string,key:strin
   if (typeof data.text!=='string'||data.text.length>20000||!Array.isArray(data.images)||data.images.length>4||(!data.text.trim()&&!data.images.length)||!/^[-\w]{1,100}$/.test(data.requestId||'')) return fail('invalid-argument','Agrega texto y/o hasta cuatro imágenes.');
   try{captureDate(data.date,false);}catch{return fail('invalid-argument','Revisa la fecha de referencia.');}
   const images:{mimeType:string;bytes:Buffer}[]=data.images.map((im:any)=>{
-    if (!['image/jpeg','image/png','image/webp'].includes(im?.mimeType)||typeof im.data!=='string'||im.data.length>2800000||!/^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(im.data)) return fail('invalid-argument','Usa imágenes JPG, PNG o WebP de hasta 2 MB cada una.');
+    if (!['image/jpeg','image/png','image/webp'].includes(im?.mimeType)||typeof im.data!=='string'||im.data.length>2800000||(im.data.length%4!==0||!/^[A-Za-z0-9+/]*={0,2}$/.test(im.data))) return fail('invalid-argument','Usa imágenes JPG, PNG o WebP de hasta 2 MB cada una.');
     const bytes=Buffer.from(im.data,'base64');
     const valid=im.mimeType==='image/jpeg'?bytes[0]===255&&bytes[1]===216:im.mimeType==='image/png'?bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])):bytes.toString('ascii',0,4)==='RIFF'&&bytes.toString('ascii',8,12)==='WEBP';
     if (!valid||bytes.length===0||bytes.length>2*1024*1024) return fail('invalid-argument','Una imagen no tiene un formato válido.');
