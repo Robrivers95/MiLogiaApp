@@ -64,6 +64,8 @@ service cloud.firestore {
       allow get: if isSignedIn() && resource.data.uid == request.auth.uid && canUseMinutes(resource.data.groupId);
       allow list, write: if false;
     }
+    match /financeImportRequests/{requestId} { allow read, write: if false; }
+    match /financeImportLocks/{userId} { allow read, write: if false; }
     match /secretariatAnalysisLocks/{userId} { allow read, write: if false; }
 
     match /users/{userId} {
@@ -117,6 +119,17 @@ service cloud.firestore {
         (!request.resource.data.keys().hasAny(['logoImageUrl']) ||
           (request.resource.data.logoImageUrl is string && request.resource.data.logoImageUrl.size() <= 150000 &&
             (request.resource.data.logoImageUrl == '' || request.resource.data.logoImageUrl.matches('data:image/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+'))));
+
+      match /incomeDrafts/{draftId} {
+        allow read: if isMaster() || (isAdminOrMaster() &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId);
+        allow create, delete: if false;
+        allow update: if (isMaster() || (isAdminOrMaster() &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId)) && isGroupActive(groupId) &&
+          resource.data.status == 'pending' && request.resource.data.status in ['approved','rejected'] &&
+          request.resource.data.reviewedBy == request.auth.uid &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','reviewedBy','reviewedAt','approvedReview','receiptId']);
+      }
 
       match /minutes/{minuteId} {
         allow read: if canUseMinutes(groupId);

@@ -1,3 +1,4 @@
+import {analyzeIncome} from './meetingIncomeCapture';
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { createHash, randomUUID } from "crypto";
@@ -60,6 +61,7 @@ export const captureWithAI = functions
     const actor = await authorize((ref) => ref.get());
     const key = process.env.GEMINI_API_KEY || process.env.API_KEY;
     if (data.action === "status") return { configured: !!key };
+    if (data.action === "analyzeIncome") return analyzeIncome(data,uid,groupId,key,authorize);
     if (data.action === "confirmTasks") {
       if (data.confirmed !== true || !captureId(data.requestId))
         return fail(
