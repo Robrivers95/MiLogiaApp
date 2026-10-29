@@ -27,7 +27,7 @@ const query = (path) => ({
       .filter(
         (k) =>
           k.startsWith(path + "/") &&
-          k.split("/").length === 2 &&
+          !k.slice(path.length+1).includes("/") &&
           store.get(k).groupId === "lodge",
       )
       .map(snap),
@@ -43,15 +43,18 @@ const db = {
         get: async (r) => snap(r.path),
         set: (r, v) => writes.push([r.path, v]),
         update: (r, v) => writes.push([r.path, { ...store.get(r.path), ...v }]),
+        delete: r => writes.push([r.path, undefined]),
       };
       const result = await callback(tx);
-      writes.forEach(([k, v]) => store.set(k, structuredClone(v)));
+      writes.forEach(([k, v]) => v===undefined?store.delete(k):store.set(k, structuredClone(v)));
       return result;
     });
     queue = result.catch(() => {});
     return result;
   },
 };
+const proofs=new Map();
+const storage=()=>({bucket:()=>({name:'test-bucket',file:path=>({bucket:{name:'test-bucket'},save:async(bytes)=>proofs.set(path,bytes),delete:async()=>proofs.delete(path)})})});
 class HttpsError extends Error {
   constructor(code, message, details) {
     super(message);
@@ -85,7 +88,7 @@ const built = await build({
         b.onLoad({ filter: /.*/, namespace: "mock" }, (args) => ({
           contents:
             args.path === "firebase-admin"
-              ? "export const firestore=Object.assign(()=>globalThis.__db,{FieldValue:{delete:()=>null}});"
+              ? "export const storage=globalThis.__storage;export const firestore=Object.assign(()=>globalThis.__db,{FieldValue:{delete:()=>null}});"
               : "export const {region,https}=globalThis.__functions;",
         }));
       },
@@ -96,6 +99,8 @@ const context = {
   module: { exports: {} },
   require: createRequire(import.meta.url),
   __db: db,
+  __storage:storage,
+  Buffer,
   __functions: functions,
   Date: FakeDate,
   Set,
@@ -382,3 +387,28 @@ assert.ok(providerCalls >= 5);
 console.log(
   "Capture callable passed: explicit confirmation, corrected assignments, atomic/idempotent retries, groups/roles/suspension/session guards, individual/team creation, authorized completion, source validation and no task or money writes during AI analysis. No real model/accounts were used.",
 );
+
+// Multi-income drafts are persisted separately from all financial records.
+providerStatus=200;
+store.set('users/juan',{name:'Juan Pérez',role:'member',active:true,groupId:'lodge'});
+store.set('users/carlos',{name:'Carlos Ríos',role:'member',active:true,groupId:'lodge'});
+const importText='Juan Pérez pagó 100 de septiembre. Carlos Ríos pagó 200 de septiembre.';
+const row=(payerName,amount,sourceQuote)=>({payerName,amount,sourceQuote,date:'2026-10-29',period:'2026-09',kind:'regular',concept:'Cuota septiembre',paymentMethod:'transfer',reference:''});
+providerOutput={incomes:[row('Juan Pérez',100,'Juan Pérez pagó 100 de septiembre.'),row('Carlos Ríos',200,'Carlos Ríos pagó 200 de septiembre.')]};
+const incoming={action:'analyzeIncome',groupId:'lodge',requestId:'import-text',date:'2026-10-29',text:importText,images:[]};
+const callsBefore=providerCalls,financialBefore=[...store.keys()].filter(k=>k.includes('/ledger/')||k.includes('/treasury/')||k.includes('/paymentReceipts/')).length;
+const imported=await call(incoming,actor('master'));assert.equal(imported.ids.length,2);
+const drafts=imported.ids.map(id=>store.get('groups/lodge/incomeDrafts/'+id));assert.equal(drafts[0].memberId,'juan');assert.equal(drafts[1].memberId,'carlos');assert.ok(drafts.every(d=>d.status==='pending'));
+assert.equal([...store.keys()].filter(k=>k.includes('/ledger/')||k.includes('/treasury/')||k.includes('/paymentReceipts/')).length,financialBefore,'analysis never publishes money');
+await call(incoming,actor('master'));assert.equal(providerCalls,callsBefore+1,'lost-response retry reuses analysis and draft ids');
+await reject(()=>call({...incoming,text:'Other input'},actor('master')),'failed-precondition');
+await reject(()=>call({...incoming,requestId:'not-admin'},actor('member')),'permission-denied');
+const png=Buffer.from([137,80,78,71,13,10,26,10]).toString('base64');
+const pictured=await call({...incoming,requestId:'import-image',text:'',images:[{mimeType:'image/png',data:png}]},actor('admin'));
+assert.equal(pictured.ids.length,2);assert.equal(proofs.size,1,'one original-image copy backs both drafts');
+const pictureDraft=store.get('groups/lodge/incomeDrafts/'+pictured.ids[0]);assert.equal(pictureDraft.receiptImageUrls.length,1);assert.equal(pictureDraft.possibleDuplicate,true,'repeat imports are flagged');
+const body=JSON.parse(captured.options.body);assert.equal(body.contents[0].parts[1].inlineData.mimeType,'image/png');assert.equal(body.contents[0].parts[1].inlineData.data,png);
+await reject(()=>call({...incoming,requestId:'invalid-image',images:[{mimeType:'image/png',data:'AAAA'}]},actor('admin')),'invalid-argument');
+providerOutput={incomes:[row('Juan',100,'Juan Pérez pagó 100 de septiembre.')]};store.set('users/juan2',{name:'Juan López',role:'member',active:true,groupId:'lodge'});
+const ambiguous=await call({...incoming,requestId:'ambiguous'},actor('admin'));assert.equal(store.get('groups/lodge/incomeDrafts/'+ambiguous.ids[0]).memberId,'','ambiguous names require manual correction');
+console.log('Income import backend passed: separate text/image rows, only pending drafts, shared proof storage, idempotent retries, duplicate warning, ambiguous names, roles and invalid image guards.');

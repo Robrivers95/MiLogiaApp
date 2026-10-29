@@ -32,5 +32,14 @@ try{
  await assertFails(setDoc(doc(admin,'groups/other/tasks/foreign'),{title:'Otra logia'}));
  await assertFails(setDoc(doc(member,'taskCaptureRequests/fake'),{confirmed:true}));
  await assertFails(getDoc(doc(admin,'taskCaptureRequests/fake')));
+ await env.withSecurityRulesDisabled(async c=>setDoc(doc(c.firestore(),'groups/lodge/incomeDrafts/draft'),{status:'pending',amount:100,groupId:'lodge'}));
+ await assertSucceeds(getDoc(doc(admin,'groups/lodge/incomeDrafts/draft')));
+ await assertFails(getDoc(doc(member,'groups/lodge/incomeDrafts/draft')));
+ await assertFails(getDoc(doc(env.authenticatedContext('foreign',{auth_time:1000}).firestore(),'groups/lodge/incomeDrafts/draft')));
+ await assertFails(setDoc(doc(admin,'groups/lodge/incomeDrafts/new'),{status:'pending'}));
+ await assertFails(updateDoc(doc(admin,'groups/lodge/incomeDrafts/draft'),{amount:900}));
+ await assertSucceeds(updateDoc(doc(admin,'groups/lodge/incomeDrafts/draft'),{status:'approved',reviewedBy:'admin',reviewedAt:1000}));
+ await assertFails(updateDoc(doc(admin,'groups/lodge/incomeDrafts/draft'),{status:'pending'}));
+ await assertFails(getDoc(doc(admin,'financeImportRequests/private')));
  assert.ok(true);console.log('Firestore emulator passed: role escalation blocked, scoped admin, own profile editing, private server recovery state/audit, forced password gate and old-session revocation, lodge logo permissions.');
 }finally{await env.cleanup();}

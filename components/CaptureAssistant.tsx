@@ -1,3 +1,4 @@
+const IncomeCapture = React.lazy(() => import('./IncomeCapture'));
 import React, { useEffect, useRef, useState } from "react";
 import type { User, Task } from "../types";
 import {
@@ -44,7 +45,7 @@ export default function CaptureAssistant({
   });
   const [text, setText] = useState(initialText),
     [date, setDate] = useState(captureToday),
-    [mode, setMode] = useState<"tasks" | "finance">("tasks");
+    [mode, setMode] = useState<"tasks" | "finance" | "income">("tasks");
   const [proposals, setProposals] = useState<TaskProposal[]>(() =>
     pending ? pending.tasks.map((t) => ({ ...t, selected: true })) : [],
   );
@@ -140,7 +141,7 @@ export default function CaptureAssistant({
         user.groupId,
         source,
         date,
-        mode,
+        mode === "income" ? "finance" : mode,
       );
       if (!mounted.current || textRef.current !== source) return;
       if (mode === "finance") {
@@ -226,6 +227,10 @@ export default function CaptureAssistant({
       t.assignedTo === user.uid ||
       t.assignedToMany?.includes(user.uid),
   );
+  if (mode === 'income' && finance && !embedded) return <section className="p-4 space-y-4">
+    <button className={button} onClick={()=>setMode('tasks')}>Volver a tareas y captura por texto</button>
+    <React.Suspense fallback={<p>Cargando captura de ingresos…</p>}><IncomeCapture user={user} suspended={suspended}/></React.Suspense>
+  </section>;
   return (
     <section
       className={embedded ? "space-y-4 min-w-0" : "p-4 space-y-4 min-w-0"}
@@ -280,7 +285,8 @@ export default function CaptureAssistant({
               }}
             >
               <option value="tasks">Tareas, acuerdos y compromisos</option>
-              <option value="finance">Ingreso o gasto para revisión</option>
+              <option value="income">Ingresos de HH: texto, fotos y solicitudes</option>
+              <option value="finance">Ingreso o gasto individual para revisión</option>
             </select>
           </label>
         )}

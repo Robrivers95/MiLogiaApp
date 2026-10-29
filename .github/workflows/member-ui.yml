@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'components/Member*.tsx'
+      - 'components/IncomeCapture.tsx'
+      - 'services/incomeCaptureApi.ts'
+      - 'tests/income-capture*'
       - 'components/Admin.tsx'
       - 'components/ExistingFeeAssignment.tsx'
       - 'components/Payments.tsx'
@@ -72,6 +75,8 @@ jobs:
         run: node tests/member-admission-ui.mjs && LOGIA_ADMISSION_BROWSER=webkit node tests/member-admission-ui.mjs
       - name: Verify WhatsApp reminders
         run: node tests/whatsapp-ui.mjs
+      - name: Verify reviewed multi-income capture
+        run: node tests/income-capture-ui.mjs
       - name: Verify quick finance
         run: node tests/quick-finance-ui.mjs
       - name: Verify treasury report

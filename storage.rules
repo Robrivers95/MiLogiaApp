@@ -48,9 +48,14 @@ service firebase.storage {
       allow write: if false;
     }
 
+    // Statements and proofs can only be uploaded by the trusted import service.
+    match /financeEvidence/{allPaths=**} {
+      allow read, write: if false;
+    }
+
     // Existing receipt and notice uploads must retain their current behavior.
     match /{root}/{allPaths=**} {
-      allow read, write: if root != 'meetingAudio' && isSignedIn();
+      allow read, write: if root != 'meetingAudio' && root != 'financeEvidence' && isSignedIn();
     }
   }
 }
