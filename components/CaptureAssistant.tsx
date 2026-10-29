@@ -274,11 +274,7 @@ export default function CaptureAssistant({
             className={field}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder={
-              mode === "tasks"
-                ? "Se acordó que Carlos y Abraham organicen la visita. Carlos confirmará el lugar para el 15 de noviembre de 2026."
-                : "Juan abonó $500 en efectivo para su cuota de septiembre de 2026."
-            }
+            placeholder="Se acordó que Carlos y Abraham organicen la visita. Carlos confirmará el lugar para el 15 de noviembre de 2026."
           />
         </label>
         {embedded && (
@@ -297,7 +293,7 @@ export default function CaptureAssistant({
           >
             {busy ? "Procesando…" : "Interpretar con IA"}
           </button>
-          {mode === "tasks" && (
+          {(
             <button
               className={button}
               disabled={proposals.length >= 12}
