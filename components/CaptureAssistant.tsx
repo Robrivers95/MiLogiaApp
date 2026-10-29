@@ -1,4 +1,3 @@
-const IncomeCapture = React.lazy(() => import('./IncomeCapture'));
 import React, { useEffect, useRef, useState } from "react";
 import type { User, Task } from "../types";
 import {
@@ -44,8 +43,7 @@ export default function CaptureAssistant({
     }
   });
   const [text, setText] = useState(initialText),
-    [date, setDate] = useState(captureToday),
-    [mode, setMode] = useState<"tasks" | "finance" | "income">("tasks");
+    [date, setDate] = useState(captureToday);
   const [proposals, setProposals] = useState<TaskProposal[]>(() =>
     pending ? pending.tasks.map((t) => ({ ...t, selected: true })) : [],
   );
@@ -141,19 +139,9 @@ export default function CaptureAssistant({
         user.groupId,
         source,
         date,
-        mode === "income" ? "finance" : mode,
+        "tasks",
       );
       if (!mounted.current || textRef.current !== source) return;
-      if (mode === "finance") {
-        window.dispatchEvent(
-          new CustomEvent("prepare-finance-capture", {
-            detail: { groupId: user.groupId, proposal: result.finance },
-          }),
-        );
-        setNotice(
-          "Revisa el formulario de Captura rápida. Solo se guardará cuando confirmes allí; la cuota se elige después.",
-        );
-      } else {
         setProposals(
           result.tasks.map((t: TaskProposal) => ({ ...t, selected: true })),
         );
@@ -163,7 +151,6 @@ export default function CaptureAssistant({
             ? "Propuestas listas. Corrige los datos y confirma cuáles guardar."
             : "No se identificaron tareas o acuerdos. Puedes añadirlos manualmente.",
         );
-      }
     });
   const save = () =>
     run(async () => {
@@ -227,10 +214,6 @@ export default function CaptureAssistant({
       t.assignedTo === user.uid ||
       t.assignedToMany?.includes(user.uid),
   );
-  if (mode === 'income' && finance && !embedded) return <section className="p-4 space-y-4">
-    <button className={button} onClick={()=>setMode('tasks')}>Volver a tareas y captura por texto</button>
-    <React.Suspense fallback={<p>Cargando captura de ingresos…</p>}><IncomeCapture user={user} suspended={suspended}/></React.Suspense>
-  </section>;
   return (
     <section
       className={embedded ? "space-y-4 min-w-0" : "p-4 space-y-4 min-w-0"}
@@ -272,24 +255,6 @@ export default function CaptureAssistant({
         disabled={locked}
         className="bg-logia-800 border border-logia-700 rounded-xl p-4 space-y-3 min-w-0"
       >
-        {!embedded && finance && (
-          <label className="block">
-            Qué quieres preparar
-            <select
-              aria-label="Qué quieres preparar"
-              className={field}
-              value={mode}
-              onChange={(e) => {
-                setMode(e.target.value as any);
-                setReviewed(false);
-              }}
-            >
-              <option value="tasks">Tareas, acuerdos y compromisos</option>
-              <option value="income">Ingresos de HH: texto, fotos y solicitudes</option>
-              <option value="finance">Ingreso o gasto individual para revisión</option>
-            </select>
-          </label>
-        )}
         <label className="block">
           Fecha de referencia
           <input

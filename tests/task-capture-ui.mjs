@@ -223,40 +223,8 @@ try {
     0,
   );
   await reset("?role=admin");
-  await page
-    .getByLabel("Qué quieres preparar", { exact: true })
-    .selectOption("finance");
-  await page
-    .getByLabel("Texto para interpretar", { exact: true })
-    .fill("Juan abonó 500 para septiembre.");
-  await page
-    .getByRole("button", { name: "Interpretar con IA", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog", {
-    name: "Captura rápida",
-    exact: true,
-  });
-  await dialog.waitFor();
-  assert.equal(await page.evaluate(() => window.__moneySaves || 0), 0);
-  const moneyConfirm = page.getByRole("button", {
-    name: "Confirmar y guardar captura",
-    exact: true,
-  });
-  assert.equal(await moneyConfirm.isDisabled(), true);
-  await page.getByLabel("Monto", { exact: true }).fill("650");
-  await page
-    .getByLabel("Miembro opcional", { exact: true })
-    .selectOption("carlos");
-  await page.getByLabel("Revisé y confirmo el monto", { exact: false }).check();
-  await moneyConfirm.click();
-  await page.getByText(/Captura guardada/).waitFor();
-  assert.equal(await page.evaluate(() => window.__moneySaves), 1);
-  assert.equal(await page.evaluate(() => window.__moneyPayload.amount), 650);
-  assert.equal(
-    await page.evaluate(() => window.__moneyPayload.memberId),
-    "carlos",
-  );
-  await page.keyboard.press("Escape");
+  assert.equal(await page.getByLabel("Qué quieres preparar", {exact:true}).count(),0,"financial capture is no longer mixed into tasks");
+  assert.equal(await page.getByRole('button',{name:'Captura rápida de dinero',exact:true}).count(),1,'financial access remains available separately');
   await reset("?suspended");
   assert.equal(
     await page
@@ -276,7 +244,7 @@ try {
   );
   assert.deepEqual(errors, []);
   console.log(
-    "Browser capture passed: no writes before approval, editable assignees/details, approval reset, double click protection, durable retry, manual fallback, task completion confirmation, reviewed finance handoff, role/suspension gates and 320/390/1440 widths.",
+    "Browser capture passed: no writes before approval, editable assignees/details, approval reset, double click protection, durable retry, manual fallback, task completion confirmation, separate finance access, role/suspension gates and 320/390/1440 widths.",
   );
 } finally {
   await browser?.close();

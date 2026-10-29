@@ -1,6 +1,6 @@
 # Ingresos con texto e imágenes
 
-Ruta: Comunidad → Captura y tareas → Qué quieres preparar → Ingresos de HH: texto, fotos y solicitudes.
+Ruta: Gestionar → Finanzas → Tesorería → Ingresos con IA · texto o fotos. El botón flotante pequeño «$», arriba de la navegación inferior, abre directamente Ingresos IA. La captura de tareas sigue en Comunidad → Captura y tareas.
 
 Admin y Admin Master pueden agregar texto y hasta cuatro JPG, PNG o WebP. Las imágenes se preparan a una resolución máxima de 1800 px y se guardan como comprobantes de los borradores detectados. Una imagen de estado de cuenta puede respaldar varias solicitudes: se conserva la imagen completa, así que debe revisarse antes de aprobarla como comprobante para el miembro.
 

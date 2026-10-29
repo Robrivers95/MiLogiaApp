@@ -11,6 +11,10 @@ try {
     await page.getByRole('button',{name:'Captura rápida de dinero',exact:true}).click();
     const dialog=page.getByRole('dialog',{name:'Captura rápida',exact:true});await dialog.waitFor();
     await page.waitForFunction(()=>getComputedStyle(document.querySelector('[role="dialog"]')).position!=='static' || getComputedStyle(document.querySelector('[role="dialog"]').parentElement).position==='fixed');
+    await page.getByRole('heading',{name:'Ingresos de hermanos con IA',exact:true}).waitFor();
+    const shortcut=await page.getByRole('button',{name:'Captura rápida de dinero',exact:true}).boundingBox();assert.ok(shortcut.width>=44&&shortcut.width<=48,'subtle shortcut keeps a usable touch target');
+    await page.screenshot({path:`test-results/finance-shortcut-${role}-${width}.png`});
+    await page.getByRole('button',{name:'Nueva captura',exact:true}).click();
     await page.getByLabel('Monto',{exact:true}).fill('125.50');await page.getByLabel('Fecha',{exact:true}).fill('2026-09-15');await page.getByLabel('Nota opcional',{exact:true}).fill('Material de prueba');
     await page.getByLabel('Cuenta o caja opcional',{exact:true}).selectOption('cash');
     await page.getByLabel('Foto de cámara o galería (opcional)',{exact:true}).setInputFiles({name:'photo.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=','base64')});
@@ -29,6 +33,7 @@ try {
     assert.equal(await page.evaluate(()=>window.__applies),1);await page.getByRole('button',{name:/Ingreso.*Aplicado a cuota/}).waitFor();
     await page.keyboard.press('Escape');assert.equal(await dialog.count(),0);assert.equal(await page.getByRole('button',{name:'Captura rápida de dinero',exact:true}).evaluate(element=>document.activeElement===element),true);
   }
+  await page.goto('http://127.0.0.1:5181/tests/quick-finance.html?role=master');await page.getByRole('button',{name:'Captura rápida de dinero',exact:true}).waitFor();await page.evaluate(()=>window.dispatchEvent(new CustomEvent('open-income-capture',{detail:{groupId:'logia'}})));await page.getByRole('heading',{name:'Ingresos de hermanos con IA',exact:true}).waitFor();await page.getByRole('button',{name:'Cerrar captura rápida',exact:true}).click();
   for(const role of ['member','viewer']){await page.goto(`http://127.0.0.1:5181/tests/quick-finance.html?role=${role}`);await page.getByRole('heading').waitFor();assert.equal(await page.getByRole('button',{name:'Captura rápida de dinero',exact:true}).count(),0);}
   await page.goto('http://127.0.0.1:5181/tests/quick-finance.html?role=admin&readonly=1');await page.getByRole('heading').waitFor();assert.equal(await page.getByRole('button',{name:'Captura rápida de dinero',exact:true}).count(),0);assert.deepEqual(errors,[]);
   console.log('Quick finance browser passed: Admin/Master desktop and 390/320 mobile, editable date, photo, pending/completion, September quota, denied roles/read-only, focus restoration.');
