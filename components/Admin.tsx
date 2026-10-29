@@ -3545,6 +3545,7 @@ const Admin: React.FC<Props> = ({ user }) => {
              <div className="space-y-6">
                 <div className="bg-logia-800 border border-logia-700 rounded p-3 text-sm text-gray-300">
                   <div className="flex flex-wrap gap-3 mb-2">
+                    <button disabled={isReadOnly} onClick={()=>window.dispatchEvent(new CustomEvent('open-income-capture',{detail:{groupId:user.groupId}}))} className="rounded-lg border border-logia-700 p-2 text-emerald-200 disabled:opacity-40">Ingresos con IA · texto o fotos</button>
                     <button onClick={() => { loadTreasury(); loadDashboardStats(); }} className="text-blue-300">🔄 Actualizar resumen</button>
                     <button onClick={() => { setReceiptFilter('approved'); setActiveTab('receipts'); loadPaymentReceipts(); }} className="text-yellow-300">🧾 Transferencias aprobadas / corregir fecha</button>
                   </div>

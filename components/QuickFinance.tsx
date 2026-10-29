@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+const IncomeCapture = React.lazy(() => import('./IncomeCapture'));
 import { createPortal } from 'react-dom';
 import type { BankBalance, Payment, TreasuryEntry, User } from '../types';
 import { quickFinanceService, CaptureInput } from '../services/quickFinanceApi';
@@ -14,7 +15,7 @@ interface Props { user: User; suspended?: boolean }
 
 export default function QuickFinance({user,suspended}: Props) {
   const allowed = ['admin','master'].includes(user.role) && user.active !== false && !!user.groupId && !suspended;
-  const [open,setOpen] = useState(false); const [tab,setTab] = useState<'new'|'history'>('new');
+  const [open,setOpen] = useState(false); const [tab,setTab] = useState<'new'|'history'|'income'>('income');
   const [input,setInput] = useState(empty); const [photo,setPhoto] = useState<File>();
   const [entries,setEntries] = useState<TreasuryEntry[]>([]); const [members,setMembers] = useState<User[]>([]); const [accounts,setAccounts] = useState<BankBalance[]>([]);
   const [selected,setSelected] = useState<TreasuryEntry>(); const [description,setDescription] = useState('');
@@ -35,9 +36,9 @@ export default function QuickFinance({user,suspended}: Props) {
     } finally {if(sequence === requestSequence.current)setLoading(false);}
   };
   useEffect(()=>{
-    if(!open || !allowed)return;
+    if(!open || !allowed || tab==='income')return;
     void refresh().catch(e=>setError(e.message));
-  },[open,allowed,user.groupId]);
+  },[open,allowed,user.groupId,tab]);
   useEffect(()=>{
     if(!allowed)return;
     const edit = (event: Event) => {setOpen(true);setTab('history');const id=(event as CustomEvent).detail?.id;void refresh().then(list=>{const entry=list.find(item=>item.id===id);if(entry)select(entry);}).catch(e=>setError(e.message));};
@@ -60,6 +61,11 @@ export default function QuickFinance({user,suspended}: Props) {
     if(open && selected?.type === 'income' && selected.quickStatus !== 'applied' && memberId){setLoading(true);quickFinanceService.payments(user.groupId,memberId).then(list=>{if(active)setPayments(list);}).catch(e=>{if(active)setError(e.message);}).finally(()=>{if(active)setLoading(false);});}
     return()=>{active=false;};
   },[memberId,selected?.id,open,user.groupId]);
+  useEffect(()=>{
+    if(!allowed)return;
+    const launch=(event:Event)=>{if((event as CustomEvent).detail?.groupId!==user.groupId||inFlight.current)return;setOpen(true);if(captureId.current){setError('Resuelve el guardado pendiente antes de abrir ingresos con IA.');return;}setTab('income');setSelected(undefined);setError('');setMessage('');};
+    window.addEventListener('open-income-capture',launch);return()=>window.removeEventListener('open-income-capture',launch);
+  },[allowed,user.groupId]);
   const close = () => {if(!inFlight.current){setOpen(false);setSelected(undefined);setError('');setMessage('');opener.current?.focus();}};
   useEffect(()=>{
     if(!open || !allowed)return;const previous=document.body.style.overflow;document.body.style.overflow='hidden';panel.current?.focus();
@@ -94,14 +100,14 @@ export default function QuickFinance({user,suspended}: Props) {
   });
   if(!allowed)return null;
   return <>
-    <button ref={opener} type="button" aria-label="Captura rápida de dinero" onClick={()=>{setOpen(true);setError('');setMessage('');}} className="fixed right-4 z-40 w-12 h-12 rounded-full bg-emerald-600 text-white text-2xl shadow-lg border border-emerald-400" style={{bottom:'calc(5rem + env(safe-area-inset-bottom))'}}>$</button>
+    <button ref={opener} type="button" aria-label="Captura rápida de dinero" title="Ingresos y finanzas" onClick={()=>{if(!captureId.current)setTab('income');setOpen(true);setError('');setMessage('');}} className="fixed right-3 z-40 w-11 h-11 rounded-full bg-logia-800 text-emerald-200 text-lg shadow-sm border border-logia-700" style={{bottom:'calc(5rem + env(safe-area-inset-bottom))'}}>$</button>
     {open && createPortal(<div className="fixed inset-0 z-[150] bg-black/80 flex items-center justify-center p-3" onClick={event=>{if(event.target===event.currentTarget)close();}}>
       <div ref={panel} role="dialog" aria-modal="true" aria-labelledby="quick-finance-title" tabIndex={-1} className="w-full max-w-xl max-h-[90dvh] overflow-y-auto bg-logia-800 border border-logia-700 rounded-xl p-4 space-y-4">
         <div className="flex justify-between items-center gap-2"><h2 id="quick-finance-title" className="text-xl font-bold">Captura rápida</h2><button disabled={busy} type="button" onClick={close} aria-label="Cerrar captura rápida" className="p-2">✕</button></div>
-        <div className="flex gap-2"><button disabled={busy} className={tab==='new'?button:'p-3'} onClick={()=>{setTab('new');setSelected(undefined);}}>Nueva captura</button><button disabled={busy} className={tab==='history'?button:'p-3'} onClick={()=>{setTab('history');setSelected(undefined);void refresh().catch(e=>setError(e.message));}}>Capturas</button></div>
+        <div className="flex gap-1 flex-wrap text-sm"><button disabled={busy} className={tab==='income'?button:'p-3'} onClick={()=>{setTab('income');setSelected(undefined);}}>Ingresos IA</button><button disabled={busy} className={tab==='new'?button:'p-3'} onClick={()=>{setTab('new');setSelected(undefined);}}>Nueva captura</button><button disabled={busy} className={tab==='history'?button:'p-3'} onClick={()=>{setTab('history');setSelected(undefined);void refresh().catch(e=>setError(e.message));}}>Capturas</button></div>
         {error && <p role="alert" className="text-red-300">{error}</p>}{message && <p role="status" className="text-emerald-300">{message}</p>}
         {loading && <p role="status" className="text-gray-400">Cargando…</p>}
-        {tab==='new' ? <form onSubmit={e=>{e.preventDefault();void save();}} className="space-y-3">
+        {tab==='income' ? <React.Suspense fallback={<p>Cargando ingresos…</p>}><IncomeCapture user={user} suspended={suspended} onBusyChange={value=>{inFlight.current=value;setBusy(value);}}/></React.Suspense> : tab==='new' ? <form onSubmit={e=>{e.preventDefault();void save();}} className="space-y-3">
           {aiDraft&&<p className="text-indigo-200 text-sm">Propuesta de IA: corrige los datos antes de confirmar. Esto crea un movimiento en tesorería; para aplicarlo a una cuota, abre la captura guardada y selecciona el periodo y la cuota.</p>}
           <fieldset disabled={busy} className="space-y-3 min-w-0">
             <label className="block">Tipo<select aria-label="Tipo" className={field} value={input.type} onChange={e=>changeInput({type:e.target.value as CaptureInput['type'],memberId:''})}><option value="expense">Gasto</option><option value="income">Ingreso</option></select></label>

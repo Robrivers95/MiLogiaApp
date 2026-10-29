@@ -1,3 +1,4 @@
+import {incomeCaptureApi} from '../services/incomeCaptureApi';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import QuickFinance from '../components/QuickFinance';
@@ -16,4 +17,6 @@ quickFinanceService.save=async(groupId,id,input,photo)=>{
 quickFinanceService.complete=async(_groupId,id,details)=>{entries=entries.map(entry=>entry.id===id?{...entry,...details,quickStatus:'completed'}:entry);};
 quickFinanceService.payments=async()=>[{period:'2027-09',amount:500,paid:0,status:'Pendiente',comments:'',extraFees:[{id:'fee',description:'Cuota creada en febrero',amount:700,paid:0,createdAt:''}]}];
 quickFinanceService.apply=async(_groupId,id,_uid,period,feeId)=>{(window as any).__applies++;entries=entries.map(entry=>entry.id===id?{...entry,quickStatus:'applied',appliedPeriod:period,appliedFeeId:feeId,memberName:'Miembro de prueba'}:entry);};
+incomeCaptureApi.list=async()=>[];
+incomeCaptureApi.options=groupId=>quickFinanceService.options(groupId);
 createRoot(document.getElementById('root')!).render(<div><h1>Mi Logia · pruebas de captura</h1><QuickFinance user={user} suspended={params.has('readonly')}/></div>);
