@@ -16,7 +16,7 @@ const draftRef=(groupId:string,id:string)=>{if(!/^[-\w]{1,128}$/.test(id))throw 
 export const incomeCaptureApi={
  state:async(groupId:string,id:string)=>(await getDocFromServer(draftRef(groupId,id))).data()?.status,
  options:quickFinanceService.options,payments:quickFinanceService.payments,
- analyze:async(groupId:string,requestId:string,text:string,date:string,images:{mimeType:string;data:string}[],documents:{mimeType:string;data:string}[]=[])=> (await httpsCallable(getFunctions(undefined,'us-central1'),'captureWithAI',{timeout:120000})({action:'analyzeIncome',groupId,requestId,text,date,images,documents,retainImages:false})).data,
+ analyze:async(groupId:string,requestId:string,text:string,date:string,images:{mimeType:string;data:string}[],retainImages=false,documents:{mimeType:string;data:string}[]=[])=> (await httpsCallable(getFunctions(undefined,'us-central1'),'captureWithAI',{timeout:120000})({action:'analyzeIncome',groupId,requestId,text,date,images,documents,retainImages})).data,
  list:async(groupId:string):Promise<IncomeDraft[]>=>{await runTransaction(db,tx=>authority(tx,groupId));const rows=await getDocs(collection(db,'groups',groupId,'incomeDrafts'));return rows.docs.map(d=>({...d.data(),id:d.id} as IncomeDraft)).sort((a,b)=>b.createdAt-a.createdAt);},
  reject:async(groupId:string,id:string)=>runTransaction(db,async tx=>{const by=await authority(tx,groupId),ref=draftRef(groupId,id),snap=await tx.get(ref);if(!snap.exists()||snap.data().status==='approved')throw Error('Esta solicitud ya se aprobó o no existe.');tx.update(ref,{status:'rejected',reviewedBy:by,reviewedAt:Date.now()});}),
  approve:async(groupId:string,id:string,review:IncomeReview,confirmed:boolean)=>{
@@ -34,16 +34,17 @@ export const incomeCaptureApi={
    let account:any;let accountRef:any;
    if(review.accountId){if(review.accountId.includes('/'))throw Error('Cuenta inválida.');accountRef=doc(db,'bankBalances',review.accountId);account=await tx.get(accountRef);if(!account.exists()||account.data().groupId!==groupId||!Number.isFinite(Number(account.data().amount)))throw Error('Cuenta bancaria inválida.');}
    const receiptId=`ai-${id}`,urls=source.receiptImageUrls||[],now=new Date().toISOString();
+   const writtenDetail=`Captura IA revisada: ${payload.concept}. Referencia: ${source.reference||''}. Detalle del movimiento: ${(source.sourceQuote||'').slice(0,1000)}`;
    if(review.kind==='other'){
     const entryRef=doc(db,'groups',groupId,'treasury',receiptId),existing=await tx.get(entryRef);if(existing.exists())throw Error('Ya existe el ingreso vinculado.');
-    tx.set(entryRef,clean({id:receiptId,groupId,date,quotaPeriod:review.period,type:'income',amount,description:payload.concept,category:'otro',allocations:[{source:'tesoro_general',amount}],createdBy:by,createdAt:Date.now(),memberId:review.memberId,memberName:member.data().name,paymentMethod:review.paymentMethod,receiptImageUrls:urls,notes:`Captura IA aprobada. Referencia: ${source.reference||''}`,incomeDraftId:id,accountId:review.accountId}));
+    tx.set(entryRef,clean({id:receiptId,groupId,date,quotaPeriod:review.period,type:'income',amount,description:payload.concept,category:'otro',allocations:[{source:'tesoro_general',amount}],createdBy:by,createdAt:Date.now(),memberId:review.memberId,memberName:member.data().name,paymentMethod:review.paymentMethod,receiptImageUrls:urls,notes:writtenDetail,incomeDraftId:id,accountId:review.accountId}));
    }else{
     const ledgerRef=doc(db,'users',review.memberId,'ledger',review.period),proofRef=doc(db,'groups',groupId,'paymentReceipts',receiptId);
     const [ledger,proof]=await Promise.all([tx.get(ledgerRef),tx.get(proofRef)]);
     if(!ledger.exists()||(ledger.data().groupId&&ledger.data().groupId!==groupId))throw Error('No existe esa cuota para este hermano y mes. Corrige la selección.');if(proof.exists())throw Error('Ya existe el comprobante. Actualiza la lista.');
     const payment={...ledger.data(),period:review.period} as Payment,feeId=review.kind==='extra'?review.feeId:undefined;
     const result=applyCapture(payment,{id:receiptId,type:'income',quickStatus:'pending',amount,date} as TreasuryEntry,feeId);
-    const receipt:PaymentReceipt={id:receiptId,groupId,userId:review.memberId,userName:member.data().name,periods:[review.period],transferDate:date,amount,receiptImageUrl:urls[0]||'',receiptImageUrls:urls,receiptType:feeId?'concepto_adicional':'cuota_mensual',...(feeId?{extraFeeId:feeId,extraFeePeriod:review.period,conceptDescription:payload.concept}:{}),appliedAmount:amount,unappliedAmount:0,ledgerIncluded:true,voluntaryContribution:result.voluntary,status:'approved',submittedAt:now,reviewedAt:now,reviewedBy:by,reviewComments:`Captura IA revisada: ${payload.concept}. Referencia: ${source.reference||''}`};
+    const receipt:PaymentReceipt={id:receiptId,groupId,userId:review.memberId,userName:member.data().name,periods:[review.period],transferDate:date,amount,receiptImageUrl:urls[0]||'',receiptImageUrls:urls,receiptType:feeId?'concepto_adicional':'cuota_mensual',...(feeId?{extraFeeId:feeId,extraFeePeriod:review.period,conceptDescription:payload.concept}:{}),appliedAmount:amount,unappliedAmount:0,ledgerIncluded:true,voluntaryContribution:result.voluntary,status:'approved',submittedAt:now,reviewedAt:now,reviewedBy:by,reviewComments:writtenDetail};
     tx.update(ledgerRef,clean(result.payment));tx.set(proofRef,clean(receipt));
    }
    if(account)tx.update(accountRef,{amount:Math.round((Number(account.data().amount)+amount)*100)/100,updatedBy:by});
