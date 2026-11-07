@@ -16,7 +16,7 @@ const draftRef=(groupId:string,id:string)=>{if(!/^[-\w]{1,128}$/.test(id))throw 
 export const incomeCaptureApi={
  state:async(groupId:string,id:string)=>(await getDocFromServer(draftRef(groupId,id))).data()?.status,
  options:quickFinanceService.options,payments:quickFinanceService.payments,
- analyze:async(groupId:string,requestId:string,text:string,date:string,images:{mimeType:string;data:string}[])=> (await httpsCallable(getFunctions(undefined,'us-central1'),'captureWithAI',{timeout:120000})({action:'analyzeIncome',groupId,requestId,text,date,images})).data,
+ analyze:async(groupId:string,requestId:string,text:string,date:string,images:{mimeType:string;data:string}[],documents:{mimeType:string;data:string}[]=[])=> (await httpsCallable(getFunctions(undefined,'us-central1'),'captureWithAI',{timeout:120000})({action:'analyzeIncome',groupId,requestId,text,date,images,documents,retainImages:false})).data,
  list:async(groupId:string):Promise<IncomeDraft[]>=>{await runTransaction(db,tx=>authority(tx,groupId));const rows=await getDocs(collection(db,'groups',groupId,'incomeDrafts'));return rows.docs.map(d=>({...d.data(),id:d.id} as IncomeDraft)).sort((a,b)=>b.createdAt-a.createdAt);},
  reject:async(groupId:string,id:string)=>runTransaction(db,async tx=>{const by=await authority(tx,groupId),ref=draftRef(groupId,id),snap=await tx.get(ref);if(!snap.exists()||snap.data().status==='approved')throw Error('Esta solicitud ya se aprobó o no existe.');tx.update(ref,{status:'rejected',reviewedBy:by,reviewedAt:Date.now()});}),
  approve:async(groupId:string,id:string,review:IncomeReview,confirmed:boolean)=>{

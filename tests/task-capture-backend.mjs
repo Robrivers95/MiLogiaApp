@@ -423,3 +423,16 @@ await reject(()=>call({...incoming,requestId:'invalid-image',images:[{mimeType:'
 providerOutput={incomes:[row('Juan',100,'Juan Pérez pagó 100 de septiembre.')]};store.set('users/juan2',{name:'Juan López',role:'member',active:true,groupId:'lodge'});
 const ambiguous=await call({...incoming,requestId:'ambiguous'},actor('admin'));assert.equal(store.get('groups/lodge/incomeDrafts/'+ambiguous.ids[0]).memberId,'','ambiguous names require manual correction');
 console.log('Income import backend passed: separate text/image rows, only pending drafts, shared proof storage, idempotent retries, duplicate warning, ambiguous names, roles and invalid image guards.');
+
+providerOutput={incomes:[row('Carlos Ríos',200,'Carlos Ríos pagó 200 de septiembre.')]};
+const pdf=Buffer.from('%PDF-1.4\nmock statement').toString('base64');
+const beforePdf=proofs.size;
+const pdfRequest={...incoming,requestId:'pdf-import',text:'',images:[],documents:[{mimeType:'application/pdf',data:pdf}],retainImages:false};
+const pdfResult=await call(pdfRequest,actor('admin'));
+assert.equal(pdfResult.ids.length,1);assert.equal(proofs.size,beforePdf,'PDF never stored');
+assert.equal(store.get('groups/lodge/incomeDrafts/'+pdfResult.ids[0]).status,'pending');
+assert.equal(JSON.parse(captured.options.body).contents[0].parts[1].inlineData.mimeType,'application/pdf');
+const afterPdf=providerCalls;await call(pdfRequest,actor('admin'));assert.equal(providerCalls,afterPdf);
+await reject(()=>call({...pdfRequest,requestId:'bad-pdf',documents:[{mimeType:'application/pdf',data:'AAAA'}]},actor('admin')),'invalid-argument');
+await reject(()=>call({...pdfRequest,requestId:'too-many-files',documents:Array(5).fill(pdfRequest.documents[0])},actor('admin')),'invalid-argument');
+console.log('PDF callable passed: native Gemini document, text-only draft, invalid PDF guard and idempotent retry.');
