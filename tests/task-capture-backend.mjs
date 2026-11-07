@@ -408,6 +408,17 @@ const pictured=await call({...incoming,requestId:'import-image',text:'',images:[
 assert.equal(pictured.ids.length,2);assert.equal(proofs.size,1,'one original-image copy backs both drafts');
 const pictureDraft=store.get('groups/lodge/incomeDrafts/'+pictured.ids[0]);assert.equal(pictureDraft.receiptImageUrls.length,1);assert.equal(pictureDraft.possibleDuplicate,true,'repeat imports are flagged');
 const body=JSON.parse(captured.options.body);assert.equal(body.contents[0].parts[1].inlineData.mimeType,'image/png');assert.equal(body.contents[0].parts[1].inlineData.data,png);
+// Analyze the same photo with Gemini without persisting the bank statement.
+const storedBefore=proofs.size;
+const writtenRequest={...incoming,requestId:'image-written-only',text:'',images:[{mimeType:'image/png',data:png}],retainImages:false};
+const written=await call(writtenRequest,actor('admin'));
+assert.equal(proofs.size,storedBefore,'written-only analysis never uploads the photo');
+assert.equal(written.ids.length,2);
+for(const id of written.ids){const draft=store.get('groups/lodge/incomeDrafts/'+id);assert.equal(draft.receiptImageUrls.length,0);assert.ok(draft.sourceQuote);assert.equal(draft.sourceText,'');}
+assert.equal(JSON.parse(captured.options.body).contents[0].parts[1].inlineData.data,png,'Gemini still receives the photo');
+const callsAfterWritten=providerCalls;await call(writtenRequest,actor('admin'));assert.equal(providerCalls,callsAfterWritten);
+await reject(()=>call({...writtenRequest,retainImages:true},actor('admin')),'failed-precondition');
+await reject(()=>call({...incoming,requestId:'invalid-retention',retainImages:'false'},actor('admin')),'invalid-argument');
 await reject(()=>call({...incoming,requestId:'invalid-image',images:[{mimeType:'image/png',data:'AAAA'}]},actor('admin')),'invalid-argument');
 providerOutput={incomes:[row('Juan',100,'Juan Pérez pagó 100 de septiembre.')]};store.set('users/juan2',{name:'Juan López',role:'member',active:true,groupId:'lodge'});
 const ambiguous=await call({...incoming,requestId:'ambiguous'},actor('admin'));assert.equal(store.get('groups/lodge/incomeDrafts/'+ambiguous.ids[0]).memberId,'','ambiguous names require manual correction');

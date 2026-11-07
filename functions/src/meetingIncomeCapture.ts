@@ -9,6 +9,8 @@ export async function analyzeIncome(data:any,uid:string,groupId:string,key:strin
   if (!['master','admin'].includes(actor.role)) return fail('permission-denied','Solo Admin y Admin Master pueden preparar ingresos.');
   if (!key) return fail('failed-precondition','La IA no está configurada.');
   if (typeof data.text!=='string'||data.text.length>20000||!Array.isArray(data.images)||data.images.length>4||(!data.text.trim()&&!data.images.length)||!/^[-\w]{1,100}$/.test(data.requestId||'')) return fail('invalid-argument','Agrega texto y/o hasta cuatro imágenes.');
+  if(data.retainImages!==undefined&&typeof data.retainImages!=='boolean')return fail('invalid-argument','Revisa la opción de guardar imágenes.');
+  const retainImages=data.retainImages!==false; // Preserve retries from older installed clients.
   try{captureDate(data.date,false);}catch{return fail('invalid-argument','Revisa la fecha de referencia.');}
   const images:{mimeType:string;bytes:Buffer}[]=data.images.map((im:any)=>{
     if (!['image/jpeg','image/png','image/webp'].includes(im?.mimeType)||typeof im.data!=='string'||im.data.length>2800000||(im.data.length%4!==0||!/^[A-Za-z0-9+/]*={0,2}$/.test(im.data))) return fail('invalid-argument','Usa imágenes JPG, PNG o WebP de hasta 2 MB cada una.');
@@ -18,7 +20,7 @@ export async function analyzeIncome(data:any,uid:string,groupId:string,key:strin
     return {mimeType:im.mimeType,bytes};
   });
   if(data.images.reduce((sum:number,im:any)=>sum+im.data.length,0)>6500000)return fail('invalid-argument','Reduce el tamaño o la cantidad de imágenes.');
-  const hash=createHash('sha256').update(JSON.stringify({text:data.text,date:data.date,images:images.map(i=>createHash('sha256').update(i.bytes).digest('hex'))})).digest('hex');
+  const hash=createHash('sha256').update(JSON.stringify({...(!retainImages?{retainImages:false}:{}),text:data.text,date:data.date,images:images.map(i=>createHash('sha256').update(i.bytes).digest('hex'))})).digest('hex');
   const op=createHash('sha256').update(`${uid}:${groupId}:${data.requestId}`).digest('hex'),request=db.doc(`financeImportRequests/${op}`),lock=db.doc(`financeImportLocks/${uid}`),startedAt=Date.now();
   const old=await db.runTransaction(async tx=>{
     await authorize(ref=>tx.get(ref));const saved=await tx.get(request),busy=await tx.get(lock);
@@ -38,7 +40,7 @@ export async function analyzeIncome(data:any,uid:string,groupId:string,key:strin
     const result:any=await response.json(),candidate=result.candidates?.[0];if(candidate?.finishReason!=='STOP')throw Error('Respuesta incompleta.');
     const parsed=JSON.parse(candidate.content.parts.filter((p:any)=>!p.thought&&typeof p.text==='string').map((p:any)=>p.text).join(''));
     const rows=incomeRows(parsed,roster,data.text,images.length>0),ids=rows.map((_,i)=>`${op}-${i}`),urls:string[]=[];
-    if(rows.length)for(let i=0;i<images.length;i++){
+    if(retainImages&&rows.length)for(let i=0;i<images.length;i++){
       const path=`financeEvidence/${groupId}/${uid}/${op}-${i}-${randomUUID()}`,file=admin.storage().bucket().file(path),token=randomUUID();
       await file.save(images[i].bytes,{resumable:false,metadata:{contentType:images[i].mimeType,metadata:{firebaseStorageDownloadTokens:token}}});uploaded.push(file);
       urls.push(`https://firebasestorage.googleapis.com/v0/b/${file.bucket.name}/o/${encodeURIComponent(path)}?alt=media&token=${token}`);
