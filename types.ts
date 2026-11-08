@@ -81,6 +81,13 @@ export interface Notice {
 }
 
 export interface PaymentReceipt {
+  bankReference?: string;
+  bankOriginalReference?: string;
+  bankDepositDate?: string;
+  incomeDraftId?: string;
+  unappliedEntryId?: string;
+  quotaAllocations?: {period:string;kind:'regular'|'extra';feeId?:string;concept:string;amount:number}[];
+
   quickMovementId?: string; // Captura enlazada: no volver a aplicar ni modificar por separado
   id: string;
   groupId: string;
@@ -233,6 +240,11 @@ export interface TreasuryAllocation {
 }
 
 export interface TreasuryEntry {
+  bankReference?: string;
+  bankOriginalReference?: string;
+  bankDepositDate?: string;
+  incomeDraftId?: string;
+
   quotaPeriod?: string; // Mes asignado en la matriz; no es fecha del depósito
   quotaKind?: 'regular' | 'extra' | 'unclassified';
   quotaConcept?: string;
@@ -343,4 +355,5 @@ export interface AppNotification {
   read: boolean;
   createdAt: number;   // timestamp ms
 }
+
 

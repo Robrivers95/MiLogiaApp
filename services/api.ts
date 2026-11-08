@@ -1718,6 +1718,7 @@ export const dataService = {
       const changedAmount = clean.amount !== undefined && Number(clean.amount) !== Number(live.amount || 0);
       const changes: Record<string, unknown> = {};
       if (clean.transferDate !== undefined) changes.transferDate = clean.transferDate;
+      if (changedAmount && live.quotaAllocations) throw new Error('Este depósito tiene un reparto confirmado por cuotas. El reparto requiere una corrección contable; conserva el total original del depósito.');
       if (changedAmount) {
         if (live.receiptType !== 'concepto_adicional') throw new Error('Corrige el total mensual desde Gestión de Pagos; este comprobante histórico no tiene desglose por mes.');
         const targetPeriod = live.extraFeePeriod || live.periods?.[0];
@@ -1904,7 +1905,7 @@ export const dataService = {
   reconcileExtraFeeFromReceipts: async (groupId: string, description: string, year: number) => {
     const normalize = (value?: string) => (value || '').trim().toLocaleLowerCase('es-MX');
     const receipts = (await dataService.getPaymentReceipts(groupId)).filter(r =>
-      r.status === 'approved' && r.receiptType === 'concepto_adicional');
+      r.status === 'approved' && (r.receiptType === 'concepto_adicional' || r.quotaAllocations?.some(a=>a.kind==='extra')));
     const members = await dataService.getUsers(groupId);
     const details: { uid: string; name: string; period: string; paid: number; receipts: number }[] = [];
     let skippedAmbiguous = 0;
@@ -1918,6 +1919,7 @@ export const dataService = {
         let ambiguous = false;
         const evidence = receipts.filter(r => {
           if (r.userId !== member.uid) return false;
+          if (r.quotaAllocations) return r.quotaAllocations.some(a=>a.kind==='extra' && a.period===target.period && a.feeId===target.id);
           if (r.extraFeeId && r.extraFeeId !== target.id) return false;
           if (!r.extraFeeId && normalize(r.conceptDescription) !== normalize(description)) return false;
           const periods = r.extraFeePeriod ? [r.extraFeePeriod] : r.periods || [];
@@ -1927,7 +1929,7 @@ export const dataService = {
           return candidates[0] === target;
         });
         if (ambiguous) { skippedAmbiguous++; continue; }
-        const receiptTotal = evidence.reduce((sum, r) => sum + (Number(r.appliedAmount ?? r.amount) || 0), 0);
+        const receiptTotal = evidence.reduce((sum, r) => sum + (r.quotaAllocations ? r.quotaAllocations.filter(a=>a.kind==='extra' && a.period===target.period && a.feeId===target.id).reduce((total,a)=>total+a.amount,0) : Number(r.appliedAmount ?? r.amount) || 0), 0);
         if (Math.abs(target.paid - receiptTotal) >= 0.005) details.push({ uid: member.uid, name: member.name, period: target.period, paid: target.paid, receipts: receiptTotal });
       }
     }
@@ -2656,4 +2658,5 @@ export const generateTriviaWithAI = async (): Promise<Partial<Trivia>> => {
   if (!text) throw new Error("No response from AI");
   return JSON.parse(text);
 };
+
 

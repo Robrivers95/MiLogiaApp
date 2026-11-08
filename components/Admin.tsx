@@ -1197,6 +1197,7 @@ const Admin: React.FC<Props> = ({ user }) => {
   const getReceiptsForMatrixCellAudit = (uid: string, period: string): PaymentReceipt[] => {
       return (paymentReceipts as PaymentReceipt[]).filter(receipt => {
           if (receipt.userId !== uid) return false;
+          if (receipt.quotaAllocations) return receipt.quotaAllocations.some(a => a.period === period && (matrixFilter === 'regular' ? a.kind === 'regular' : matrixFilter === 'extra' && matrixExtraDesc ? a.kind === 'extra' && normalizeConcept(a.concept) === normalizeConcept(matrixExtraDesc) : true));
           const periods = receipt.extraFeePeriod ? [receipt.extraFeePeriod] : (receipt.periods || []);
           if (!periods.includes(period)) return false;
           if (matrixFilter === 'regular') return receipt.receiptType === 'cuota_mensual';
@@ -1293,6 +1294,7 @@ const Admin: React.FC<Props> = ({ user }) => {
       if (matrixFilter !== 'extra' || !matrixExtraDesc) return [];
       return (paymentReceipts as PaymentReceipt[])
           .filter(receipt => {
+              if (receipt.quotaAllocations) return receipt.quotaAllocations.some(a => a.kind === 'extra' && normalizeConcept(a.concept) === normalizeConcept(matrixExtraDesc) && a.period.startsWith(String(matrixYear)));
               if (receipt.receiptType !== 'concepto_adicional') return false;
               if (normalizeConcept(receipt.conceptDescription) !== normalizeConcept(matrixExtraDesc)) return false;
               const receiptPeriod = receipt.extraFeePeriod || receipt.periods?.[0] || '';
@@ -5186,6 +5188,8 @@ const Admin: React.FC<Props> = ({ user }) => {
               {getMatrixFilteredReceipts().length === 0 ? (
                 <p className="text-center text-gray-500 py-8">No hay comprobantes registrados para este concepto.</p>
               ) : getMatrixFilteredReceipts().map(receipt => {
+                const targetAllocations = receipt.quotaAllocations?.filter(a => a.kind === 'extra' && normalizeConcept(a.concept) === normalizeConcept(matrixExtraDesc) && a.period.startsWith(String(matrixYear)));
+                const appliedToConcept = targetAllocations ? targetAllocations.reduce((s,a) => s+a.amount,0) : receipt.appliedAmount;
                 const urls = receipt.receiptImageUrls?.length
                   ? receipt.receiptImageUrls
                   : receipt.receiptImageUrl ? [receipt.receiptImageUrl] : [];
@@ -5194,11 +5198,12 @@ const Admin: React.FC<Props> = ({ user }) => {
                     <div className="flex flex-wrap justify-between gap-3">
                       <div>
                         <p className="font-bold text-white">{receipt.userName}</p>
-                        <p className="text-xs text-gray-400">Período: {receipt.extraFeePeriod || (receipt.periods || []).join(', ') || 'Sin período (legacy)'}</p>
+                        <p className="text-xs text-gray-400">Período: {targetAllocations?.map(a=>a.period).join(', ') || receipt.extraFeePeriod || (receipt.periods || []).join(', ') || 'Sin período (legacy)'}</p>
                         <p className="text-xs text-gray-400">Transferencia: {new Date(receipt.transferDate).toLocaleString('es-MX')}</p>
+                        {(receipt.bankReference||receipt.bankOriginalReference)&&<p className="text-xs text-indigo-300 break-all">Folio: {receipt.bankReference||receipt.bankOriginalReference}</p>}
                         <p className="text-sm mt-1 text-gray-300">
                           Declarado: <strong className="text-yellow-300">${Number(receipt.amount || 0).toFixed(2)}</strong>
-                          {receipt.appliedAmount !== undefined && <span> · Aplicado: <strong className="text-green-300">${Number(receipt.appliedAmount).toFixed(2)}</strong></span>}
+                          {appliedToConcept !== undefined && <span> · Aplicado a este concepto: <strong className="text-green-300">${Number(appliedToConcept).toFixed(2)}</strong></span>}
                         </p>
                       </div>
                       <span className={`self-start text-xs px-2 py-1 rounded-full font-bold ${receipt.status === 'approved' ? 'bg-green-700 text-green-100' : receipt.status === 'pending' ? 'bg-yellow-700 text-yellow-100' : 'bg-red-700 text-red-100'}`}>
@@ -6530,3 +6535,4 @@ service cloud.firestore {
 };
 
 export default Admin;
+

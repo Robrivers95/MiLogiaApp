@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';import {readFileSync,writeFileSync,rmSyn
 const mock=`
 const members=[{uid:'a',name:'Juan Pérez',active:true},{uid:'b',name:'Carlos Ríos',active:true}];let rows=[];window.__approved=[];window.__analyses=[];
 export const incomeImage=async()=>({mimeType:'image/jpeg',data:'mock-image'});
-export const incomeCaptureApi={options:async()=>({members,accounts:[]}),payments:async()=>[...['2026-07','2026-08','2026-09'].map(period=>({period,amount:400,paid:0,paidRegular:0})),{period:'2027-09',amount:500,paid:0,extraFees:[{id:'event',description:'Evento',amount:700,paid:0,createdAt:''}]}],list:async()=>structuredClone(rows),state:async()=> 'pending',analyze:async(g,id,text,date,images,retainImages,documents)=>{window.__analyses.push({text,images,retainImages,documents});rows=[1,2].map(i=>({id:'row'+i,status:'pending',payerName:i===1?'Juan Pérez':'Carlos Ríos',memberId:'a',amount:i===1?100:200,date:'2026-10-29',period:'2026-09',kind:'regular',concept:'Cuota normal',reference:'',paymentMethod:'transfer',sourceQuote:'Pago '+i,sourceText:text,receiptImageUrls:['https://proof.test/image.png'],warnings:[],createdAt:i}));return {ids:rows.map(r=>r.id)};},approve:async(g,id,review,confirmed)=>{await new Promise(r=>setTimeout(r,50));window.__approved.push({id,review,confirmed});rows=rows.map(r=>r.id===id?{...r,status:'approved',approvedReview:review}:r);},reject:async(g,id)=>{rows=rows.map(r=>r.id===id?{...r,status:'rejected'}:r);}};
+export const incomeCaptureApi={options:async()=>({members,accounts:[]}),payments:async()=>[...['2026-07','2026-08','2026-09'].map(period=>({period,amount:400,paid:0,paidRegular:0})),{period:'2027-09',amount:500,paid:0,extraFees:[{id:'event',description:'Evento',amount:700,paid:0,createdAt:''}]}],list:async()=>structuredClone(rows),state:async()=> 'pending',analyze:async(g,id,text,date,images,retainImages,documents)=>{window.__analyses.push({text,images,retainImages,documents});rows=[1,2].map(i=>({id:'row'+i,status:'pending',payerName:i===1?'Juan Pérez':'Carlos Ríos',memberId:'a',amount:i===1?100:200,date:'2026-10-29',period:'2026-09',kind:'regular',concept:'Cuota normal',reference:'00001234000'+i,paymentMethod:'transfer',sourceQuote:'Pago '+i,sourceText:text,receiptImageUrls:['https://proof.test/image.png'],warnings:[],createdAt:i}));return {ids:rows.map(r=>r.id)};},approve:async(g,id,review,confirmed)=>{await new Promise(r=>setTimeout(r,50));window.__approved.push({id,review,confirmed});rows=rows.map(r=>r.id===id?{...r,status:'approved',approvedReview:review}:r);},reject:async(g,id)=>{rows=rows.map(r=>r.id===id?{...r,status:'rejected'}:r);}};
 `;
 await build({stdin:{contents:"import React from 'react';import {createRoot} from 'react-dom/client';import Income from './components/IncomeCapture';createRoot(document.getElementById('root')).render(<Income user={{uid:'admin',name:'Admin',role:new URLSearchParams(location.search).get('role')||'master',groupId:'lodge',active:true}}/>);",loader:'tsx',resolveDir:process.cwd()},bundle:true,format:'esm',outfile:'tests/income-browser.js',plugins:[{name:'isolated-income',setup(b){b.onResolve({filter:/\/incomeCaptureApi$/},()=>({path:'api',namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},()=>({contents:mock}));}}]});
-writeFileSync('tests/income-browser.html',readFileSync('tests/member-ui.html','utf8').replace('/tests/member-ui-fixture.tsx','/tests/income-browser.js'));
+writeFileSync('tests/income-browser.html',readFileSync('tests/member-ui.html','utf8').replace('/tests/member-ui-fixture.tsx','/tests/income-browser.js').replace(/<script src="https:\/\/cdn.tailwindcss.com"><\/script>/,process.env.LOGIA_UI_CSS?'<script>window.tailwind={}</script>':'<script src="https://cdn.tailwindcss.com"></script>').replace('</head>',(process.env.LOGIA_UI_CSS?'<style>'+readFileSync(process.env.LOGIA_UI_CSS,'utf8')+'</style>':'')+'</head>'));
 const server=spawn(process.execPath,['node_modules/vite/bin/vite.js','--host','127.0.0.1','--port','5192'],{stdio:'ignore'});let browser;
 try{for(let i=0;i<80;i++){try{await fetch('http://127.0.0.1:5192/tests/income-browser.html');break;}catch{await new Promise(r=>setTimeout(r,100));}}
  browser=await chromium.launch();const page=await browser.newPage({viewport:{width:390,height:844}}),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('http://127.0.0.1:5192/tests/income-browser.html');
@@ -32,9 +32,52 @@ try{for(let i=0;i<80;i++){try{await fetch('http://127.0.0.1:5192/tests/income-br
  await page.getByRole('button',{name:'Revisar solicitud',exact:true}).first().click();
  await page.getByLabel('Monto del ingreso',{exact:true}).fill('1200');await page.getByLabel('Mes de aplicación',{exact:true}).fill('2026-07');await page.getByRole('button',{name:'Proponer meses pendientes',exact:true}).click();
  for(const period of ['2026-07','2026-08','2026-09'])await page.getByText(period+': $400.00',{exact:true}).waitFor();
- await page.getByLabel('Confirmo los datos del ingreso',{exact:true}).check();await page.getByText('Cambiar meses del pago',{exact:true}).click();await page.getByLabel('Aplicar ingreso a 2026-08',{exact:true}).uncheck();assert.equal(await page.getByLabel('Confirmo los datos del ingreso',{exact:true}).isChecked(),false);await page.getByLabel('Aplicar ingreso a 2026-08',{exact:true}).check();await page.getByLabel('Confirmo los datos del ingreso',{exact:true}).check();await page.getByRole('button',{name:'Aprobar y registrar ingreso',exact:true}).click();await page.getByRole('status').filter({hasText:'Ingreso aprobado'}).waitFor();
+ await page.getByLabel('Confirmo los datos del ingreso',{exact:true}).check();await page.getByLabel('Aplicar ingreso a 2026-08',{exact:true}).uncheck();assert.equal(await page.getByLabel('Confirmo los datos del ingreso',{exact:true}).isChecked(),false);await page.getByLabel('Aplicar ingreso a 2026-08',{exact:true}).check();await page.getByLabel('Confirmo los datos del ingreso',{exact:true}).check();await page.getByRole('button',{name:'Aprobar y registrar ingreso',exact:true}).click();await page.getByRole('status').filter({hasText:'Ingreso aprobado'}).waitFor();
  assert.deepEqual(await page.evaluate(()=>window.__approved[0].review.periods),['2026-07','2026-08','2026-09']);console.log('Mobile multi-month review passed: 1200 -> 3 x 400, editable months and renewed confirmation.');
+
+ // Explicit matrix choices preserve a non-oldest month and an extra, with a visible remainder.
+ await page.goto('http://127.0.0.1:5192/tests/income-browser.html');
+ await page.getByLabel('Texto de ingresos',{exact:true}).fill('Juan pagó 1200');
+ await page.getByRole('button',{name:'Interpretar y preparar solicitudes'}).click();
+ await page.getByRole('button',{name:'Revisar solicitud',exact:true}).first().click();
+ await page.getByLabel('Matriz de cuotas para aplicar el depósito',{exact:true}).waitFor();
+ await page.getByLabel('Monto del ingreso',{exact:true}).fill('1200');
+ assert.equal(await page.getByLabel('Folio de transferencia',{exact:true}).inputValue(),'000012340001');
+ await page.getByLabel('Aplicar ingreso a 2026-09',{exact:true}).check();
+ await page.getByLabel('Importe a 2026-09',{exact:true}).fill('300');
+ await page.getByLabel('Aplicar ingreso a 2027-09 · Evento',{exact:true}).check();
+ await page.getByLabel('Importe a 2027-09 · Evento',{exact:true}).fill('500');
+ await page.getByLabel('Confirmo los datos del ingreso',{exact:true}).check();
+ assert.equal(await page.getByRole('button',{name:'Aprobar y registrar ingreso',exact:true}).isDisabled(),true,'unallocated balance needs explicit decision');
+ await page.getByLabel('Conservar saldo sin aplicar',{exact:true}).check();
+ assert.equal(await page.getByLabel('Confirmo los datos del ingreso',{exact:true}).isChecked(),false);
+ await page.getByLabel('Confirmo los datos del ingreso',{exact:true}).check();
+ await page.getByLabel('Folio de transferencia',{exact:true}).fill('000012340001-REF');
+ assert.equal(await page.getByLabel('Confirmo los datos del ingreso',{exact:true}).isChecked(),false,'folio changes revoke confirmation');
+ for(const width of [320,390,1440]){await page.setViewportSize({width,height:900});await page.screenshot({path:`test-results/income-matrix-${width}.png`,fullPage:true});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2),false,'matrix scrolls internally: '+JSON.stringify(await page.evaluate(()=>[...document.querySelectorAll('*')].filter(e=>e.getBoundingClientRect().right>innerWidth+2&&getComputedStyle(e).overflowX!=='auto').slice(0,12).map(e=>[e.tagName,e.className,e.getBoundingClientRect().width,e.textContent.slice(0,60)]))));}
+ await page.getByLabel('Confirmo los datos del ingreso',{exact:true}).check();
+ await page.getByRole('button',{name:'Aprobar y registrar ingreso',exact:true}).click();
+ await page.getByRole('status').filter({hasText:'Ingreso aprobado'}).waitFor();
+ const mixed=await page.evaluate(()=>window.__approved[0].review);
+ assert.deepEqual(mixed.allocations.map(a=>[a.period,a.kind,a.amount]),[['2026-09','regular',300],['2027-09','extra',500]]);
+ assert.equal(mixed.allowUnapplied,true);assert.equal(mixed.reference,'000012340001-REF');
+ await page.getByLabel('Estado de solicitudes de ingreso',{exact:true}).selectOption('approved');
+ await page.getByLabel('Buscar solicitudes por hermano o folio',{exact:true}).fill('000012340001-REF');
+ assert.equal(await page.locator('article').count(),1,'approved folio is searchable');
+ await page.getByRole('button',{name:'Ver registro',exact:true}).click();
+ assert.equal(await page.getByLabel('Importe a 2026-09',{exact:true}).inputValue(),'300');
+ assert.equal(await page.getByLabel('Importe a 2026-09',{exact:true}).isDisabled(),true,'approved distribution is read-only');
+ await page.getByRole('button',{name:'Volver a solicitudes',exact:true}).click();
+ await page.getByLabel('Estado de solicitudes de ingreso',{exact:true}).selectOption('pending');
+ await page.getByLabel('Buscar solicitudes por hermano o folio',{exact:true}).fill('');
+ await page.getByRole('button',{name:'Revisar solicitud',exact:true}).click();
+ await page.getByLabel('Aplicar ingreso a 2026-07',{exact:true}).check();
+ await page.getByLabel('Hermano del ingreso',{exact:true}).selectOption('b');
+ assert.equal(await page.getByLabel('Aplicar ingreso a 2026-07',{exact:true}).isChecked(),false,'changing member clears the distribution');
+ console.log('Matrix review passed: manual normal + extra amounts, explicit unapplied credit, immutable approval, folio search and mobile widths.');
+
 
 
  await page.goto('http://127.0.0.1:5192/tests/income-browser.html?role=member');await page.getByText(/requiere Admin o Admin Master/).waitFor();assert.deepEqual(errors,[]);console.log('Income browser passed: image+text -> two drafts, separate review/approval, corrected member/year/month/extra concept and amount, confirmation reset, linked proof, reject, responsive widths and role gate.');
 }finally{await browser?.close();server.kill();for(const suffix of ['js','html'])rmSync('tests/income-browser.'+suffix,{force:true});}
+

@@ -27,6 +27,7 @@ const normalize = (value?: string) => (value || '').trim().toLocaleLowerCase('es
 
 const receiptMatches = (receipt: PaymentReceipt, context: AdminPaymentEvidenceContext) => {
   if (receipt.userId !== context.userId) return false;
+  if(receipt.quotaAllocations)return receipt.quotaAllocations.some(a=>a.period===context.period&&a.kind===context.feeType&&(a.kind==='regular'||(context.feeId?a.feeId===context.feeId:normalize(a.concept)===normalize(context.concept))));
   const periods = receipt.extraFeePeriod ? [receipt.extraFeePeriod] : (receipt.periods || []);
   if (!periods.includes(context.period)) return false;
 
@@ -52,6 +53,7 @@ const AdminPaymentEvidenceModal: React.FC<Props> = ({
   onClose,
   onChanged,
 }) => {
+  const [referenceSearch,setReferenceSearch]=useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [amount, setAmount] = useState('');
   const [comments, setComments] = useState('');
@@ -191,15 +193,17 @@ const AdminPaymentEvidenceModal: React.FC<Props> = ({
           )}
 
           <div>
+            <label className="block text-sm mb-3">Buscar por folio<input aria-label="Buscar folio en comprobantes" className="block w-full bg-logia-900 border border-logia-700 rounded p-2 mt-1" value={referenceSearch} onChange={e=>setReferenceSearch(e.target.value)}/></label>
             <h4 className="font-bold text-white mb-2">Historial ({matchingReceipts.length})</h4>
             {matchingReceipts.length === 0 ? (
               <p className="text-sm text-gray-500 bg-logia-900/50 rounded p-4">Todavía no hay transacciones/comprobantes individualizados para este concepto. El acumulado del ledger se conserva intacto.</p>
             ) : (
               <div className="space-y-2">
-                {matchingReceipts.map(receipt => {
+                {matchingReceipts.filter(r=>[r.bankReference,r.bankOriginalReference,r.reviewComments].join(' ').toLowerCase().includes(referenceSearch.trim().toLowerCase())).map(receipt => {
                   const declared = Number(receipt.amount || 0);
-                  const applied = receipt.appliedAmount === undefined ? undefined : Number(receipt.appliedAmount || 0);
-                  const receiptExcess = applied === undefined ? undefined : Math.max(0, declared - applied);
+                  const appliedHere=receipt.quotaAllocations?.filter(a=>a.period===context.period&&a.kind===context.feeType&&(a.kind==='regular'||(context.feeId?a.feeId===context.feeId:normalize(a.concept)===normalize(context.concept)))).reduce((sum,a)=>sum+a.amount,0);
+                  const applied = appliedHere!==undefined?appliedHere:receipt.appliedAmount === undefined ? undefined : Number(receipt.appliedAmount || 0);
+                  const receiptExcess = receipt.quotaAllocations?Number(receipt.unappliedAmount||0):applied === undefined ? undefined : Math.max(0, declared - applied);
                   const urls = receiptUrls(receipt);
                   return (
                     <div key={receipt.id} className="bg-logia-900 border border-logia-700 rounded p-3">
@@ -210,7 +214,9 @@ const AdminPaymentEvidenceModal: React.FC<Props> = ({
                             {receipt.status === 'approved' ? '✅ Aprobado' : receipt.status === 'pending' ? '⏳ Pendiente' : '❌ Rechazado'}
                             {receipt.ledgerIncluded ? ' · Histórico ya incluido' : ''}
                           </p>
-                          {applied !== undefined && <p className="text-xs text-gray-400">Aplicado a deuda: <span className="text-green-300">${applied.toFixed(2)}</span>{receiptExcess !== undefined && receiptExcess > 0 ? <span className="text-orange-300"> · Excedente ${receiptExcess.toFixed(2)}</span> : null}</p>}
+                          {applied !== undefined && <p className="text-xs text-gray-400">Aplicado a esta cuota: <span className="text-green-300">${applied.toFixed(2)}</span>{receiptExcess !== undefined && receiptExcess > 0 ? <span className="text-orange-300"> · Excedente ${receiptExcess.toFixed(2)}</span> : null}</p>}
+                          {(receipt.bankReference||receipt.bankOriginalReference)&&<p className="text-xs text-indigo-200 break-all">Folio bancario: {receipt.bankReference||receipt.bankOriginalReference}</p>}
+                          {receipt.quotaAllocations&&<p className="text-xs text-gray-400">Depósito repartido entre {receipt.quotaAllocations.length} cuota(s). Total aplicado: ${Number(receipt.appliedAmount||0).toFixed(2)}.</p>}
                           {receipt.reviewComments && <p className="text-xs text-gray-300 mt-1 italic">“{receipt.reviewComments}”</p>}
                         </div>
                         {urls.length > 0 && (
@@ -234,3 +240,4 @@ const AdminPaymentEvidenceModal: React.FC<Props> = ({
 };
 
 export default AdminPaymentEvidenceModal;
+

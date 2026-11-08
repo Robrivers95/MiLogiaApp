@@ -64,3 +64,45 @@ assert.equal(records.get('bankBalances/bank').amount,beforeBank+1200);
 const manyProof=records.get('groups/logia/paymentReceipts/ai-three-months');assert.equal(manyProof.periods.join(','),months.join(','));assert.equal(manyProof.periodAllocations.length,3);assert.ok(manyProof.periodAllocations.every(a=>a.amount===400));
 await assert.rejects(api.approve('logia','three-months',{...multiple,periods:undefined},true),/otros datos/);
 console.log('Multi-month approval passed: $1200 -> 3 x $400, explicit confirmation, atomic rollback, one receipt, single bank increase, idempotent retries and changed distribution rejected.');
+
+
+// New review: one real deposit can be distributed across exact normal/extra targets.
+records.set('users/c',{uid:'c',name:'Mateo García',groupId:'logia',active:true});
+const cLedger=p=>'users/c/ledger/'+p;
+for(const period of ['2026-01','2026-02','2026-03'])records.set(cLedger(period),{period,groupId:'logia',amount:400,paid:0,paidRegular:0,comments:'Conservar',extraFees:period==='2026-01'?[{id:'dinner',description:'Cena',amount:300,paid:0,createdAt:''}]:[]});
+records.set(draft('mixed'),{status:'pending',receiptImageUrls:[],reference:'0000987654321',date:'2026-10-29',sourceQuote:'Transferencia recibida original'});
+const mixed={...review,memberId:'c',amount:1200,reference:'0000123456789',period:'2026-01',allocations:[{period:'2026-01',kind:'regular',amount:300,expectedBalance:400},{period:'2026-01',kind:'extra',feeId:'dinner',amount:200,expectedBalance:300},{period:'2026-02',kind:'regular',amount:400,expectedBalance:400}],allowUnapplied:true};
+const startingBalance=records.get('bankBalances/bank').amount;
+await assert.rejects(api.approve('logia','mixed',{...mixed,allowUnapplied:false},true),/Falta repartir/);
+assert.equal(records.get(cLedger('2026-01')).paid,0);
+failCommit=true;await assert.rejects(api.approve('logia','mixed',mixed,true),/commit failed/);
+assert.equal(records.get(cLedger('2026-01')).paid,0);assert.equal(records.has('groups/logia/treasury/ai-credit-mixed'),false);
+await Promise.all([api.approve('logia','mixed',mixed,true),api.approve('logia','mixed',mixed,true)]);
+assert.equal(records.get(cLedger('2026-01')).paidRegular,300);assert.equal(records.get(cLedger('2026-01')).extraFees[0].paid,200);assert.equal(records.get(cLedger('2026-02')).paidRegular,400);
+assert.equal(records.get('bankBalances/bank').amount,startingBalance+1200,'received deposit increments bank once, including unapplied part');
+const mixedProof=records.get('groups/logia/paymentReceipts/ai-mixed'),credit=records.get('groups/logia/treasury/ai-credit-mixed');
+assert.equal(mixedProof.quotaAllocations.length,3);assert.equal(mixedProof.appliedAmount,900);assert.equal(mixedProof.unappliedAmount,300);
+assert.equal(mixedProof.bankReference,'0000123456789');assert.equal(mixedProof.bankOriginalReference,'0000987654321');assert.equal(mixedProof.bankDepositDate,'2026-10-29');
+assert.equal(credit.amount,300);assert.equal(credit.quickStatus,'pending');assert.equal(credit.memberId,'c');assert.equal(credit.bankReference,'0000123456789');
+assert.equal(records.get(cLedger('2026-01')).paid+records.get(cLedger('2026-02')).paid+credit.amount,1200,'treasury + quotas account for the received amount, never twice');
+await assert.rejects(api.approve('logia','mixed',{...mixed,allocations:[...mixed.allocations].map((a,i)=>i===0?{...a,amount:250}:a)},true),/otros datos/);
+await dataService.updatePaymentReceipt('logia','ai-mixed',{transferDate:'2026-10-29'});
+await assert.rejects(dataService.updatePaymentReceipt('logia','ai-mixed',{amount:800}),/reparto confirmado/);
+const creditedBank=records.get('bankBalances/bank').amount;
+await service.apply('logia','ai-credit-mixed','c','2026-03');
+assert.equal(records.get(cLedger('2026-03')).paidRegular,300);assert.equal(records.get('bankBalances/bank').amount,creditedBank,'later classification of a credit does not receive money again');
+assert.equal(records.get('groups/logia/paymentReceipts/quick-ai-credit-mixed').bankReference,'0000123456789');assert.equal(countsInTreasury(records.get('groups/logia/treasury/ai-credit-mixed')),false);
+
+records.set(draft('stale'),{status:'pending',receiptImageUrls:[],reference:'stale'});
+await assert.rejects(api.approve('logia','stale',{...mixed,amount:100,allocations:[{period:'2026-01',kind:'regular',amount:100,expectedBalance:400}]},true),/saldos cambiaron/);
+assert.equal(records.get(draft('stale')).status,'pending');assert.equal(records.get('bankBalances/bank').amount,creditedBank);
+records.set(draft('credit-only'),{status:'pending',receiptImageUrls:[],reference:'0000001',date:'2026-11-06'});
+await api.approve('logia','credit-only',{...review,memberId:'c',amount:100,period:'',allocations:[],allowUnapplied:true,reference:'0000001'},true);
+assert.equal(records.get('groups/logia/paymentReceipts/ai-credit-only').appliedAmount,0);assert.equal(records.get('groups/logia/treasury/ai-credit-credit-only').amount,100);
+assert.equal(records.get('bankBalances/bank').amount,creditedBank+100);
+console.log('Selected quota approval passed: mixed normal/extra targets, custom partial amounts, confirmed unapplied credit, original/corrected transfer folios, one bank receipt, atomic rollback, concurrent retries, stale balances rejected, and later credit application without duplicate cash.');
+
+records.get(cLedger('2026-01')).extraFees[0].paid=250;
+const reconciliation=await dataService.reconcileExtraFeeFromReceipts('logia','Cena',2026);
+const dinner=reconciliation.details.find(d=>d.uid==='c');assert.equal(dinner.receipts,200,'mixed receipt reconciliation counts only the exact extra allocation, not the full deposit');assert.equal(dinner.paid,250);
+console.log('Mixed extra evidence reconciliation passed: exact extra destination and amount.');

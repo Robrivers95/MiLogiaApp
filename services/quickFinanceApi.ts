@@ -118,10 +118,11 @@ export const quickFinanceService = {
       if (proof.exists()) throw new Error('Ya existe un comprobante enlazado. Actualiza la consulta.');
       const source = {...ledger.data(),period} as Payment; const result = applyCapture(source,entry,feeId);
       const now = new Date().toISOString();
-      const receipt: PaymentReceipt = {id:`quick-${id}`,groupId,userId:uid,userName:member.data().name,periods:[period],transferDate:entry.date,receiptImageUrl:entry.receiptImageUrls?.[0] || '',receiptImageUrls:entry.receiptImageUrls || [],amount:entry.amount,receiptType:feeId ? 'concepto_adicional' : 'cuota_mensual',...(feeId ? {extraFeeId:feeId,extraFeePeriod:period,conceptDescription:feeId === 'legacy' ? source.extraDescription || 'Cuota Extra' : source.extraFees?.find(fee=>fee.id === feeId)?.description} : {}),appliedAmount:entry.amount,unappliedAmount:0,voluntaryContribution:result.voluntary,ledgerIncluded:true,status:'approved',submittedAt:now,reviewedAt:now,reviewedBy:by,quickMovementId:id};
+      const receipt: PaymentReceipt = {id:`quick-${id}`,groupId,userId:uid,userName:member.data().name,periods:[period],transferDate:entry.date,receiptImageUrl:entry.receiptImageUrls?.[0] || '',receiptImageUrls:entry.receiptImageUrls || [],amount:entry.amount,receiptType:feeId ? 'concepto_adicional' : 'cuota_mensual',...(feeId ? {extraFeeId:feeId,extraFeePeriod:period,conceptDescription:feeId === 'legacy' ? source.extraDescription || 'Cuota Extra' : source.extraFees?.find(fee=>fee.id === feeId)?.description} : {}),appliedAmount:entry.amount,unappliedAmount:0,voluntaryContribution:result.voluntary,ledgerIncluded:true,status:'approved',submittedAt:now,reviewedAt:now,reviewedBy:by,quickMovementId:id,...(entry.bankReference!==undefined?{bankReference:entry.bankReference,bankOriginalReference:entry.bankOriginalReference||'',bankDepositDate:entry.bankDepositDate||entry.date,incomeDraftId:entry.incomeDraftId||''}:{})};
       transaction.update(ledgerRef,clean(result.payment)); transaction.set(proofRef,clean(receipt));
       transaction.update(target,{quickStatus:'applied',memberId:uid,memberName:member.data().name,appliedPeriod:period,appliedFeeId:feeId || '',completedBy:by,updatedAt:Date.now()});
       // No second cash/account mutation: only the classification changes.
     }); changed(groupId);
   }
 };
+

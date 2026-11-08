@@ -553,6 +553,8 @@ const Payments: React.FC<Props> = ({ user }) => {
                                     Monto: <span className="text-white font-bold">${Number(r.amount).toFixed(2)}</span>
                                   </p>
                                 )}
+                                {(r.bankReference||r.bankOriginalReference)&&<p className="text-xs text-indigo-300 break-all">Folio de transferencia: {r.bankReference||r.bankOriginalReference}</p>}
+                                {r.quotaAllocations?.map(a=><p key={`${a.period}-${a.kind}-${a.feeId||''}`} className="text-xs text-gray-300">{a.period} · {a.concept}: ${a.amount.toFixed(2)}</p>)}
                                 {r.reviewComments && (
                                   <p className="text-xs text-red-300 mt-1">"{r.reviewComments}"</p>
                                 )}
@@ -839,3 +841,4 @@ const Payments: React.FC<Props> = ({ user }) => {
 };
 
 export default Payments;
+

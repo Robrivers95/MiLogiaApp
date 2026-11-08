@@ -57,7 +57,7 @@ export function filterTreasuryReport(entries: TreasuryEntry[],filters: TreasuryR
     const projects=reportProjects(entry);
     if(filters.project==='unlinked' && projects.length)return false;
     if(filters.project && filters.project!=='unlinked' && !projects.some(project=>project.id===filters.project))return false;
-    return !search || key([entry.memberName || '',reportConcept(entry),entry.description,...projects.map(project=>project.name)].join(' ')).includes(search);
+    return !search || key([entry.memberName || '',entry.bankReference||'',entry.bankOriginalReference||'',reportConcept(entry),entry.description,...projects.map(project=>project.name)].join(' ')).includes(search);
   }).sort((a,b)=>reportPeriod(b,filters.basis).localeCompare(reportPeriod(a,filters.basis)) || (a.memberName || '').localeCompare(b.memberName || '','es') || Number(a.quotaKind!=='regular')-Number(b.quotaKind!=='regular') || reportConcept(a).localeCompare(reportConcept(b),'es') || a.id.localeCompare(b.id));
 }
 export function treasuryReportTotals(entries: TreasuryEntry[]) {
@@ -79,3 +79,4 @@ export function treasuryReportCsv(entries: TreasuryEntry[],basis:'quota'|'date'=
   });
   return '\uFEFF'+[header.map(csvCell).join(','),...lines].join('\r\n');
 }
+
