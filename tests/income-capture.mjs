@@ -48,3 +48,19 @@ records.set('users/admin',{role:'member',active:true,groupId:'logia'});await ass
 records.set('users/admin',{role:'admin',active:true,groupId:'other'});await assert.rejects(api.list('logia'),/Admin/);
 records.set('users/admin',{role:'master',active:true,groupId:''});assert.equal((await api.list('logia')).length,4);
 console.log('Real income approval passed: explicit confirmation, corrected members/periods/concepts, proof linkage, atomic failure, concurrent retries and map-order idempotence, exact quota/account totals, rejection, missing/foreign quotas and role isolation.');
+
+records.set('users/admin',{role:'admin',active:true,groupId:'logia'});
+const months=['2026-07','2026-08','2026-09'];
+for(const period of months)records.set('users/a/ledger/'+period,{period,groupId:'logia',amount:400,paid:0,paidRegular:0});
+records.set(draft('three-months'),{status:'pending',receiptImageUrls:[],reference:'synthetic-three-months'});
+const multiple={...review,amount:1200,period:'2026-07',periods:months,periodAmounts:[400,400,400],concept:'Cuotas julio a septiembre'};
+const beforeBank=records.get('bankBalances/bank').amount;
+await assert.rejects(api.approve('logia','three-months',multiple,false),/confirma/);
+await assert.rejects(api.approve('logia','three-months',{...multiple,periodAmounts:[300,500,400]},true),/saldos cambiaron/);
+failCommit=true;await assert.rejects(api.approve('logia','three-months',multiple,true),/commit failed/);for(const p of months)assert.equal(records.get('users/a/ledger/'+p).paidRegular,0);
+await Promise.all([api.approve('logia','three-months',multiple,true),api.approve('logia','three-months',multiple,true)]);
+for(const p of months)assert.equal(records.get('users/a/ledger/'+p).paidRegular,400);
+assert.equal(records.get('bankBalances/bank').amount,beforeBank+1200);
+const manyProof=records.get('groups/logia/paymentReceipts/ai-three-months');assert.equal(manyProof.periods.join(','),months.join(','));assert.equal(manyProof.periodAllocations.length,3);assert.ok(manyProof.periodAllocations.every(a=>a.amount===400));
+await assert.rejects(api.approve('logia','three-months',{...multiple,periods:undefined},true),/otros datos/);
+console.log('Multi-month approval passed: $1200 -> 3 x $400, explicit confirmation, atomic rollback, one receipt, single bank increase, idempotent retries and changed distribution rejected.');

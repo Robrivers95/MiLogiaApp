@@ -436,3 +436,21 @@ const afterPdf=providerCalls;await call(pdfRequest,actor('admin'));assert.equal(
 await reject(()=>call({...pdfRequest,requestId:'bad-pdf',documents:[{mimeType:'application/pdf',data:'AAAA'}]},actor('admin')),'invalid-argument');
 await reject(()=>call({...pdfRequest,requestId:'too-many-files',documents:Array(5).fill(pdfRequest.documents[0])},actor('admin')),'invalid-argument');
 console.log('PDF callable passed: native Gemini document, text-only draft, invalid PDF guard and idempotent retry.');
+
+const {bankCsv,bankPdfText}=await import('./income-bank-fixture.mjs');
+providerStatus=429;
+const importBank={...incoming,text:bankCsv,requestId:'bank-csv-corrected',images:[],retainImages:false};
+const beforeMoney=[...store].filter(([path])=>path.includes('/ledger/')||path.includes('/treasury/')||path.includes('/paymentReceipts/'));
+const bankRead=await call(importBank,actor('admin'));
+assert.equal(bankRead.bankRead,true);assert.equal(bankRead.aiUsed,false);assert.equal(bankRead.ids.length,3);
+const movements=Array.from(bankRead.ids,id=>store.get('groups/lodge/incomeDrafts/'+id));
+assert.equal(movements.reduce((s,r)=>s+r.amount,0),1600);assert.deepEqual(movements.map(r=>r.date),['2026-10-01','2026-10-04','2026-10-04']);assert.ok(movements.every(r=>r.period===''&&r.status==='pending'&&!r.receiptImageUrls.length));
+assert.deepEqual(movements.map(r=>r.reference),['900000000001','900000000004','900000000005']);assert.equal(movements.filter(r=>r.amount===400).length,2,'same payer/amount with different references stays separate');
+assert.deepEqual([...store].filter(([path])=>path.includes('/ledger/')||path.includes('/treasury/')||path.includes('/paymentReceipts/')),beforeMoney,'bank reading writes no money');
+const pdfAgain=await call({...importBank,text:bankPdfText,requestId:'same-bank-as-pdf'},actor('master'));
+assert.deepEqual(Array.from(pdfAgain.ids),Array.from(bankRead.ids),'CSV and multi-page PDF reuse drafts by operation reference across admins');
+assert.equal(new Set(pdfAgain.ids).size,3);
+await reject(()=>call({...importBank,requestId:'bank-reference-conflict',text:bankCsv.replace(';800.00;',';900.00;')},actor('admin')),'failed-precondition');
+console.log('Bank CSV/PDF passed: exact dates/amounts/references, omitted returns/outgoings, separate equal payments, cross-admin deduplication, Gemini quota fallback, no financial writes.');
+
+const combinedBank=await call({...importBank,text:bankCsv+'\n'+bankPdfText,requestId:'same-bank-two-files'},actor('admin'));assert.equal(combinedBank.ids.length,3);assert.deepEqual(Array.from(combinedBank.ids),Array.from(bankRead.ids),'PDF+CSV in one import deduplicate accents and references');
