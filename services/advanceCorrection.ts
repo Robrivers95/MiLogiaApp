@@ -8,7 +8,7 @@ const cents=(n:number)=>Math.round(n*100);
 export function advanceSources(payments:Payment[],receipts:PaymentReceipt[]){
  const ledger=payments.flatMap(p=>{const raw=Number(p.paidRegular??(!p.extraAmount&&!p.extraFees?.length&&!p.paidExtra?p.paid:0)),amount=(cents(raw)-cents(p.amount))/100;return amount>0?[{kind:'ledger' as const,id:p.period,amount,date:(p.paymentDate||'').slice(0,10),label:`Excedente en ${p.period}`}]:[];});
  const proofs=receipts.filter(r=>r.status==='approved'&&r.receiptType==='cuota_mensual'&&!r.ledgerIncluded&&!(r as any).unappliedEntryId&&Number(r.unappliedAmount)>0&&r.appliedAmount!==undefined&&cents(Number(r.amount))-cents(Number(r.appliedAmount))===cents(Number(r.unappliedAmount))).map(r=>({kind:'receipt' as const,id:r.id,amount:Number(r.unappliedAmount),date:(r.transferDate||'').slice(0,10),label:`Comprobante ${r.periods.join(', ')} · ${r.bankReference||r.id.slice(0,8)}`}));
- return [...proofs,...ledger];
+ return [...proofs,...ledger.filter(l=>!receipts.some(r=>r.status==='approved'&&Number(r.unappliedAmount)>0&&(r.periods||[]).includes(l.id)))];
 }
 export interface AdvanceRequest {groupId:string;memberId:string;sourceKind:'receipt'|'ledger';sourceId:string;periods:string[];date:string;operationId:string;}
 export async function correctAdvance(input:AdvanceRequest,expected?:string){
