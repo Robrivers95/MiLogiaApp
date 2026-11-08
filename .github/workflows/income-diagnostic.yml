@@ -1,0 +1,49 @@
+name: Inspect income runtime errors
+on:
+  push:
+    branches: [fix/income-internal]
+    paths: ['.github/workflows/income-diagnostic.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: /tmp/mi-logia-income-diagnostic.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+      - run: npm ci --prefix functions
+      - name: Prepare existing diagnostic identity
+        env:
+          DEPLOY_CREDENTIALS: ${{ secrets.FIREBASE_SERVICE_ACCOUNT2 }}
+        run: |
+          python - <<'PY'
+          import os,json
+          value=json.loads(os.environ['DEPLOY_CREDENTIALS'])
+          descriptor=os.open(os.environ['GOOGLE_APPLICATION_CREDENTIALS'],os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
+          with os.fdopen(descriptor,'w') as f: json.dump(value,f)
+          PY
+      - name: Inspect sanitized capture errors
+        run: |
+          node - <<'JS'
+          const {GoogleAuth}=require('./functions/node_modules/google-auth-library');
+          (async()=>{
+            const auth=await new GoogleAuth({scopes:['https://www.googleapis.com/auth/cloud-platform']}).getClient();
+            try {
+              const since=new Date(Date.now()-48*60*60*1000).toISOString();
+              const result=await auth.request({url:'https://logging.googleapis.com/v2/entries:list',method:'POST',data:{resourceNames:['projects/registrologia'],filter:`resource.type="cloud_function" AND resource.labels.function_name="captureWithAI" AND severity>=ERROR AND timestamp>="${since}"`,orderBy:'timestamp desc',pageSize:15}});
+              const redact=s=>String(s||'').replace(/https?:\/\/\S+/g,'[url]').replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig,'[email]').replace(/[A-Za-z0-9_.=-]{45,}/g,'[long-value]');
+              console.log('Runtime error count:',result.data.entries?.length||0);
+              for(const e of result.data.entries||[])console.log(JSON.stringify({time:e.timestamp,message:redact(e.textPayload||e.jsonPayload?.message||'').slice(0,3500)}));
+            }catch(error){console.log('Logging read HTTP status:',error.response?.status||'unavailable');console.log('Logging read code:',error.response?.data?.error?.status||'unavailable');}
+          })().catch(()=>{console.error('Diagnostic identity unavailable');process.exitCode=1;});
+          JS
+      - name: Remove temporary diagnostic identity
+        if: always()
+        run: rm -f "$GOOGLE_APPLICATION_CREDENTIALS"
