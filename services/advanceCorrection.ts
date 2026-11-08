@@ -42,7 +42,7 @@ export async function correctAdvance(input:AdvanceRequest,expected?:string){
   });
   const plan={available:eligible.amount,date,allocations:changes.map(c=>({period:c.period,amount:c.amount,created:c.created})),remaining:remaining/100};
   if(remaining>0)throw Error('Los meses seleccionados no alcanzan para aplicar todo el excedente. Agrega los meses faltantes.');
-  const fingerprint=JSON.stringify(plan);
+  const fingerprint=JSON.stringify({groupId,memberId,sourceKind,sourceId,...plan});
   if(!expected)return {...plan,fingerprint};
   if(expected!==fingerprint)throw Error('Los saldos o las cuotas cambiaron. Revisa otra vez antes de confirmar.');
   const correction={id:operationId,request:JSON.stringify({...input,periods}),plan:{...plan,fingerprint},by,at:new Date().toISOString()};
