@@ -1,3 +1,4 @@
+import AdvanceCorrection from './AdvanceCorrection';
 import MemberAccount from './MemberAccount';
 import React, { useEffect, useState } from 'react';
 import type { Payment, PaymentReceipt, Role, User } from '../types';
@@ -80,7 +81,7 @@ export default function MemberDetail({ member, currentUser, stats, statsLoading,
       </div> : <div className="space-y-3">
         <p className="text-xs text-gray-400">Cuotas registradas y abonos individualizados. Para crear un mes o registrar una parcialidad abre Gestionar pagos.</p>
         <button disabled={readOnly} onClick={()=>actions.payments(member.uid)} className="w-full rounded-lg bg-indigo-600 p-3 text-sm disabled:opacity-40">Gestionar pagos y mensualidades</button>
-        {loading||receiptLoading?<p role="status">Cargando estado de cuenta…</p>:historyError||receiptError?<div><p className="text-red-300 text-sm">{historyError||receiptError}</p><button onClick={()=>setRetry(v=>v+1)} className="p-3 border border-logia-700 rounded-lg">Reintentar</button></div>:<MemberAccount key={member.uid} payments={payments} receipts={receipts}/>}
+        {loading||receiptLoading?<p role="status">Cargando estado de cuenta…</p>:historyError||receiptError?<div><p className="text-red-300 text-sm">{historyError||receiptError}</p><button onClick={()=>setRetry(v=>v+1)} className="p-3 border border-logia-700 rounded-lg">Reintentar</button></div>:<>{!readOnly&&['admin','master'].includes(currentUser.role)&&<AdvanceCorrection groupId={currentUser.groupId} memberId={member.uid} payments={payments} receipts={receipts} onDone={()=>{setRetry(v=>v+1);window.dispatchEvent(new CustomEvent('finance-updated',{detail:{groupId:currentUser.groupId}}));}}/>}<MemberAccount key={member.uid} payments={payments} receipts={receipts}/></>}
       </div>}
 
     </div>
