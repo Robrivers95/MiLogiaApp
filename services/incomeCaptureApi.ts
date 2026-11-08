@@ -6,7 +6,7 @@ import {quickFinanceService} from './quickFinanceApi';
 import {applyCapture,captureAmount,validCaptureDate} from './quickFinance';
 import type {Payment,PaymentReceipt,TreasuryEntry,User} from '../types';
 export interface IncomeDraft {id:string;groupId:string;status:'pending'|'approved'|'rejected';payerName:string;memberId:string;amount:number;date:string;period:string;kind:'regular'|'extra'|'other';concept:string;reference:string;paymentMethod:'cash'|'card'|'transfer';sourceQuote:string;sourceText:string;receiptImageUrls:string[];warnings:string[];possibleDuplicate:boolean;createdAt:number;}
-export interface IncomeReview {periods?:string[];memberId:string;amount:number;date:string;period:string;kind:IncomeDraft['kind'];feeId:string;concept:string;paymentMethod:IncomeDraft['paymentMethod'];accountId:string;}
+export interface IncomeReview {periodAmounts?:number[];periods?:string[];memberId:string;amount:number;date:string;period:string;kind:IncomeDraft['kind'];feeId:string;concept:string;paymentMethod:IncomeDraft['paymentMethod'];accountId:string;}
 const clean=<T,>(value:T):T=>JSON.parse(JSON.stringify(value));
 async function authority(tx:any,groupId:string){
  if(!auth.currentUser||!/^[-\w]{1,128}$/.test(groupId))throw Error('Selecciona una logia e inicia sesión.');
@@ -28,11 +28,12 @@ export const incomeCaptureApi={
   if(review.periods!==undefined&&(!Array.isArray(review.periods)||review.periods.length>36||review.periods.some(p=>typeof p!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(p))||new Set(review.periods).size!==review.periods.length))throw Error('Revisa los meses seleccionados.');
   const periods=review.kind==='regular'&&review.periods?.length?[...review.periods].sort():[review.period];
   if(periods[0]!==review.period)throw Error('El mes inicial debe coincidir con el reparto.');
+  if(periods.length>1&&(!Array.isArray(review.periodAmounts)||review.periodAmounts.length!==periods.length||review.periodAmounts.some(a=>!Number.isFinite(a)||a<=0)))throw Error('Revisa el importe de cada mes antes de confirmar.');
   const payload=clean({...review,...(review.periods!==undefined?{periods:review.kind==='regular'?periods:[]}:{}),amount,date,concept:review.concept.trim()});
   await runTransaction(db,async tx=>{
    const by=await authority(tx,groupId),ref=draftRef(groupId,id),snap=await tx.get(ref);
    if(!snap.exists())throw Error('La solicitud ya no existe.');const source=snap.data() as IncomeDraft;
-   if(source.status==='approved'){if(JSON.stringify((source as any).approvedReview?.periods??[])!==JSON.stringify(payload.periods??[])||!Object.keys(payload).every(key=>(Array.isArray((payload as any)[key])?JSON.stringify((source as any).approvedReview?.[key])===JSON.stringify((payload as any)[key]):(source as any).approvedReview?.[key]===(payload as any)[key])))throw Error('Esta solicitud ya se aprobó con otros datos. Actualiza la lista.');return;}
+   if(source.status==='approved'){if(JSON.stringify((source as any).approvedReview?.periods??[])!==JSON.stringify(payload.periods??[])||JSON.stringify((source as any).approvedReview?.periodAmounts??[])!==JSON.stringify(payload.periodAmounts??[])||!Object.keys(payload).every(key=>(Array.isArray((payload as any)[key])?JSON.stringify((source as any).approvedReview?.[key])===JSON.stringify((payload as any)[key]):(source as any).approvedReview?.[key]===(payload as any)[key])))throw Error('Esta solicitud ya se aprobó con otros datos. Actualiza la lista.');return;}
    if(source.status!=='pending')throw Error('La solicitud no está pendiente.');
    const member=await tx.get(doc(db,'users',review.memberId));if(!member.exists()||member.data().groupId!==groupId)throw Error('El hermano no pertenece a esta logia.');
    let account:any;let accountRef:any;
@@ -48,6 +49,7 @@ export const incomeCaptureApi={
     if(ledgers.some(ledger=>!ledger.exists()||(ledger.data().groupId&&ledger.data().groupId!==groupId)))throw Error('No existe esa cuota para este hermano y mes. Corrige la selección.');if(proof.exists())throw Error('Ya existe el comprobante. Actualiza la lista.');
     const payments=ledgers.map((ledger,i)=>({...ledger.data(),period:periods[i]} as Payment)),feeId=review.kind==='extra'?review.feeId:undefined;
     const plan=review.kind==='regular'?incomeAllocation(payments,amount,periods):{allocations:[{period:review.period,amount}],remaining:0};
+    if(review.kind==='regular'&&review.periodAmounts&&JSON.stringify(review.periodAmounts)!==JSON.stringify(plan.allocations.map(a=>a.amount)))throw Error('Los saldos cambiaron. Actualiza los meses y revisa de nuevo el reparto antes de confirmar.');
     if(plan.remaining>0)throw Error('El ingreso excede el saldo mensual de los meses seleccionados. Agrega más meses o corrige el monto.');
     if(plan.allocations.length!==periods.length)throw Error('Selecciona solo meses con saldo que se cubran con este pago.');
     const results=plan.allocations.map(a=>({period:a.period,...applyCapture(payments.find(p=>p.period===a.period)!,{id:receiptId,type:'income',quickStatus:'pending',amount:a.amount,date} as TreasuryEntry,feeId)}));
