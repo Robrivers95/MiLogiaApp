@@ -86,6 +86,7 @@ export interface PaymentReceipt {
   groupId: string;
   userId: string;
   userName: string;
+  periodAllocations?: {period:string;amount:number}[]; // Reparto confirmado del ingreso
   periods: string[];           // Array de YYYY-MM que desea pagar
   transferDate: string;        // ISO fecha/hora de la transferencia
   receiptImageUrl: string;     // URL primera imagen (backward compat)

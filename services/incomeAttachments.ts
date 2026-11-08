@@ -10,8 +10,16 @@ export async function incomeAttachments(files:File[],text:string):Promise<{text:
    if(file.size>2*1024*1024)throw Error('El PDF supera 2 MB. Divide el estado de cuenta en archivos más pequeños.');
    const bytes=new Uint8Array(await file.arrayBuffer());
    if(new TextDecoder().decode(bytes.slice(0,5))!=='%PDF-')throw Error('El archivo no es un PDF válido.');
+   const {incomePdf}=await import('./incomePdf');
+   const extracted=await incomePdf(bytes);
+   if(extracted.replace(/\s/g,'').length>40){sections.push(`PDF ${file.name}:\n${extracted}`);continue;}
    let binary='';for(let offset=0;offset<bytes.length;offset+=16384)binary+=String.fromCharCode(...bytes.subarray(offset,offset+16384));
    documents.push({mimeType:'application/pdf',data:btoa(binary)});
+  }else if(extension==='csv'||file.type==='text/csv'){
+   if(file.size>20000)throw Error('El CSV tiene demasiado texto. Divide los movimientos.');
+   let value=new TextDecoder('utf-8',{fatal:true});let source:string;
+   try{source=value.decode(await file.arrayBuffer());}catch{source=new TextDecoder('windows-1252').decode(await file.arrayBuffer());}
+   sections.push(`CSV ${file.name}:\n${source.replace(/^\uFEFF/,'')}`);
   }else if(extension==='xlsx'){
    if(file.size>2*1024*1024)throw Error('El Excel supera 2 MB. Exporta solo los movimientos que quieres revisar.');
    const {default:ExcelJS}=await import('exceljs');const workbook=new ExcelJS.Workbook();
@@ -28,7 +36,7 @@ export async function incomeAttachments(files:File[],text:string):Promise<{text:
    sections.push(`Excel ${file.name}:\n${lines.join('\n')}`);
   }else if(['jpg','jpeg','png','webp'].includes(extension||'')||file.type.startsWith('image/')){
    images.push(await incomeImage(file.type?file:new File([file],file.name,{type:extension==='png'?'image/png':extension==='webp'?'image/webp':'image/jpeg'})));
-  }else throw Error('Selecciona fotos JPG, PNG o WebP, Excel .xlsx o PDF. Convierte los .xls antiguos a .xlsx.');
+  }else throw Error('Selecciona fotos JPG, PNG o WebP, Excel .xlsx, CSV o PDF. Convierte los .xls antiguos a .xlsx.');
  }
  const combined=sections.filter(Boolean).join('\n\n');
  if(combined.length>20000)throw Error('Hay demasiado texto. Divide los movimientos en varios análisis.');

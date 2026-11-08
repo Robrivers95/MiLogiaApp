@@ -41,5 +41,8 @@ try{
  await assertSucceeds(updateDoc(doc(admin,'groups/lodge/incomeDrafts/draft'),{status:'approved',reviewedBy:'admin',reviewedAt:1000}));
  await assertFails(updateDoc(doc(admin,'groups/lodge/incomeDrafts/draft'),{status:'pending'}));
  await assertFails(getDoc(doc(admin,'financeImportRequests/private')));
+ await assertFails(getDoc(doc(admin,'financeBankReferences/private')));
+ await assertFails(getDoc(doc(master,'financeBankReferences/private')));
+ await assertFails(setDoc(doc(admin,'financeBankReferences/private'),{draftId:'fake'}));
  assert.ok(true);console.log('Firestore emulator passed: role escalation blocked, scoped admin, own profile editing, private server recovery state/audit, forced password gate and old-session revocation, lodge logo permissions.');
 }finally{await env.cleanup();}
