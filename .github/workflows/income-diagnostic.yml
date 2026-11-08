@@ -51,7 +51,7 @@ jobs:
               const redact=s=>String(s||'').replace(/https?:\/\/\S+/g,'[url]').replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig,'[email]').replace(/[A-Za-z0-9_.=-]{45,}/g,'[long-value]');
               console.log('Runtime error count:',result.data.entries?.length||0);
               for(const e of result.data.entries||[])console.log(JSON.stringify({time:e.timestamp,message:redact(e.textPayload||e.jsonPayload?.message||'').slice(0,3500)}));
-            }catch(error){console.log('Logging read HTTP status:',error.response?.status||'unavailable');console.log('Logging read code:',error.response?.data?.error?.status||'unavailable');}
+            }catch(error){console.log('Logging read HTTP status:',error.response?.status||'unavailable');console.log('Logging read code:',error.response?.data?.error?.status||'unavailable');console.log('Logging denial reason:',String(error.response?.data?.error?.message||'').replace(/https?:\/\/\S+/g,'[url]').slice(0,700));for(const detail of error.response?.data?.error?.details||[])if(detail.reason)console.log('Logging API reason:',detail.reason,'service:',detail.metadata?.service||'unknown');}
           })().catch(()=>{console.error('Diagnostic identity unavailable');process.exitCode=1;});
           JS
       - name: Remove temporary diagnostic identity
