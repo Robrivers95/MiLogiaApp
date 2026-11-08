@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths:
       - 'components/Member*.tsx'
+      - 'components/MonthlyQuotaAssignment.tsx'
+      - 'components/StatementExpenseReview.tsx'
+      - 'components/UnappliedReceiptRecovery.tsx'
+      - 'services/monthly*.ts'
+      - 'services/statementExpense*.ts'
       - 'components/IncomeCapture.tsx'
       - 'services/incomeCaptureApi.ts'
       - 'tests/income-capture*'
@@ -77,6 +82,8 @@ jobs:
         run: node tests/whatsapp-ui.mjs
       - name: Verify reviewed multi-income capture
         run: node tests/income-capture-ui.mjs
+      - name: Verify member accounts and statement expenses
+        run: node tests/member-account-ui.mjs
       - name: Verify quick finance
         run: node tests/quick-finance-ui.mjs
       - name: Verify treasury report
@@ -99,5 +106,6 @@ jobs:
         with:
           name: responsive-members-screenshots
           path: test-results/
+
 
 

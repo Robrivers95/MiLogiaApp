@@ -54,6 +54,7 @@ const AdminPaymentEvidenceModal: React.FC<Props> = ({
   onChanged,
 }) => {
   const [referenceSearch,setReferenceSearch]=useState('');
+  const [bankReference,setBankReference]=useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [amount, setAmount] = useState('');
   const [comments, setComments] = useState('');
@@ -107,6 +108,7 @@ const AdminPaymentEvidenceModal: React.FC<Props> = ({
         files,
         {
           groupId,
+          bankReference:bankReference.trim(),bankDepositDate:date,
           userId: context.userId,
           userName: context.userName,
           periods: [context.period],
@@ -123,7 +125,7 @@ const AdminPaymentEvidenceModal: React.FC<Props> = ({
         adminUid,
         alreadyIncluded
       );
-      setAmount('');
+      setAmount('');setBankReference('');
       setComments('');
       setFiles([]);
       setAlreadyIncluded(false);
@@ -172,6 +174,7 @@ const AdminPaymentEvidenceModal: React.FC<Props> = ({
                   <input type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" className="w-full bg-logia-800 border border-logia-700 rounded p-2 text-white" />
                 </div>
               </div>
+              <label className="block text-xs text-gray-400">Folio de transferencia<input aria-label="Folio del abono" type="text" maxLength={180} value={bankReference} onChange={e=>setBankReference(e.target.value)} className="block w-full bg-logia-800 border border-logia-700 rounded p-2 mt-1 text-white"/></label>
               <div>
                 <label className="text-xs text-gray-400 uppercase block mb-1">Comentario</label>
                 <textarea value={comments} onChange={e => setComments(e.target.value)} rows={2} placeholder="Ej: SPEI, efectivo, depósito parcial, referencia bancaria..." className="w-full bg-logia-800 border border-logia-700 rounded p-2 text-white" />

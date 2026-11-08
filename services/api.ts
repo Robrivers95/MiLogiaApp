@@ -1,3 +1,4 @@
+import {approveMonthlyReceipt} from './monthlyReceiptApproval';
 
 import { User, Payment, IndividualExtraFee, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee, FinanceProject, AppNotification, NotificationType, PaymentReceipt } from '../types';
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -6,7 +7,7 @@ import { auth, db, storage } from './firebase';
 import { canUseWhatsApp, currentReminderPeriod, debtReminder, normalizeWhatsAppPhone, WhatsAppPreparation, WhatsAppRecipient } from './whatsappReminders';
 import { assignmentPeriod, assignExistingFee, hasAssignedFee, applyExtraReceipt, ExistingFeeTemplate } from './extraFeeLifecycle';
 import { normalizePayment, correctAppliedPayment } from './paymentAccounting';
-import { countsInTreasury } from './quickFinance';
+import { countsInTreasury,validCaptureDate } from './quickFinance';
 import { quotaReportRows } from './treasuryReport';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { 
@@ -817,7 +818,8 @@ export const dataService = {
                     paidRegular: 0,
                     paidExtra: 0,
                     status: 'Pendiente',
-                    comments: 'Generado auto',
+                    comments: '',
+                    quotaCreatedAt: new Date().toISOString(), quotaCreatedBy: auth.currentUser?.uid || '',
                     groupId: user.groupId,
                     regularCovered: false,
                     extraCovered: true
@@ -1512,23 +1514,7 @@ export const dataService = {
     // Idempotency: the same receipt must never be credited twice.
     if (currentReceipt.status === 'approved') return;
 
-    const approvalDate = new Date().toISOString().split('T')[0];
-    const getPaidRegular = (p: Payment): number => {
-      if (p.paidRegular !== undefined) return Number(p.paidRegular) || 0;
-      return Math.min(Number(p.paid) || 0, Number(p.amount) || 0);
-    };
-    const getExtraFees = (p: Payment): IndividualExtraFee[] =>
-      Array.isArray(p.extraFees)
-        ? p.extraFees.map(f => ({ ...f, amount: Number(f.amount) || 0, paid: Number(f.paid) || 0 }))
-        : [];
-    const getPaidExtra = (p: Payment, fees = getExtraFees(p)): number =>
-      fees.length > 0 ? fees.reduce((sum, fee) => sum + fee.paid, 0) : (Number(p.paidExtra) || 0);
-    const extrasCovered = (p: Payment, fees = getExtraFees(p), paidExtra = getPaidExtra(p, fees)): boolean =>
-      fees.length > 0
-        ? fees.every(fee => !!fee.forgiven || fee.paid >= fee.amount)
-        : (Number(p.extraAmount) || 0) <= 0 || paidExtra >= (Number(p.extraAmount) || 0);
-    const computeStatus = (regularCovered: boolean, extraCovered: boolean, paidRegular: number, paidExtra: number): Payment['status'] =>
-      regularCovered && extraCovered ? 'Pagado' : (paidRegular > 0 || paidExtra > 0) ? 'Parcial' : 'Pendiente';
+    const approvalDate = validCaptureDate((currentReceipt.transferDate || '').slice(0,10));
     const buildComment = (existing: string | undefined, label: string): string =>
       existing ? `${existing} | ${label}` : label;
 
@@ -1554,7 +1540,7 @@ export const dataService = {
           paidRegular: updated.paidRegular, paidExtra: updated.paidExtra, paid: updated.paid,
           regularCovered: updated.regularCovered, extraCovered: updated.extraCovered, status: updated.status,
           paymentDate: approvalDate,
-          comments: buildComment(source.comments, `${contribution.voluntary ? 'Abono voluntario' : 'Pago'} ${live.conceptDescription || 'cuota extra'}: +$${contribution.appliedAmount.toFixed(2)} (${approvalDate})`)
+          comments: buildComment(source.comments, `${contribution.voluntary ? 'Abono voluntario' : 'Pago'} ${live.conceptDescription || 'cuota extra'}: +$${contribution.appliedAmount.toFixed(2)} (${approvalDate})${live.bankReference?' · Folio '+live.bankReference:''}`)
         });
         transaction.update(receiptRef, {status:'approved',reviewedAt:new Date().toISOString(),reviewedBy:reviewerUid,
           appliedAmount:contribution.appliedAmount,unappliedAmount:Math.max(0,Number(live.amount)-contribution.appliedAmount),
@@ -1565,79 +1551,13 @@ export const dataService = {
       appliedAmount = result.appliedAmount;
       Object.assign(currentReceipt, result.receipt, {extraFeeId:result.feeId,extraFeePeriod:result.period});
     } else {
-      // Cuota mensual: el monto se aplica SOLO a mensualidades, nunca a cuotas extra.
-      const sortedPeriods = [...(currentReceipt.periods || [])].sort();
-      if (sortedPeriods.length === 0) throw new Error('Selecciona al menos un período mensual.');
-      let remaining = Number(currentReceipt.amount) || 0;
-      const hasDeclaredAmount = remaining > 0;
-
-      for (const period of sortedPeriods) {
-        if (hasDeclaredAmount && remaining <= 0) break;
-        const ledgerRef = doc(db, "users", currentReceipt.userId, "ledger", period);
-        const ledgerSnap = await getDoc(ledgerRef);
-
-        if (!ledgerSnap.exists()) {
-          const groupSnap = await getDoc(doc(db, "groups", currentReceipt.groupId));
-          const feeAmount = groupSnap.exists() ? (Number(groupSnap.data().membershipFee) || 0) : 0;
-          if (feeAmount <= 0) continue;
-          const toApply = hasDeclaredAmount ? Math.min(remaining, feeAmount) : feeAmount;
-          const covered = toApply >= feeAmount;
-          await setDoc(ledgerRef, {
-            period,
-            amount: feeAmount,
-            paidRegular: toApply,
-            paid: toApply,
-            paidExtra: 0,
-            regularCovered: covered,
-            extraCovered: true,
-            status: covered ? 'Pagado' : 'Parcial',
-            comments: buildComment('', `Pago mensual: +$${toApply.toFixed(2)} (${approvalDate})`),
-            paymentDate: approvalDate,
-            groupId: currentReceipt.groupId
-          });
-          appliedAmount += toApply;
-          if (hasDeclaredAmount) remaining -= toApply;
-          continue;
-        }
-
-        const payment = ledgerSnap.data() as Payment;
-        const fees = getExtraFees(payment);
-        const paidExtra = getPaidExtra(payment, fees);
-        const extraCovered = extrasCovered(payment, fees, paidExtra);
-        const currentPaidRegular = getPaidRegular(payment);
-        const regularAmount = Number(payment.amount) || 0;
-        const regularDebt = Math.max(0, regularAmount - currentPaidRegular);
-        const toApply = hasDeclaredAmount ? Math.min(remaining, regularDebt) : regularDebt;
-        const newPaidRegular = currentPaidRegular + toApply;
-        const regularCovered = newPaidRegular >= regularAmount;
-
-        await updateDoc(ledgerRef, {
-          paidRegular: newPaidRegular,
-          paidExtra,
-          paid: newPaidRegular + paidExtra,
-          regularCovered,
-          extraCovered,
-          status: computeStatus(regularCovered, extraCovered, newPaidRegular, paidExtra),
-          paymentDate: approvalDate,
-          comments: buildComment(payment.comments, `Pago mensual: +$${toApply.toFixed(2)} (${approvalDate})`),
-        });
-        appliedAmount += toApply;
-        if (hasDeclaredAmount) remaining -= toApply;
-      }
+      const result=await approveMonthlyReceipt(currentReceipt.groupId,currentReceipt.id,reviewerUid);
+      if(!result)return;
+      appliedAmount=result.appliedAmount;
+      Object.assign(currentReceipt,result.receipt);
     }
 
-    // Mark approved only after the ledger was updated successfully.
-    const declaredReceiptAmount = Math.max(0, Number(currentReceipt.amount) || 0);
-    const unappliedAmount = Math.max(0, declaredReceiptAmount - appliedAmount);
-    if (currentReceipt.receiptType !== 'concepto_adicional') await updateDoc(receiptRef, {
-      status: 'approved',
-      reviewedAt: new Date().toISOString(),
-      reviewedBy: reviewerUid,
-      appliedAmount,
-      unappliedAmount,
-      ...(currentReceipt.extraFeeId ? { extraFeeId: currentReceipt.extraFeeId } : {}),
-      ...(currentReceipt.extraFeePeriod ? { extraFeePeriod: currentReceipt.extraFeePeriod } : {}),
-    });
+
 
     try {
       const periodsStr = (currentReceipt.periods || []).join(', ');

@@ -1,3 +1,4 @@
+import MemberAccount from './MemberAccount';
 import React, { useEffect, useState } from 'react';
 import type { Payment, PaymentReceipt, Role, User } from '../types';
 import { accountStatus, degreeLabel, memberMoney, memberStatus, MemberStats, paymentHistoryRows, memberEvidence, roleLabel } from '../services/memberPresentation';
@@ -38,7 +39,7 @@ export default function MemberDetail({ member, currentUser, stats, statsLoading,
     return () => { canceled = true; };
   }, [member.uid, tab, revision, retry, loadHistory]);
   useEffect(() => {
-    if (tab !== 'evidence') return;
+    if (tab === 'profile') return;
     let canceled = false;
     setReceiptLoading(true); setReceiptError(''); setReceipts([]);
     loadReceipts(member.uid).then(result => { if (!canceled) setReceipts(result); })
@@ -77,11 +78,13 @@ export default function MemberDetail({ member, currentUser, stats, statsLoading,
         {evidencePeriod && <button onClick={() => setEvidencePeriod('')} className="text-indigo-300 p-3 text-sm">Ver todos los períodos</button>}
         {loading || receiptLoading ? <p role="status">Cargando comprobantes…</p> : error || receiptError ? <div><p className="text-red-300 text-sm">{error || receiptError}</p><button onClick={() => setRetry(value => value+1)} className="p-3 border border-logia-700 rounded-lg">Reintentar</button></div> : <MemberEvidence key={`${member.uid}-${evidencePeriod}`} items={evidence.filter(item => !evidencePeriod || item.periods.includes(evidencePeriod))} />}
       </div> : <div className="space-y-3">
-        <p className="text-sm font-bold">Adeudo del historial completo: {loading || historyError ? 'Pendiente de consulta' : memberMoney(history.reduce((total,row) => total + row.balance, 0))}</p><label className="flex gap-2 items-center text-sm"><input type="checkbox" checked={onlyDebt} onChange={event => setOnlyDebt(event.target.checked)} />Solo cuotas con adeudo</label><button onClick={() => openEvidence()} className="w-full p-3 border border-indigo-700 text-indigo-200 rounded-lg text-sm">Ver todos los comprobantes</button>
-        <p className="text-xs text-gray-400">Historial completo. Los saldos del resumen corresponden al período seleccionado en el directorio.</p>
-        {loading ? <p role="status">Cargando historial…</p> : historyError ? <div><p className="text-red-300 text-sm">{historyError}</p><button onClick={() => setRetry(value => value + 1)} className="p-3 border border-logia-700 rounded-lg mt-2">Reintentar</button></div> : history.filter(row => !onlyDebt || row.balance > 0).length ? history.filter(row => !onlyDebt || row.balance > 0).map((row, index) => <article key={`${row.period}-${index}`} className="rounded-lg border border-logia-700 p-3"><div className="flex justify-between gap-2 text-sm"><strong>{row.concept}</strong><span className="shrink-0 text-indigo-300">{row.period}</span></div><dl className="grid grid-cols-2 gap-2 mt-3 text-xs"><div><dt className="text-gray-400">Cuota</dt><dd className="break-words mt-1">{memberMoney(row.amount)}</dd></div><div><dt className="text-gray-400">Pagado</dt><dd className="text-green-300 break-words mt-1">{memberMoney(row.paid)}</dd></div><div><dt className="text-gray-400">Saldo</dt><dd className="text-red-300 break-words mt-1">{memberMoney(row.balance)}</dd></div></dl><p className="mt-2 text-xs text-gray-400">Fecha del registro mensual: {row.registeredAt?.slice(0,10) || 'Sin fecha'}</p>{row.comments && <p className="text-xs text-gray-300 break-words whitespace-pre-wrap mt-2">{row.comments}</p>}<button onClick={() => openEvidence(row.period)} className="mt-3 w-full p-3 rounded-lg border border-indigo-700 text-indigo-200 text-xs">Comprobantes de {row.period}</button>{row.forgiven && <p className="mt-2 text-xs text-amber-300">Cuota perdonada</p>}</article>) : <p className="text-sm text-gray-400">{onlyDebt ? 'No hay cuotas pendientes en el historial registrado.' : 'No hay cuotas registradas para este miembro.'}</p>}
+        <p className="text-xs text-gray-400">Cuotas registradas y abonos individualizados. Para crear un mes o registrar una parcialidad abre Gestionar pagos.</p>
+        <button disabled={readOnly} onClick={()=>actions.payments(member.uid)} className="w-full rounded-lg bg-indigo-600 p-3 text-sm disabled:opacity-40">Gestionar pagos y mensualidades</button>
+        {loading||receiptLoading?<p role="status">Cargando estado de cuenta…</p>:historyError||receiptError?<div><p className="text-red-300 text-sm">{historyError||receiptError}</p><button onClick={()=>setRetry(v=>v+1)} className="p-3 border border-logia-700 rounded-lg">Reintentar</button></div>:<MemberAccount key={member.uid} payments={payments} receipts={receipts}/>}
       </div>}
+
     </div>
   </aside>;
 }
+
 

@@ -1,0 +1,27 @@
+import React,{useState} from 'react';
+import type {Payment,PaymentReceipt} from '../types';
+import {incomeTargets} from '../services/incomeSelection';
+import {memberEvidence} from '../services/memberPresentation';
+import MemberEvidence from './MemberEvidence';
+const money=(n:number)=>n.toLocaleString('es-MX',{style:'currency',currency:'MXN'});
+export default function MemberAccount({payments,receipts,onQuota}:{payments:Payment[];receipts:PaymentReceipt[];onQuota?:(period:string,kind:'regular'|'extra',feeId?:string,concept?:string)=>void}){
+ const [view,setView]=useState('quotas'),[search,setSearch]=useState(''),[year,setYear]=useState('all'),[onlyDebt,setOnlyDebt]=useState(false);
+ let targets:ReturnType<typeof incomeTargets>;try{targets=incomeTargets(payments);}catch{return <p role="alert" className="text-sm text-red-300">Hay montos inválidos en el historial. Revisa las correcciones de cuotas antes de registrar abonos.</p>;}
+ const evidence=memberEvidence(payments,receipts);
+ const missing=[...new Set(receipts.filter(r=>r.status!=='rejected').flatMap(r=>r.receiptType==='cuota_mensual'?(r.periods||[]):[]))].filter(period=>!targets.some(t=>t.kind==='regular'&&t.period===period));
+ const years=[...new Set([...targets.map(t=>t.period.slice(0,4)),...missing.map(p=>p.slice(0,4))])].sort().reverse();
+ const rows=targets.filter(t=>(year==='all'||t.period.startsWith(year))&&(!onlyDebt||t.balance>0));
+ const query=search.toLocaleLowerCase('es').trim();
+ const items=evidence.filter(e=>(year==='all'||e.periods.some(p=>p.startsWith(year)))&&[e.reference,e.originalReference,e.date,e.comments,e.concept,...e.periods].join(' ').toLocaleLowerCase('es').includes(query));
+ return <section aria-label="Estado de cuenta del miembro" className="space-y-3 min-w-0">
+  <div className="grid grid-cols-2 gap-2 text-sm"><div className="rounded-lg bg-logia-900 p-3"><p className="text-xs text-gray-400">Pagado en cuotas</p><b className="text-green-300">{money(targets.reduce((s,t)=>s+t.paid,0))}</b></div><div className="rounded-lg bg-logia-900 p-3"><p className="text-xs text-gray-400">Saldo de cuotas registradas</p><b className="text-amber-300">{money(targets.reduce((s,t)=>s+t.balance,0))}</b></div></div>
+  <nav aria-label="Vista del estado de cuenta" className="flex flex-wrap gap-2">{[['quotas','Cuotas y saldos'],['movements','Abonos y transferencias']].map(([id,label])=><button type="button" key={id} onClick={()=>setView(id)} aria-pressed={view===id} className={`rounded-lg p-3 text-sm ${view===id?'bg-indigo-600':'border border-logia-700'}`}>{label}</button>)}</nav>
+  <label className="block text-sm">Año <select aria-label="Año del estado de cuenta" value={year} onChange={e=>setYear(e.target.value)} className="bg-logia-900 border border-logia-700 rounded-lg p-2"><option value="all">Todos</option>{years.map(y=><option key={y}>{y}</option>)}</select></label>
+  {missing.filter(p=>year==='all'||p.startsWith(year)).length>0&&<div className="rounded-lg border border-amber-700 p-3 text-xs text-amber-200"><p>Hay comprobantes para meses sin cuota mensual asignada. El envío de un comprobante todavía no confirma un pago.</p>{missing.filter(p=>year==='all'||p.startsWith(year)).map(p=><p key={p} className="mt-1">{p} · Sin cuota asignada</p>)}<p className="mt-2">Puedes crear esa mensualidad para este miembro y revisar su comprobante.</p></div>}
+  {view==='movements'?<><label className="block text-sm">Buscar fecha, mes o folio<input aria-label="Buscar abonos del miembro" value={search} onChange={e=>setSearch(e.target.value)} className="block w-full min-w-0 bg-logia-900 border border-logia-700 rounded-lg p-3 mt-1"/></label><p className="text-xs text-gray-400">Cada transferencia se muestra una sola vez. Un acumulado antiguo sin comprobante no permite reconstruir la fecha ni el folio de cada parcialidad.</p><MemberEvidence items={items}/></>:<>
+   <label className="flex gap-2 text-sm"><input type="checkbox" checked={onlyDebt} onChange={e=>setOnlyDebt(e.target.checked)}/>Solo cuotas con adeudo</label>
+   <div className="overflow-auto rounded-lg border border-logia-700 max-h-96"><table className="w-full min-w-[560px] text-sm text-left"><thead className="bg-logia-900 sticky top-0"><tr>{['Mes / concepto','Cuota','Pagado','Debe','Estado','Detalle'].map(h=><th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{rows.map(t=><tr key={t.key} className="border-t border-logia-700"><td className="p-3"><b>{t.period}</b><p className="text-xs text-gray-400">{t.concept}</p></td><td className="p-3 whitespace-nowrap">{money(t.amount)}</td><td className="p-3 text-green-300 whitespace-nowrap">{money(t.paid)}</td><td className="p-3 whitespace-nowrap">{money(t.balance)}</td><td className="p-3 text-xs">{t.forgiven?'Perdonada':!t.balance?'Pagada':t.paid?'Parcial':'Pendiente'}</td><td className="p-3">{onQuota?<button type="button" onClick={()=>onQuota(t.period,t.kind,t.feeId,t.concept)} className="border border-indigo-700 p-2 rounded-lg text-xs whitespace-nowrap">Abonos / comprobantes</button>:<button type="button" onClick={()=>{setSearch(t.period);setView('movements');}} className="text-xs text-indigo-300 p-2">Ver abonos</button>}</td></tr>)}{!rows.length&&<tr><td colSpan={6} className="p-3 text-gray-400">No hay cuotas para este filtro.</td></tr>}</tbody></table></div>
+   <p className="text-xs text-gray-400">Los comentarios de creación de cuotas no son pagos. Para fechas, parcialidades y referencias consulta Abonos y transferencias.</p>
+  </>}
+ </section>;
+}

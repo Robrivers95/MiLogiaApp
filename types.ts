@@ -153,6 +153,8 @@ export interface IndividualExtraFee {
 }
 
 export interface Payment {
+  quotaCreatedAt?: string;
+  quotaCreatedBy?: string;
   correctionHistory?: { at: string; by: string; reason: string; before: number; after: number; beforeDate?: string | null; afterDate?: string | null }[];
   period: string; // YYYY-MM
   amount: number; // Base Amount (cuota mensual)

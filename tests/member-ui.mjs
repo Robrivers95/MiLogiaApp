@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync,readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 const { chromium } = await import(process.env.LOGIA_PLAYWRIGHT_MODULE || 'playwright');
 const server=spawn(process.execPath,['node_modules/vite/bin/vite.js','--host','127.0.0.1','--port','5179'],{stdio:'ignore'});
@@ -8,6 +8,7 @@ try {
   for(let attempt=0;attempt<100;attempt++){try{await fetch('http://127.0.0.1:5179/tests/member-ui.html');break;}catch{await new Promise(resolve=>setTimeout(resolve,100));}}
   browser=await chromium.launch({headless:true});
   const page=await browser.newPage({viewport:{width:1440,height:1000}});
+  if(process.env.LOGIA_UI_CSS)await page.route('https://cdn.tailwindcss.com/**',route=>route.fulfill({contentType:'text/javascript',body:'window.tailwind={};const style=document.createElement("style");style.textContent='+JSON.stringify(readFileSync(process.env.LOGIA_UI_CSS,'utf8'))+';document.head.appendChild(style);'}));
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto('http://127.0.0.1:5179/tests/member-ui.html');
   await page.getByText('1–25 de 137 miembros').waitFor();
@@ -18,7 +19,7 @@ try {
   await page.getByRole('button',{name:'Historial de cuotas',exact:true}).click();
   await page.getByText('Evento legado',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>window.__historyRequests),1);
-  await page.getByRole('button',{name:'Comprobantes de 2026-09'}).first().click();
+  await page.getByRole('button',{name:'Abonos y transferencias'}).first().click();
   await page.getByText('En revisión',{exact:true}).waitFor();
   await page.getByText('Adjunto registrado por administración',{exact:false}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Ver comprobante 1',exact:true}).count(),2);
@@ -30,6 +31,7 @@ try {
   for(let iteration=0;iteration<5;iteration++){await page.evaluate(()=>window.__rerender());await page.waitForTimeout(200);assert.equal(await page.getByRole('dialog',{name:'Visor de comprobante'}).isVisible(),true,'parent updates must not dismiss evidence');}
   await page.getByRole('button',{name:'Cerrar comprobante',exact:true}).click();
   await page.getByRole('button',{name:'Historial de cuotas',exact:true}).click();
+  await page.getByRole('button',{name:'Cuotas y saldos',exact:true}).click();
   await page.getByText('Evento legado',{exact:true}).waitFor();
   await page.getByLabel('Solo cuotas con adeudo').check();
   assert.equal(await page.getByText('Cuota mensual',{exact:true}).count(),0);
@@ -113,3 +115,4 @@ try {
   assert.deepEqual(errors,[]);
   console.log('Member UI passed: 137 members, desktop/tablet/mobile 1440/768/390/320px, selection, lazy history, pagination, search, export, status changes, read-only permissions, evidence persistence on parent updates and late fee assignment.');
 } finally { await browser?.close();server.kill('SIGTERM'); }
+

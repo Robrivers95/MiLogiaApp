@@ -21,10 +21,10 @@ await build({stdin:{contents:`import React from 'react';import {createRoot} from
  builder.onResolve({filter:/\/api$/},()=>({path:'api',namespace:'mock'}));
  builder.onResolve({filter:/\/firebase$/},()=>({path:'config',namespace:'mock'}));
  builder.onResolve({filter:/^firebase\/firestore$/},()=>({path:'firestore',namespace:'mock'}));
- builder.onResolve({filter:/\/(CaptureAssistant|WhatsAppReminders|ExistingFeeAssignment|AdminPaymentEvidenceModal|AdminProjects|TreasuryReport|MemberAccessRecovery)$/},()=>({path:'empty',namespace:'mock'}));
+ builder.onResolve({filter:/\/(MonthlyQuotaAssignment|UnappliedReceiptRecovery|CaptureAssistant|WhatsAppReminders|ExistingFeeAssignment|AdminPaymentEvidenceModal|AdminProjects|TreasuryReport|MemberAccessRecovery)$/},()=>({path:'empty',namespace:'mock'}));
  builder.onLoad({filter:/.*/,namespace:'mock'},args=>({loader:'tsx',contents:args.path==='api'?api:args.path==='config'?'export const db={};':args.path==='firestore'?'export const doc=()=>({}),deleteDoc=async()=>{},collection=()=>({}),getDocs=async()=>({docs:[]}),getDoc=async()=>({exists:()=>false});':'export default function Empty(){return null;}'}));
 }}]});
-writeFileSync('tests/admission-browser.html',readFileSync('tests/member-ui.html','utf8').replace('/tests/member-ui-fixture.tsx','/tests/admission-browser.js'));
+writeFileSync('tests/admission-browser.html',readFileSync('tests/member-ui.html','utf8').replace('/tests/member-ui-fixture.tsx','/tests/admission-browser.js').replace('<script src="https://cdn.tailwindcss.com"></script>',process.env.LOGIA_UI_CSS?'<script>window.tailwind={}</script><style>'+readFileSync(process.env.LOGIA_UI_CSS,'utf8')+'</style>':'<script src="https://cdn.tailwindcss.com"></script>'));
 const server=spawn(process.execPath,['node_modules/vite/bin/vite.js','--host','127.0.0.1','--port','5190'],{stdio:'ignore'});let browser;
 try{
  for(let i=0;i<80;i++){try{await fetch('http://127.0.0.1:5190/tests/admission-browser.html');break;}catch{await new Promise(r=>setTimeout(r,100));}}
@@ -55,3 +55,4 @@ try{
  await openRequests('?role=admin&suspended');assert.equal(await page.getByRole('button',{name:'✅ Dar Entrada',exact:true}).isDisabled(),true);
  assert.equal(nativeDialogs,0,'admission and reactivation never depend on native browser dialogs');assert.deepEqual(errors,[]);console.log(engine.name()+' real Admin mobile UI passed with native popups suppressed: visible dated Master/admin confirmation, cancel without writes, persistent error/date and retry, reactivation over member detail, read-only guards and no unhandled errors.');
 }finally{await browser?.close();server.kill();for(const suffix of ['js','html'])rmSync('tests/admission-browser.'+suffix,{force:true});}
+

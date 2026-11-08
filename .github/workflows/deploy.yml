@@ -46,7 +46,7 @@ jobs:
       - name: Multi-audio transcription policy and queue guards
         run: node tests/secretariat-audio.mjs && node tests/secretariat-audio-backend.mjs
       - name: Income AI approval transactions
-        run: node tests/income-selection.mjs && node tests/income-capture.mjs
+        run: node tests/income-selection.mjs && node tests/income-capture.mjs && node tests/member-account.mjs
       - name: Treasury report tests
         run: node tests/treasury-report.mjs
       - name: Verify account feature deployment gate

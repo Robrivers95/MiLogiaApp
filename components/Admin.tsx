@@ -1,3 +1,6 @@
+import UnappliedReceiptRecovery from './UnappliedReceiptRecovery';
+import MonthlyQuotaAssignment from './MonthlyQuotaAssignment';
+import MemberAccount from './MemberAccount';
 import CaptureAssistant from './CaptureAssistant';
 import WhatsAppReminders from './WhatsAppReminders';
 import { canUseWhatsApp } from '../services/whatsappReminders';
@@ -187,8 +190,6 @@ const Admin: React.FC<Props> = ({ user }) => {
   const [showEditExtraFeeModal, setShowEditExtraFeeModal] = useState(false);
 
   // Apply Monthly Fee State
-  const [applyingMonthlyFee, setApplyingMonthlyFee] = useState(false);
-  const [monthlyFeePeriod, setMonthlyFeePeriod] = useState('');
 
   // Create User State
   const [newUserName, setNewUserName] = useState('');
@@ -1595,71 +1596,6 @@ const Admin: React.FC<Props> = ({ user }) => {
       }
   };
 
-  const handleApplyMonthlyFee = async () => {
-      if (isReadOnly || !monthlyFeePeriod || priceHistory.length === 0) {
-          showMessage("Selecciona un periodo válido", 'error');
-          return;
-      }
-      try {
-          setApplyingMonthlyFee(true);
-          
-          // Find the applicable price for this period
-          const sortedHistory = [...priceHistory].sort((a, b) => b.startDate.localeCompare(a.startDate));
-          const applicable = sortedHistory.find(h => h.startDate <= monthlyFeePeriod);
-          
-          if (!applicable) {
-              showMessage("No hay precio configurado para ese periodo", 'error');
-              return;
-          }
-          
-          let appliedCount = 0;
-          
-          // Apply to all active users who don't have the monthly fee for that period
-          for (const u of filteredUsers.filter(usr => usr.active)) {
-              const payments = await dataService.getPayments(u.uid);
-              const existingPayment = payments.find(p => p.period === monthlyFeePeriod);
-              
-              // Check if monthly fee is missing (no payment record OR amount is 0)
-              const needsMonthlyFee = !existingPayment || existingPayment.amount === 0;
-              
-              if (needsMonthlyFee) {
-                  // If payment exists but amount is 0, update it
-                  // If payment doesn't exist, create new one
-                  const payment: Payment = existingPayment ? {
-                      ...existingPayment,
-                      amount: applicable.amount,
-                      status: existingPayment.paid >= applicable.amount ? 'Pagado' : 'Pendiente',
-                      regularCovered: existingPayment.paid >= applicable.amount,
-                      comments: existingPayment.comments || `Cuota mensual aplicada retroactivamente`
-                  } : {
-                      period: monthlyFeePeriod,
-                      amount: applicable.amount,
-                      paid: 0,
-                      paidRegular: 0,
-                      paidExtra: 0,
-                      status: 'Pendiente',
-                      comments: `Cuota mensual aplicada retroactivamente`,
-                      paymentDate: new Date().toISOString(),
-                      groupId: user.groupId,
-                      regularCovered: false,
-                      extraCovered: true
-                  };
-                  
-                  await dataService.updatePayment(u.uid, payment);
-                  appliedCount++;
-              }
-          }
-          
-          showMessage(`✅ Cuota mensual aplicada a ${appliedCount} usuario(s)`);
-          setMonthlyFeePeriod('');
-          await loadUsers();
-      } catch (e) {
-          console.error(e);
-          showMessage("Error aplicando cuota mensual", 'error');
-      } finally {
-          setApplyingMonthlyFee(false);
-      }
-  };
   const handleUpdateUserProfile = async () => {
       if (isReadOnly || !editingUserProfile) return;
       try {
@@ -2880,40 +2816,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                     </button>
                 </div>
 
-                {/* 2.5 Apply Monthly Fee for Specific Period */}
-                <div className="bg-logia-800 rounded-xl p-6 border border-logia-700 shadow-lg border-l-4 border-l-amber-500">
-                    <h3 className="text-lg font-bold text-white mb-4 flex items-center">
-                        <span className="w-8 h-8 bg-amber-500 rounded-full flex items-center justify-center mr-3 text-sm">📅</span>
-                        Aplicar Cuota de Mes Específico
-                    </h3>
-                    <p className="text-xs text-gray-400 mb-4">
-                        Aplica la cuota mensual de un periodo específico a todos los usuarios activos que <strong>no tengan</strong> ese periodo registrado. 
-                        Útil para aplicar cuotas retroactivas (ej: aplicar Febrero cuando estamos en Marzo).
-                    </p>
-                    <div className="flex gap-3 items-end">
-                        <div className="flex-1">
-                            <label className="block text-xs font-bold uppercase text-gray-400 mb-2">Seleccionar Mes</label>
-                            <input 
-                                type="month" 
-                                value={monthlyFeePeriod}
-                                onChange={e => setMonthlyFeePeriod(e.target.value)}
-                                disabled={isReadOnly || applyingMonthlyFee || priceHistory.length === 0}
-                                className="w-full bg-logia-900 border border-logia-700 rounded p-3 text-white outline-none"
-                            />
-                        </div>
-                        <button 
-                            onClick={handleApplyMonthlyFee}
-                            disabled={applyingMonthlyFee || isReadOnly || priceHistory.length === 0 || !monthlyFeePeriod}
-                            className="bg-amber-600 hover:bg-amber-500 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2 transform active:scale-95 transition-all"
-                        >
-                            {applyingMonthlyFee ? (
-                               <>
-                                 <span className="animate-spin">⌛</span> Aplicando...
-                               </>
-                            ) : '✅ Aplicar Cuota del Mes'}
-                        </button>
-                    </div>
-                </div>
+                <MonthlyQuotaAssignment groupId={user.groupId} members={users} history={priceHistory} readOnly={isReadOnly} onChanged={async()=>{await Promise.all([loadUsers(),loadAllLedgers(),loadDashboardStats()]);}}/>
 
                 {/* 3. Extra Fees */}
                 <div className="bg-logia-800 rounded-xl p-6 border border-logia-700 shadow-lg border-l-4 border-l-purple-500">
@@ -5663,10 +5566,14 @@ const Admin: React.FC<Props> = ({ user }) => {
          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
              <div className="bg-logia-800 w-full max-w-2xl rounded-xl border border-logia-700 shadow-2xl flex flex-col max-h-[90vh]">
                  <div className="p-4 border-b border-logia-700 flex justify-between items-center bg-logia-900 rounded-t-xl">
-                     <h3 className="font-bold text-white">Gestión de Pagos</h3>
+                     <div><p className="text-xs text-indigo-300">Estado de cuenta</p><h3 className="font-bold text-white">{users.find(m=>m.uid===editingUserLedger)?.name||'Miembro'}</h3></div>
                      <button onClick={() => setEditingUserLedger(null)} className="text-gray-400 hover:text-white text-xl">×</button>
                  </div>
                  <div className="overflow-y-auto p-4 space-y-2 flex-1">
+                     <MemberAccount key={editingUserLedger} payments={editPayments} receipts={(paymentReceipts as PaymentReceipt[]).filter(r=>r.userId===editingUserLedger)} onQuota={(period,kind,feeId,concept)=>{const payment=editPayments.find(p=>p.period===period);if(payment)openPaymentEvidenceAudit(editingUserLedger,users.find(m=>m.uid===editingUserLedger)?.name||'Miembro',payment,kind,feeId,concept);}}/>
+                     {!isReadOnly&&<UnappliedReceiptRecovery groupId={user.groupId} reviewerUid={user.uid} receipts={(paymentReceipts as PaymentReceipt[]).filter(r=>r.userId===editingUserLedger)} onChanged={refreshPaymentEvidenceAudit}/>}
+                     {!isReadOnly&&<details className="rounded-lg border border-logia-700 p-3"><summary className="text-sm cursor-pointer text-indigo-200">Crear mensualidad para este miembro</summary><div className="mt-3"><MonthlyQuotaAssignment groupId={user.groupId} members={users} initialMember={editingUserLedger} history={priceHistory} readOnly={isReadOnly} onChanged={async()=>{setEditPayments(await dataService.getPayments(editingUserLedger));await Promise.all([loadUsers(),loadAllLedgers(),loadDashboardStats()]);}}/></div></details>}
+                     <details className="rounded-lg border border-logia-700 p-3"><summary className="text-sm cursor-pointer">Correcciones de acumulados y cuotas existentes</summary><div className="space-y-3 mt-3">
                      <p className="text-xs text-gray-500 mb-2">Registra el TOTAL acumulado recibido, incluyendo abonos manuales. No vuelvas a sumar los comprobantes aprobados. La fecha corresponde al registro mensual agregado; consulta los comprobantes para cada transferencia.</p>
                      {editPayments.map(p => {
                          const total = p.amount + (p.extraAmount || 0);
@@ -5918,6 +5825,7 @@ const Admin: React.FC<Props> = ({ user }) => {
                              </div>
                          );
                      })}
+                     </div></details>
                  </div>
              </div>
          </div>
