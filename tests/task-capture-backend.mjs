@@ -452,3 +452,5 @@ assert.deepEqual(Array.from(pdfAgain.ids),Array.from(bankRead.ids),'CSV and mult
 assert.equal(new Set(pdfAgain.ids).size,3);
 await reject(()=>call({...importBank,requestId:'bank-reference-conflict',text:bankCsv.replace(';800.00;',';900.00;')},actor('admin')),'failed-precondition');
 console.log('Bank CSV/PDF passed: exact dates/amounts/references, omitted returns/outgoings, separate equal payments, cross-admin deduplication, Gemini quota fallback, no financial writes.');
+
+const combinedBank=await call({...importBank,text:bankCsv+'\n'+bankPdfText,requestId:'same-bank-two-files'},actor('admin'));assert.equal(combinedBank.ids.length,3);assert.deepEqual(Array.from(combinedBank.ids),Array.from(bankRead.ids),'PDF+CSV in one import deduplicate accents and references');

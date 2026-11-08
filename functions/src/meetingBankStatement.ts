@@ -33,7 +33,7 @@ export function bankStatement(text:string):{incomes:BankMovement[];ignored:numbe
   if(!/^\d{8,40}$/.test(c.reference))throw Error('Referencia bancaria inválida.');
   const payerName=c.description.replace(/^Transferencia\s+recibida\s*/i,'').trim();
   if(!payerName)throw Error('Hay una transferencia sin nombre de ordenante.');
-  const identity=JSON.stringify([payerName.toUpperCase(),day,amount]);
+  const identity=JSON.stringify([payerName.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase(),day,amount]);
   if(seen.has(c.reference)){if(seen.get(c.reference)!==identity)throw Error('La misma referencia aparece con datos distintos. Revisa los archivos.');continue;}
   seen.set(c.reference,identity);
   let sourceQuote=c.quote;
