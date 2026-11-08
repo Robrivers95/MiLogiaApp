@@ -36,6 +36,16 @@ jobs:
           (async()=>{
             const auth=await new GoogleAuth({scopes:['https://www.googleapis.com/auth/cloud-platform']}).getClient();
             try {
+              const info=await auth.request({url:'https://cloudfunctions.googleapis.com/v1/projects/registrologia/locations/us-central1/functions/captureWithAI'});
+              console.log('Runtime state:',info.data.status,'Memory MB:',info.data.availableMemoryMb);
+              const service=info.data.serviceAccountEmail;
+              try {
+                const iam=await auth.request({url:'https://cloudresourcemanager.googleapis.com/v1/projects/registrologia:getIamPolicy',method:'POST',data:{}});
+                const roles=(iam.data.bindings||[]).filter(b=>(b.members||[]).includes('serviceAccount:'+service)).map(b=>b.role);
+                console.log('Runtime project roles:',JSON.stringify(roles));
+              }catch(error){console.log('Runtime project roles HTTP status:',error.response?.status||'unavailable');}
+            }catch(error){console.log('Runtime configuration HTTP status:',error.response?.status||'unavailable');}
+            try {
               const since=new Date(Date.now()-48*60*60*1000).toISOString();
               const result=await auth.request({url:'https://logging.googleapis.com/v2/entries:list',method:'POST',data:{resourceNames:['projects/registrologia'],filter:`resource.type="cloud_function" AND resource.labels.function_name="captureWithAI" AND severity>=ERROR AND timestamp>="${since}"`,orderBy:'timestamp desc',pageSize:15}});
               const redact=s=>String(s||'').replace(/https?:\/\/\S+/g,'[url]').replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig,'[email]').replace(/[A-Za-z0-9_.=-]{45,}/g,'[long-value]');
