@@ -21,7 +21,7 @@ await build({stdin:{contents:`import React from 'react';import {createRoot} from
  builder.onResolve({filter:/\/api$/},()=>({path:'api',namespace:'mock'}));
  builder.onResolve({filter:/\/firebase$/},()=>({path:'config',namespace:'mock'}));
  builder.onResolve({filter:/^firebase\/firestore$/},()=>({path:'firestore',namespace:'mock'}));
- builder.onResolve({filter:/\/(MonthlyQuotaAssignment|UnappliedReceiptRecovery|CaptureAssistant|WhatsAppReminders|ExistingFeeAssignment|AdminPaymentEvidenceModal|AdminProjects|TreasuryReport|MemberAccessRecovery)$/},()=>({path:'empty',namespace:'mock'}));
+ builder.onResolve({filter:/\/(AdvanceCorrection|MonthlyQuotaAssignment|UnappliedReceiptRecovery|CaptureAssistant|WhatsAppReminders|ExistingFeeAssignment|AdminPaymentEvidenceModal|AdminProjects|TreasuryReport|MemberAccessRecovery)$/},()=>({path:'empty',namespace:'mock'}));
  builder.onLoad({filter:/.*/,namespace:'mock'},args=>({loader:'tsx',contents:args.path==='api'?api:args.path==='config'?'export const db={};':args.path==='firestore'?'export const doc=()=>({}),deleteDoc=async()=>{},collection=()=>({}),getDocs=async()=>({docs:[]}),getDoc=async()=>({exists:()=>false});':'export default function Empty(){return null;}'}));
 }}]});
 writeFileSync('tests/admission-browser.html',readFileSync('tests/member-ui.html','utf8').replace('/tests/member-ui-fixture.tsx','/tests/admission-browser.js').replace('<script src="https://cdn.tailwindcss.com"></script>',process.env.LOGIA_UI_CSS?'<script>window.tailwind={}</script><style>'+readFileSync(process.env.LOGIA_UI_CSS,'utf8')+'</style>':'<script src="https://cdn.tailwindcss.com"></script>'));

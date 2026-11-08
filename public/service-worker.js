@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mi-logia-v2-beta-bank-csv-pdf-20261108';
+const CACHE_NAME = 'mi-logia-advance-correction-20261108';
 const urlsToCache = [
   '/',
   '/index.html',
