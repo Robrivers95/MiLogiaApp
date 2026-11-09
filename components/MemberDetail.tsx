@@ -1,3 +1,4 @@
+import {watchMemberAccount} from '../services/memberAccountWatch';
 import AdminPaymentEvidenceModal,{AdminPaymentEvidenceContext} from './AdminPaymentEvidenceModal';
 import AdvanceCorrection from './AdvanceCorrection';
 import MemberAccount from './MemberAccount';
@@ -28,28 +29,32 @@ export default function MemberDetail({ member, currentUser, stats, statsLoading,
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  const [loadedMember,setLoadedMember]=useState('');
+  const [watchError,setWatchError]=useState('');
   const [changingStatus, setChangingStatus] = useState(false);
   const [recoverAccess,setRecoverAccess] = useState(false);
   useEffect(()=>setRecoverAccess(false),[member.uid]);
   useEffect(() => { setPaymentContext(null); setTab('history'); setPayments([]); setReceipts([]); setError(''); setReceiptError(''); setEvidencePeriod(''); setOnlyDebt(false); }, [member.uid]);
   useEffect(() => {
-    if (tab === 'profile') return;
-    let canceled = false;
-    setLoading(true); setError(''); setPayments([]);
-    loadHistory(member.uid).then(result => { if (!canceled) setPayments(result); })
-      .catch(() => { if (!canceled) setError('No se pudo cargar el historial. Intenta de nuevo.'); })
-      .finally(() => { if (!canceled) setLoading(false); });
-    return () => { canceled = true; };
-  }, [member.uid, tab, revision, retry, loadHistory]);
-  useEffect(() => {
-    if (tab === 'profile') return;
-    let canceled = false;
-    setReceiptLoading(true); setReceiptError(''); setReceipts([]);
-    loadReceipts(member.uid).then(result => { if (!canceled) setReceipts(result); })
-      .catch(() => { if (!canceled) setReceiptError('No se pudieron cargar los comprobantes. Reintenta la consulta.'); })
-      .finally(() => { if (!canceled) setReceiptLoading(false); });
-    return () => { canceled = true; };
-  }, [member.uid, tab, revision, retry, loadReceipts]);
+    if(tab==='profile')return;
+    let canceled=false;
+    setLoading(true);setError('');setReceiptError('');
+    Promise.all([
+      loadHistory(member.uid).catch(()=>{throw Error('No se pudo cargar el historial. Intenta de nuevo.');}),
+      loadReceipts(member.uid).catch(()=>{throw Error('No se pudieron cargar los comprobantes. Reintenta la consulta.');})
+    ]).then(([history,proofs])=>{if(!canceled){setPayments(history);setReceipts(proofs);setLoadedMember(member.uid);}})
+    .catch(e=>{if(!canceled)setError(e.message);})
+    .finally(()=>{if(!canceled)setLoading(false);});
+    return()=>{canceled=true;};
+  },[member.uid,tab,revision,retry,loadHistory,loadReceipts]);
+  useEffect(()=>{
+    setWatchError('');
+    if(tab==='profile')return;
+    const refresh=(event:Event)=>{if((event as CustomEvent).detail?.groupId===currentUser.groupId)setRetry(n=>n+1);};
+    window.addEventListener('finance-updated',refresh);
+    const stop=watchMemberAccount(currentUser.groupId,member.uid,currentUser.uid,()=>{setWatchError('');setRetry(n=>n+1);},()=>setWatchError('No se pudo mantener la actualización en vivo. Puedes actualizar la cuenta manualmente.'));
+    return()=>{stop();window.removeEventListener('finance-updated',refresh);};
+  },[member.uid,currentUser.groupId,currentUser.uid,tab]);
   const evidence = memberEvidence(payments, receipts);
   const openEvidence = (period = '') => { setEvidencePeriod(period); setTab('evidence'); };
   let history: ReturnType<typeof paymentHistoryRows> = [];
@@ -68,6 +73,7 @@ export default function MemberDetail({ member, currentUser, stats, statsLoading,
       {tab!=='history'&&<div className="grid grid-cols-2 gap-2"><div className="rounded-lg bg-logia-900 p-3"><p className="text-xs text-gray-400">Adeudo</p><p className="font-bold text-red-300 break-words">{displayMoney(stats?.totalDebt)}</p></div><div className="rounded-lg bg-logia-900 p-3"><p className="text-xs text-gray-400">Pagado</p><p className="font-bold text-green-300 break-words">{displayMoney(stats?.totalPaid)}</p></div></div>}
       {tab!=='history'&&<button onClick={() => setTab('history')} className="w-full p-3 rounded-lg bg-indigo-600 text-sm">Ver tabla de pagos</button>}
       {tab==='profile'&&<p className="text-xs text-gray-400">Resumen: {financialScope}</p>}
+      {tab==='history'&&<div className="flex flex-wrap gap-2 items-center"><button type="button" onClick={()=>setRetry(n=>n+1)} className="p-2 rounded-lg border border-logia-700 text-sm">Actualizar cuenta</button>{loading&&loadedMember===member.uid&&<span role="status" className="text-xs">Actualizando estado de cuenta…</span>}{watchError&&<p role="status" className="text-xs text-amber-300">{watchError}</p>}</div>}
       <nav className="flex flex-wrap gap-2" aria-label="Secciones de la ficha">{(['profile', 'history', 'evidence'] as const).map(id => <button key={id} onClick={() => setTab(id)} aria-current={tab === id ? 'page' : undefined} className={`min-w-0 px-2 py-3 rounded-lg text-sm  ${tab === id ? 'bg-indigo-600' : 'border border-logia-700'}`}>{id === 'profile' ? 'Perfil y acciones' : id === 'history' ? 'Historial de cuotas' : 'Comprobantes'}</button>)}</nav>
       {tab === 'profile' ? <>
         <dl className="grid grid-cols-2 gap-4 text-sm">{[['Grado', degreeLabel(member.degree)], ['Cargo', (member.lodgeRole || 'Sin cargo').replace(/_/g, ' ')], ['Ingreso a la app', member.joinDate?.slice(0, 10) || 'Sin fecha'], ['Iniciación', member.masonicJoinDate || 'Sin fecha'], ['Último reingreso', member.masonicRejoinDate || 'Sin fecha'], ['Fecha de baja', member.leaveDate || 'Sin baja'], ['Ciudad', member.city || 'Sin registrar'], ['Profesión', member.profession || 'Sin registrar']].map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-xs text-gray-400">{label}</dt><dd className="break-words mt-1 capitalize">{value}</dd></div>)}</dl>
@@ -84,7 +90,7 @@ export default function MemberDetail({ member, currentUser, stats, statsLoading,
       </div> : <div className="space-y-3">
 
 
-        {loading||receiptLoading?<p role="status">Cargando estado de cuenta…</p>:historyError||receiptError?<div><p className="text-red-300 text-sm">{historyError||receiptError}</p><button onClick={()=>setRetry(v=>v+1)} className="p-3 border border-logia-700 rounded-lg">Reintentar</button></div>:<>{!readOnly&&['admin','master'].includes(currentUser.role)&&<AdvanceCorrection groupId={currentUser.groupId} memberId={member.uid} payments={payments} receipts={receipts} onDone={()=>{setRetry(v=>v+1);window.dispatchEvent(new CustomEvent('finance-updated',{detail:{groupId:currentUser.groupId}}));}}/>}<MemberAccount key={member.uid} payments={payments} receipts={receipts} onRegister={!readOnly&&['admin','master'].includes(currentUser.role)?(t,included)=>setPaymentContext({included,context:{userId:member.uid,userName:member.name,period:t.period,feeType:t.kind,feeId:t.feeId,concept:t.concept,targetAmount:t.amount,ledgerPaid:t.paid}}):undefined} onCorrect={!readOnly&&['admin','master'].includes(currentUser.role)?async(payment,paid,date,reason)=>{const {correctManualMonthly}=await import('../services/manualMonthlyCorrection');await correctManualMonthly(currentUser.groupId,member.uid,payment,paid,date,reason);setRetry(v=>v+1);}:undefined}/><button disabled={readOnly} onClick={()=>actions.payments(member.uid)} className="rounded-lg border border-logia-700 p-3 text-sm disabled:opacity-40">Gestionar pagos y mensualidades</button></>}
+        {(loading||receiptLoading)&&loadedMember!==member.uid?<p role="status">Cargando estado de cuenta…</p>:historyError||receiptError?<div><p className="text-red-300 text-sm">{historyError||receiptError}</p><button onClick={()=>setRetry(v=>v+1)} className="p-3 border border-logia-700 rounded-lg">Reintentar</button></div>:<>{!readOnly&&['admin','master'].includes(currentUser.role)&&<AdvanceCorrection groupId={currentUser.groupId} memberId={member.uid} payments={payments} receipts={receipts} onDone={()=>{setRetry(v=>v+1);window.dispatchEvent(new CustomEvent('finance-updated',{detail:{groupId:currentUser.groupId}}));}}/>}<MemberAccount key={member.uid} payments={payments} receipts={receipts} onRegister={!readOnly&&['admin','master'].includes(currentUser.role)?(t,included)=>setPaymentContext({included,context:{userId:member.uid,userName:member.name,period:t.period,feeType:t.kind,feeId:t.feeId,concept:t.concept,targetAmount:t.amount,ledgerPaid:t.paid}}):undefined} onCorrect={!readOnly&&['admin','master'].includes(currentUser.role)?async(payment,paid,date,reason)=>{const {correctManualMonthly}=await import('../services/manualMonthlyCorrection');await correctManualMonthly(currentUser.groupId,member.uid,payment,paid,date,reason);setRetry(v=>v+1);}:undefined}/><button disabled={readOnly} onClick={()=>actions.payments(member.uid)} className="rounded-lg border border-logia-700 p-3 text-sm disabled:opacity-40">Gestionar pagos y mensualidades</button></>}
       </div>}
 
       {paymentContext&&<AdminPaymentEvidenceModal groupId={currentUser.groupId} adminUid={currentUser.uid} context={paymentContext.context} initialAlreadyIncluded={paymentContext.included} receipts={receipts} readOnly={readOnly} onClose={()=>setPaymentContext(null)} onChanged={async()=>{setRetry(v=>v+1);}}/>}
