@@ -17,6 +17,7 @@ try {
   await page.getByRole('button',{name:'Ver ficha de Miembro 000'}).click();
   await page.getByRole('table',{name:'Tabla de meses, cuotas y abonos'}).waitFor();assert.equal(await page.evaluate(()=>window.__historyRequests),1,'opening a member loads the account directly');
   await page.getByRole('button',{name:'Historial de cuotas',exact:true}).click();
+  if(await page.getByRole('button',{name:'Expandir mes 2026-09',exact:true}).count())await page.getByRole('button',{name:'Expandir mes 2026-09',exact:true}).click();
   await page.getByText('Evento legado',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>window.__historyRequests),1);
   await page.getByRole('button',{name:'Abonos y transferencias'}).first().click();
@@ -32,6 +33,7 @@ try {
   await page.getByRole('button',{name:'Cerrar comprobante',exact:true}).click();
   await page.getByRole('button',{name:'Historial de cuotas',exact:true}).click();
   await page.getByRole('button',{name:'Cuotas y saldos',exact:true}).click();
+  if(await page.getByRole('button',{name:'Expandir mes 2026-09',exact:true}).count())await page.getByRole('button',{name:'Expandir mes 2026-09',exact:true}).click();
   await page.getByText('Evento legado',{exact:true}).waitFor();
   await page.getByLabel('Solo cuotas con adeudo').check();
   assert.equal(await page.getByText('Cuota mensual',{exact:true}).count(),0);
