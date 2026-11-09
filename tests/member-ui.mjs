@@ -15,7 +15,7 @@ try {
   await page.waitForFunction(()=>getComputedStyle(document.querySelector('table')).display==='table' && getComputedStyle(document.body).backgroundColor==='rgb(15, 23, 42)');
   assert.equal(await page.getByRole('table').isVisible(),true);
   await page.getByRole('button',{name:'Ver ficha de Miembro 000'}).click();
-  assert.equal(await page.evaluate(()=>window.__historyRequests),0,'selecting a member must not eagerly read ledgers');
+  await page.getByRole('table',{name:'Tabla de meses, cuotas y abonos'}).waitFor();assert.equal(await page.evaluate(()=>window.__historyRequests),1,'opening a member loads the account directly');
   await page.getByRole('button',{name:'Historial de cuotas',exact:true}).click();
   await page.getByText('Evento legado',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>window.__historyRequests),1);
@@ -35,7 +35,7 @@ try {
   await page.getByText('Evento legado',{exact:true}).waitFor();
   await page.getByLabel('Solo cuotas con adeudo').check();
   assert.equal(await page.getByText('Cuota mensual',{exact:true}).count(),0);
-  assert.equal(await page.locator('.member-detail').evaluate(element=>getComputedStyle(element).position),'sticky');
+  assert.equal(await page.locator('.member-detail').evaluate(element=>getComputedStyle(element).position),'fixed');
   mkdirSync('test-results',{recursive:true});
   await page.screenshot({path:'test-results/members-desktop.png'});
   await page.getByRole('button',{name:'Cerrar ficha'}).click();
@@ -60,10 +60,10 @@ try {
       await page.getByText('En revisión',{exact:true}).waitFor();
       await page.screenshot({path:`test-results/member-evidence-list-${width}.png`});
       await page.getByRole('button',{name:'Ver comprobante 2',exact:true}).click();
-      assert.ok(await page.getByRole('dialog').evaluate(element=>element.scrollWidth<=innerWidth));
+      assert.ok(await page.getByRole('dialog',{name:'Visor de comprobante',exact:true}).evaluate(element=>element.scrollWidth<=innerWidth));
       await page.screenshot({path:`test-results/member-evidence-${width}.png`});
       await page.keyboard.press('Escape');
-      assert.equal(await page.getByRole('dialog').count(),0);
+      assert.equal(await page.getByRole('dialog',{name:'Visor de comprobante',exact:true}).count(),0);
       assert.equal(await page.locator('.member-detail').count(),1);
       await page.getByRole('button',{name:'Perfil y acciones',exact:true}).click();
       await page.getByRole('button',{name:'Dar de baja',exact:true}).click();
@@ -75,6 +75,7 @@ try {
   }
   await page.goto('http://127.0.0.1:5179/tests/member-ui.html?readonly=1');
   await page.getByRole('button',{name:/Miembro 000/}).click();
+  await page.getByRole('button',{name:'Perfil y acciones',exact:true}).click();
   assert.equal(await page.getByRole('button',{name:'Editar perfil',exact:true}).isDisabled(),true);
   assert.equal(await page.getByRole('button',{name:'Gestionar pagos',exact:true}).isDisabled(),true);
   assert.equal(await page.getByRole('button',{name:'Dar de baja',exact:true}).isDisabled(),true);
@@ -113,6 +114,6 @@ try {
     await page.screenshot({path:`test-results/existing-fee-assignment-${width}.png`});
   }
   assert.deepEqual(errors,[]);
-  console.log('Member UI passed: 137 members, desktop/tablet/mobile 1440/768/390/320px, selection, lazy history, pagination, search, export, status changes, read-only permissions, evidence persistence on parent updates and late fee assignment.');
+  console.log('Member UI passed: 137 members, desktop/tablet/mobile 1440/768/390/320px, selection, direct account history, pagination, search, export, status changes, read-only permissions, evidence persistence on parent updates and late fee assignment.');
 } finally { await browser?.close();server.kill('SIGTERM'); }
 
