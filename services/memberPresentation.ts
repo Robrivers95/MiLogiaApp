@@ -38,6 +38,31 @@ export function memberEvidence(payments: Payment[], receipts: PaymentReceipt[]) 
     const urls = [...new Set([payment.adminReceiptUrl, payment.receiptImageBase64].filter(Boolean) as string[])];
     if (urls.length) items.push({reference:'',originalReference:'',allocations:[], id: `ledger-${payment.period}`, periods: [payment.period], concept: 'Adjunto del registro mensual', date: payment.paymentDate || '', status: 'registered', amount: undefined, applied: undefined,unapplied:undefined, comments: payment.comments || '', source: 'Adjunto registrado por administración', urls });
   }
+  for(const source of payments){
+   const payment=normalizePayment(source);
+   const concepts=[{kind:'regular' as const,feeId:undefined as string|undefined,concept:'Cuota mensual',paid:payment.paidRegular||0},...(payment.extraFees?.length?payment.extraFees.map(f=>({kind:'extra' as const,feeId:f.id,concept:f.description,paid:f.paid})):[{kind:'extra' as const,feeId:'legacy',concept:payment.extraAmount?(payment.extraDescription||'Cuota Extra'):'Saldo adicional sin cuota asignada',paid:payment.paidExtra||0}])];
+   for(const c of concepts){
+    const matching=receipts.filter(r=>r.status==='approved'&&receiptMatchesConcept(r,payment.period,c.kind,c.feeId,c.concept));
+    let identified=0,unknown=false;
+    for(const r of matching){
+     let amount:number|undefined;
+     if(r.quotaAllocations?.length)amount=r.quotaAllocations.filter(a=>a.period===payment.period&&a.kind===c.kind&&(c.kind==='regular'||a.feeId===c.feeId||(!a.feeId&&a.concept===c.concept))).reduce((s,a)=>s+a.amount,0);
+     else if(c.kind==='regular'&&r.periodAllocations?.length)amount=r.periodAllocations.filter(a=>a.period===payment.period).reduce((s,a)=>s+a.amount,0);
+     else if((r.extraFeePeriod?[r.extraFeePeriod]:r.periods||[]).length===1&&r.appliedAmount!==undefined)amount=Number(r.appliedAmount);
+     if(amount===undefined||!Number.isFinite(amount)||amount<0)unknown=true;else identified+=amount;
+    }
+    const unlinked=unknown?c.paid:Math.max(0,Math.round((c.paid-identified)*100)/100);
+    if(unlinked<=0)continue;
+    items.push({id:`balance-${payment.period}-${c.kind}-${c.feeId||''}`,periods:[payment.period],concept:c.concept,date:payment.paymentDate||'',status:'registered',amount:unlinked,applied:unlinked,unapplied:undefined,reference:'',originalReference:'',allocations:[],comments:`${unknown?'Total acumulado; puede incluir los comprobantes mostrados y no debe sumarse a ellos.':'Parte del saldo acumulado sin comprobante individual, no un abono nuevo.'} No se conserva un desglose individual de los depósitos.${payment.paymentDate?' Última fecha registrada: '+payment.paymentDate.slice(0,10)+'.':''}${payment.comments?' Notas: '+payment.comments:''}`,source:unknown?'Acumulado registrado con desglose incompleto':'Saldo pagado registrado sin comprobante individual',urls:[]});
+   }
+  }
   return items.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 }
 
+
+
+export function receiptMatchesConcept(receipt:PaymentReceipt,period:string,kind:'regular'|'extra',feeId?:string,concept?:string){
+ if(receipt.quotaAllocations)return receipt.quotaAllocations.some(a=>a.period===period&&a.kind===kind&&(kind==='regular'||a.feeId===feeId||(!a.feeId&&a.concept===concept)));
+ const months=receipt.extraFeePeriod?[receipt.extraFeePeriod]:receipt.periods||[];
+ return months.includes(period)&&(kind==='regular'?receipt.receiptType==='cuota_mensual':receipt.receiptType==='concepto_adicional'&&(receipt.extraFeeId===feeId||(!receipt.extraFeeId&&receipt.conceptDescription===concept)));
+}

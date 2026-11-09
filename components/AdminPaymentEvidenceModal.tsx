@@ -14,6 +14,7 @@ export interface AdminPaymentEvidenceContext {
 }
 
 interface Props {
+  initialAlreadyIncluded?: boolean;
   groupId: string;
   adminUid: string;
   context: AdminPaymentEvidenceContext;
@@ -45,6 +46,7 @@ const receiptUrls = (receipt: PaymentReceipt) => {
 };
 
 const AdminPaymentEvidenceModal: React.FC<Props> = ({
+  initialAlreadyIncluded=false,
   groupId,
   adminUid,
   context,
@@ -55,11 +57,11 @@ const AdminPaymentEvidenceModal: React.FC<Props> = ({
 }) => {
   const [referenceSearch,setReferenceSearch]=useState('');
   const [bankReference,setBankReference]=useState('');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(initialAlreadyIncluded?'':new Date().toISOString().slice(0, 10));
   const [amount, setAmount] = useState('');
   const [comments, setComments] = useState('');
   const [files, setFiles] = useState<File[]>([]);
-  const [alreadyIncluded, setAlreadyIncluded] = useState(false);
+  const [alreadyIncluded, setAlreadyIncluded] = useState(initialAlreadyIncluded);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -92,6 +94,7 @@ const AdminPaymentEvidenceModal: React.FC<Props> = ({
       setMessage({ type: 'error', text: 'El monto debe ser cero o mayor.' });
       return;
     }
+    if(alreadyIncluded&&numericAmount>ledgerPaid){setMessage({type:'error',text:'El detalle supera el total pagado de esta cuota. Revisa el monto antes de adjuntarlo.'});return;}
     if (!date) {
       setMessage({ type: 'error', text: 'Indica la fecha real del movimiento.' });
       return;
