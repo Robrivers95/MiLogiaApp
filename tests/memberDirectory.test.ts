@@ -48,3 +48,11 @@ assert.equal(paymentHistoryRows([proofLedger])[1].balance,30,'pending evidence m
 assert.equal(before,JSON.stringify([proofLedger,receipt]));
 assert.equal(memberEvidence([],[{...receipt,status:'rejected',receiptImageUrl:'',receiptImageUrls:[]}])[0].status,'rejected');
 console.log('Member evidence tests passed: multiple periods/files, both admin formats, statuses, no duplicate accounting or mutation.');
+
+const manualPaid={period:'2026-10',amount:400,paid:600,paidRegular:400,paidExtra:200,extraAmount:200,extraDescription:'Cena',paymentDate:'2026-10-20'} as Payment;
+const paidEvidence=memberEvidence([manualPaid],[]);
+assert.equal(paidEvidence.filter(e=>e.id.startsWith('balance-')).length,2);
+assert.equal(paidEvidence.find(e=>e.concept==='Cuota mensual')?.amount,400);
+assert.equal(paidEvidence.find(e=>e.concept==='Cena')?.amount,200);
+assert.equal(paidEvidence[0].date,'2026-10-20','show last recorded date without fabricating individual deposits');
+assert.ok(paidEvidence.every(e=>e.urls.length===0),'paid balances remain visible without files');
