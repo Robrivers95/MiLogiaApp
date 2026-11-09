@@ -56,3 +56,6 @@ assert.equal(paidEvidence.find(e=>e.concept==='Cuota mensual')?.amount,400);
 assert.equal(paidEvidence.find(e=>e.concept==='Cena')?.amount,200);
 assert.equal(paidEvidence[0].date,'2026-10-20','show last recorded date without fabricating individual deposits');
 assert.ok(paidEvidence.every(e=>e.urls.length===0),'paid balances remain visible without files');
+
+const onePartialProof={id:'partial',periods:['2026-10'],transferDate:'2026-10-20',status:'approved',receiptType:'cuota_mensual',amount:100,appliedAmount:100,receiptImageUrl:''} as PaymentReceipt;
+assert.equal(memberEvidence([manualPaid],[onePartialProof]).find(e=>e.id==='balance-2026-10-regular-')?.amount,300,'one receipt must not hide other manual paid balances');

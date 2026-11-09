@@ -18,7 +18,7 @@ export default function MemberEvidence({ items,onCorrectPeriod }: { items: Retur
       {(item.reference||item.originalReference)&&<p className="text-xs text-indigo-200 break-all">Folio: {item.reference||item.originalReference}</p>}
       {item.originalReference&&item.reference&&item.originalReference!==item.reference&&<p className="text-xs text-gray-400 break-all">Folio bancario original: {item.originalReference}</p>}
       {item.allocations.map((a,i)=><p key={i} className="text-xs text-gray-300">{a.period} · {a.concept}: {memberMoney(a.amount)}</p>)}
-      {onCorrectPeriod&&item.concept==='Cuota mensual'&&item.periods.map(period=><button type="button" key={period} onClick={()=>onCorrectPeriod(period)} className="rounded-lg bg-indigo-600 p-3 text-sm">Corregir mensualidad {period}</button>)}
+      {onCorrectPeriod&&item.id.startsWith('receipt-')&&item.concept==='Cuota mensual'&&item.periods.map(period=><button type="button" key={period} onClick={()=>onCorrectPeriod(period)} className="rounded-lg bg-indigo-600 p-3 text-sm">Corregir mensualidad {period}</button>)}
       {item.amount != null && <p>{item.id.startsWith('balance-')?'Saldo registrado:':'Declarado:'} {memberMoney(Number(item.amount))}</p>}
       {item.applied != null && <p className="text-green-300">Aplicado al saldo: {memberMoney(Number(item.applied))}</p>}
       {!!item.unapplied&&<p className="text-xs text-amber-200">Sin aplicar al registrar este comprobante: {memberMoney(item.unapplied)}</p>}
