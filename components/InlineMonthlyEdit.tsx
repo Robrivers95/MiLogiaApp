@@ -1,7 +1,7 @@
 import React,{useState} from 'react';
 import type {Payment} from '../types';
-export default function InlineMonthlyEdit({payment,onSave}:{payment:Payment;onSave:(paid:number,date:string,reason:string)=>Promise<void>}){
- const [open,setOpen]=useState(false),[paid,setPaid]=useState(''),[date,setDate]=useState(''),[reason,setReason]=useState(''),[confirmed,setConfirmed]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
+export default function InlineMonthlyEdit({payment,onSave,startOpen=false}:{startOpen?:boolean;payment:Payment;onSave:(paid:number,date:string,reason:string)=>Promise<void>}){
+ const [open,setOpen]=useState(startOpen),[paid,setPaid]=useState(String(payment.paidRegular??Math.min(payment.paid||0,payment.amount))),[date,setDate]=useState((payment.paymentDate||'').slice(0,10)),[reason,setReason]=useState('Corrección de captura manual'),[confirmed,setConfirmed]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
  const amount=Number(paid),valid=paid!==''&&Number.isFinite(amount)&&amount>=0&&amount<=payment.amount;
  const reset=()=>{setConfirmed(false);setError('');};
  return <div>{!open?<button type="button" onClick={()=>{setPaid(String(payment.paidRegular??Math.min(payment.paid||0,payment.amount)));setDate((payment.paymentDate||'').slice(0,10));setReason('Corrección de captura manual');reset();setOpen(true);}} className="p-3 border border-indigo-700 rounded-lg text-indigo-200">Corregir abono</button>:<div className="space-y-3 min-w-0 border border-indigo-700 rounded-lg p-3">

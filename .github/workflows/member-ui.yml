@@ -76,6 +76,8 @@ jobs:
         run: npx playwright install --with-deps webkit
       - name: Verify responsive member UI
         run: node tests/member-ui.mjs
+      - name: Verify visible monthly correction on mobile
+        run: node tests/member-inline-edit-ui.mjs
       - name: Verify administrator admission in the real mobile Admin screen
         run: node tests/member-admission-ui.mjs && LOGIA_ADMISSION_BROWSER=webkit node tests/member-admission-ui.mjs
       - name: Verify WhatsApp reminders

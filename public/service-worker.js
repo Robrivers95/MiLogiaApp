@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mi-logia-inline-correction-20261109';
+const CACHE_NAME = 'mi-logia-visible-correction-20261109';
 const urlsToCache = [
   '/',
   '/index.html',

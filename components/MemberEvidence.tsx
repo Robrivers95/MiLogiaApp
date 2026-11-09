@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { memberMoney, memberEvidence } from '../services/memberPresentation';
-export default function MemberEvidence({ items }: { items: ReturnType<typeof memberEvidence> }) {
+export default function MemberEvidence({ items,onCorrectPeriod }: { items: ReturnType<typeof memberEvidence>;onCorrectPeriod?:(period:string)=>void }) {
   const [preview, setPreview] = useState<{url: string; label: string} | null>(null);
   useEffect(() => {
     if (!preview) return;
@@ -17,6 +17,7 @@ export default function MemberEvidence({ items }: { items: ReturnType<typeof mem
       {(item.reference||item.originalReference)&&<p className="text-xs text-indigo-200 break-all">Folio: {item.reference||item.originalReference}</p>}
       {item.originalReference&&item.reference&&item.originalReference!==item.reference&&<p className="text-xs text-gray-400 break-all">Folio bancario original: {item.originalReference}</p>}
       {item.allocations.map((a,i)=><p key={i} className="text-xs text-gray-300">{a.period} · {a.concept}: {memberMoney(a.amount)}</p>)}
+      {onCorrectPeriod&&item.concept==='Cuota mensual'&&item.periods.map(period=><button type="button" key={period} onClick={()=>onCorrectPeriod(period)} className="rounded-lg bg-indigo-600 p-3 text-sm">Corregir mensualidad {period}</button>)}
       {item.amount != null && <p>Declarado: {memberMoney(Number(item.amount))}</p>}
       {item.applied != null && <p className="text-green-300">Aplicado al saldo: {memberMoney(Number(item.applied))}</p>}
       {!!item.unapplied&&<p className="text-xs text-amber-200">Sin aplicar al registrar este comprobante: {memberMoney(item.unapplied)}</p>}
