@@ -39,7 +39,8 @@ const receipt = {id:'proof',periods:['2026-08','2026-09'],transferDate:'2026-09-
 const proofLedger = {...legacy,adminReceiptUrl:'https://example.test/admin.jpg',receiptImageBase64:'data:image/png;base64,test'};
 const before = JSON.stringify([proofLedger,receipt]);
 const evidence = memberEvidence([proofLedger],[receipt]);
-assert.equal(evidence.length,2);
+assert.equal(evidence.filter(e=>!e.id.startsWith('balance-')).length,2);
+assert.ok(evidence.some(e=>e.id.startsWith('balance-')),'paid ledger balances are visible without approved receipts');
 assert.equal(evidence[0].urls.length,2,'deduplicate legacy first URL without dropping other attachments');
 assert.deepEqual(evidence[0].periods,['2026-08','2026-09']);
 assert.equal(evidence[1].urls.length,2,'include both admin attachment formats');

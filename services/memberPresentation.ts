@@ -38,6 +38,20 @@ export function memberEvidence(payments: Payment[], receipts: PaymentReceipt[]) 
     const urls = [...new Set([payment.adminReceiptUrl, payment.receiptImageBase64].filter(Boolean) as string[])];
     if (urls.length) items.push({reference:'',originalReference:'',allocations:[], id: `ledger-${payment.period}`, periods: [payment.period], concept: 'Adjunto del registro mensual', date: payment.paymentDate || '', status: 'registered', amount: undefined, applied: undefined,unapplied:undefined, comments: payment.comments || '', source: 'Adjunto registrado por administración', urls });
   }
+  for(const source of payments){
+   const payment=normalizePayment(source);
+   const concepts=[{kind:'regular' as const,feeId:undefined as string|undefined,concept:'Cuota mensual',paid:payment.paidRegular||0},...(payment.extraFees?.length?payment.extraFees.map(f=>({kind:'extra' as const,feeId:f.id,concept:f.description,paid:f.paid})):[{kind:'extra' as const,feeId:'legacy',concept:payment.extraDescription||'Cuota extraordinaria',paid:payment.paidExtra||0}])];
+   for(const c of concepts)if(c.paid>0&&!receipts.some(r=>r.status==='approved'&&receiptMatchesConcept(r,payment.period,c.kind,c.feeId,c.concept))){
+    items.push({id:`balance-${payment.period}-${c.kind}-${c.feeId||''}`,periods:[payment.period],concept:c.concept,date:'',status:'registered',amount:c.paid,applied:c.paid,unapplied:undefined,reference:'',originalReference:'',allocations:[],comments:`Acumulado registrado, no un abono nuevo. No se conserva un desglose individual de los depósitos.${payment.paymentDate?' Última fecha registrada: '+payment.paymentDate.slice(0,10)+'.':''}${payment.comments?' Notas: '+payment.comments:''}`,source:'Saldo pagado registrado sin comprobante individual',urls:[]});
+   }
+  }
   return items.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 }
 
+
+
+export function receiptMatchesConcept(receipt:PaymentReceipt,period:string,kind:'regular'|'extra',feeId?:string,concept?:string){
+ if(receipt.quotaAllocations)return receipt.quotaAllocations.some(a=>a.period===period&&a.kind===kind&&(kind==='regular'||a.feeId===feeId||(!a.feeId&&a.concept===concept)));
+ const months=receipt.extraFeePeriod?[receipt.extraFeePeriod]:receipt.periods||[];
+ return months.includes(period)&&(kind==='regular'?receipt.receiptType==='cuota_mensual':receipt.receiptType==='concepto_adicional'&&(receipt.extraFeeId===feeId||(!receipt.extraFeeId&&receipt.conceptDescription===concept)));
+}
