@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mi-logia-unified-account-20261109';
+const CACHE_NAME = 'mi-logia-account-table-20261109';
 const urlsToCache = [
   '/',
   '/index.html',
