@@ -28,7 +28,7 @@ export default function MemberAccount({payments,receipts,onQuota,onCorrect,onReg
    <label className="flex gap-2 text-sm"><input type="checkbox" checked={onlyDebt} onChange={e=>setOnlyDebt(e.target.checked)}/>Solo cuotas con adeudo</label>
    <div className="space-y-3" aria-label="Cuotas con detalle de abonos">{rows.map(t=>{
     const matching=receipts.filter(r=>receiptMatchesConcept(r,t.period,t.kind,t.feeId,t.concept));
-    const detail=memberEvidence(payments.filter(p=>p.period===t.period),matching).filter(e=>e.id.startsWith('receipt-')||e.id.startsWith('ledger-')||(e.id.startsWith('balance-')&&e.concept===(t.kind==='regular'?'Cuota mensual':t.concept)));
+    const detail=memberEvidence(payments.filter(p=>p.period===t.period),matching).filter(e=>e.id.startsWith('receipt-')||e.id.startsWith('ledger-')||e.id===`balance-${t.period}-${t.kind}-${t.kind==='extra'?(t.feeId||'legacy'):''}`);
     return <article key={t.key} className="rounded-lg border border-logia-700 p-3 space-y-3"><div className="flex flex-wrap justify-between gap-2"><div><b>{t.period} · {t.concept}</b></div><b className={t.balance?'text-amber-300':'text-green-300'}>{t.forgiven?'Perdonada':!t.balance?'Pagada':t.paid?'Parcial':'Pendiente'}</b></div>
     <div className="grid grid-cols-3 gap-2 text-sm"><div>Cuota<p>{money(t.amount)}</p></div><div>Pagado<p className="text-green-300">{money(t.paid)}</p></div><div>Pendiente<p className="text-amber-300">{money(t.balance)}</p></div></div>
     <button type="button" aria-expanded={expanded.includes(t.key)} onClick={()=>setExpanded(old=>old.includes(t.key)?old.filter(k=>k!==t.key):[...old,t.key])} className="rounded-lg bg-indigo-600 p-3 text-sm">{expanded.includes(t.key)?'Ocultar detalle':'Ver abonos y referencias'}</button>

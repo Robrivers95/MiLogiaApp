@@ -12,7 +12,7 @@ export default function MemberEvidence({ items,onCorrectPeriod }: { items: Retur
   return <div className="space-y-3">
     {items.length ? items.map(item => <article key={item.id} className="rounded-lg border border-logia-700 p-3 space-y-2 text-sm">
       <div className="flex flex-wrap justify-between gap-2"><strong className="break-words">{item.concept}</strong><span className={item.status === 'pending' ? 'text-amber-300' : item.status === 'rejected' ? 'text-red-300' : 'text-green-300'}>{({pending:'En revisión',approved:'Aprobado',rejected:'Rechazado',registered:'Registrado en pagos'} as Record<string,string>)[item.status] || item.status}</span></div>
-      <p className="text-xs text-gray-400">{item.source} · {date(item.date)}</p>
+      <p className="text-xs text-gray-400">{item.source} · {item.id.startsWith('balance-')?'Última fecha registrada: ':''}{date(item.date)}</p>
       <p className="text-xs">Períodos: {item.periods.join(', ') || 'Sin período asociado'}</p>
       {item.id.startsWith('receipt-')&&<p className="text-xs text-gray-400 break-all">Folio interno: {item.id.slice(8)}</p>}
       {(item.reference||item.originalReference)&&<p className="text-xs text-indigo-200 break-all">Folio: {item.reference||item.originalReference}</p>}
