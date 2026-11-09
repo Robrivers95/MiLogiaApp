@@ -1,3 +1,4 @@
+import AdminPaymentEvidenceModal,{AdminPaymentEvidenceContext} from './AdminPaymentEvidenceModal';
 import AdvanceCorrection from './AdvanceCorrection';
 import MemberAccount from './MemberAccount';
 import React, { useEffect, useState } from 'react';
@@ -16,6 +17,7 @@ export interface MemberActions {
 }
 interface Props { member: User; currentUser: User; stats?: MemberStats; statsLoading: boolean; readOnly: boolean; actions: MemberActions; loadHistory: (uid: string) => Promise<Payment[]>; loadReceipts: (uid: string) => Promise<PaymentReceipt[]>; revision: number; financialScope: string; onClose: () => void; }
 export default function MemberDetail({ member, currentUser, stats, statsLoading, readOnly, actions, loadHistory, loadReceipts, revision, financialScope, onClose }: Props) {
+  const [paymentContext,setPaymentContext]=useState<{context:AdminPaymentEvidenceContext;included:boolean}|null>(null);
   const [tab, setTab] = useState<'profile' | 'history' | 'evidence'>('profile');
   const [receipts, setReceipts] = useState<PaymentReceipt[]>([]);
   const [receiptError, setReceiptError] = useState('');
@@ -29,7 +31,7 @@ export default function MemberDetail({ member, currentUser, stats, statsLoading,
   const [changingStatus, setChangingStatus] = useState(false);
   const [recoverAccess,setRecoverAccess] = useState(false);
   useEffect(()=>setRecoverAccess(false),[member.uid]);
-  useEffect(() => { setTab('profile'); setPayments([]); setReceipts([]); setError(''); setReceiptError(''); setEvidencePeriod(''); setOnlyDebt(false); }, [member.uid]);
+  useEffect(() => { setPaymentContext(null); setTab('profile'); setPayments([]); setReceipts([]); setError(''); setReceiptError(''); setEvidencePeriod(''); setOnlyDebt(false); }, [member.uid]);
   useEffect(() => {
     if (tab === 'profile') return;
     let canceled = false;
@@ -79,11 +81,12 @@ export default function MemberDetail({ member, currentUser, stats, statsLoading,
         {evidencePeriod && <button onClick={() => setEvidencePeriod('')} className="text-indigo-300 p-3 text-sm">Ver todos los períodos</button>}
         {loading || receiptLoading ? <p role="status">Cargando comprobantes…</p> : error || receiptError ? <div><p className="text-red-300 text-sm">{error || receiptError}</p><button onClick={() => setRetry(value => value+1)} className="p-3 border border-logia-700 rounded-lg">Reintentar</button></div> : <MemberEvidence key={`${member.uid}-${evidencePeriod}`} items={evidence.filter(item => !evidencePeriod || item.periods.includes(evidencePeriod))} />}
       </div> : <div className="space-y-3">
-        <p className="text-xs text-gray-400">Cuotas registradas y abonos individualizados. Para crear un mes o registrar una parcialidad abre Gestionar pagos.</p>
+        <p className="text-xs text-gray-400">Cuotas registradas y abonos individualizados. Abre el detalle de cada cuota para consultar fechas, abonos y referencias. Puedes registrar un abono desde la misma cuota.</p>
         <button disabled={readOnly} onClick={()=>actions.payments(member.uid)} className="w-full rounded-lg bg-indigo-600 p-3 text-sm disabled:opacity-40">Gestionar pagos y mensualidades</button>
-        {loading||receiptLoading?<p role="status">Cargando estado de cuenta…</p>:historyError||receiptError?<div><p className="text-red-300 text-sm">{historyError||receiptError}</p><button onClick={()=>setRetry(v=>v+1)} className="p-3 border border-logia-700 rounded-lg">Reintentar</button></div>:<>{!readOnly&&['admin','master'].includes(currentUser.role)&&<AdvanceCorrection groupId={currentUser.groupId} memberId={member.uid} payments={payments} receipts={receipts} onDone={()=>{setRetry(v=>v+1);window.dispatchEvent(new CustomEvent('finance-updated',{detail:{groupId:currentUser.groupId}}));}}/>}<MemberAccount key={member.uid} payments={payments} receipts={receipts} onCorrect={!readOnly&&['admin','master'].includes(currentUser.role)?async(payment,paid,date,reason)=>{const {correctManualMonthly}=await import('../services/manualMonthlyCorrection');await correctManualMonthly(currentUser.groupId,member.uid,payment,paid,date,reason);setRetry(v=>v+1);}:undefined}/></>}
+        {loading||receiptLoading?<p role="status">Cargando estado de cuenta…</p>:historyError||receiptError?<div><p className="text-red-300 text-sm">{historyError||receiptError}</p><button onClick={()=>setRetry(v=>v+1)} className="p-3 border border-logia-700 rounded-lg">Reintentar</button></div>:<>{!readOnly&&['admin','master'].includes(currentUser.role)&&<AdvanceCorrection groupId={currentUser.groupId} memberId={member.uid} payments={payments} receipts={receipts} onDone={()=>{setRetry(v=>v+1);window.dispatchEvent(new CustomEvent('finance-updated',{detail:{groupId:currentUser.groupId}}));}}/>}<MemberAccount key={member.uid} payments={payments} receipts={receipts} onRegister={!readOnly&&['admin','master'].includes(currentUser.role)?(t,included)=>setPaymentContext({included,context:{userId:member.uid,userName:member.name,period:t.period,feeType:t.kind,feeId:t.feeId,concept:t.concept,targetAmount:t.amount,ledgerPaid:t.paid}}):undefined} onCorrect={!readOnly&&['admin','master'].includes(currentUser.role)?async(payment,paid,date,reason)=>{const {correctManualMonthly}=await import('../services/manualMonthlyCorrection');await correctManualMonthly(currentUser.groupId,member.uid,payment,paid,date,reason);setRetry(v=>v+1);}:undefined}/></>}
       </div>}
 
+      {paymentContext&&<AdminPaymentEvidenceModal groupId={currentUser.groupId} adminUid={currentUser.uid} context={paymentContext.context} initialAlreadyIncluded={paymentContext.included} receipts={receipts} readOnly={readOnly} onClose={()=>setPaymentContext(null)} onChanged={async()=>{setRetry(v=>v+1);}}/>}
     </div>
   </aside>;
 }
