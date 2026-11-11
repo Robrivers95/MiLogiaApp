@@ -42,7 +42,7 @@ export function memberEvidence(payments: Payment[], receipts: PaymentReceipt[]) 
    const payment=normalizePayment(source);
    const concepts=[{kind:'regular' as const,feeId:undefined as string|undefined,concept:'Cuota mensual',paid:payment.paidRegular||0},...(payment.extraFees?.length?payment.extraFees.map(f=>({kind:'extra' as const,feeId:f.id,concept:f.description,paid:f.paid})):[{kind:'extra' as const,feeId:'legacy',concept:payment.extraAmount?(payment.extraDescription||'Cuota Extra'):'Saldo adicional sin cuota asignada',paid:payment.paidExtra||0}])];
    for(const c of concepts){
-    const matching=receipts.filter(r=>r.status==='approved'&&receiptMatchesConcept(r,payment.period,c.kind,c.feeId,c.concept));
+    const matching=receipts.filter(r=>r.status==='approved'&&!receiptBeforeQuotaCorrection(payment,r.id,c.kind,c.feeId)&&receiptMatchesConcept(r,payment.period,c.kind,c.feeId,c.concept));
     let identified=0,unknown=false;
     for(const r of matching){
      let amount:number|undefined;
@@ -65,4 +65,8 @@ export function receiptMatchesConcept(receipt:PaymentReceipt,period:string,kind:
  if(receipt.quotaAllocations)return receipt.quotaAllocations.some(a=>a.period===period&&a.kind===kind&&(kind==='regular'||a.feeId===feeId||(!a.feeId&&a.concept===concept)));
  const months=receipt.extraFeePeriod?[receipt.extraFeePeriod]:receipt.periods||[];
  return months.includes(period)&&(kind==='regular'?receipt.receiptType==='cuota_mensual':receipt.receiptType==='concepto_adicional'&&(receipt.extraFeeId===feeId||(!receipt.extraFeeId&&receipt.conceptDescription===concept)));
+}
+
+export function receiptBeforeQuotaCorrection(payment:Payment|undefined,receiptId:string,kind:'regular'|'extra',feeId?:string){
+ return payment?.quotaCorrections?.some(c=>c.kind===kind&&(kind==='regular'||c.feeId===(feeId||'legacy'))&&c.historicalReceiptIds.includes(receiptId))||false;
 }

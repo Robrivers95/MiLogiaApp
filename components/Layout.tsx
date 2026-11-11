@@ -82,6 +82,7 @@ const Layout: React.FC<Props> = ({ user, currentView, onNavigate, onLogout, onEx
         </div>
         {showMore && <div className="absolute right-3 top-full mt-2 w-64 bg-logia-800 rounded-xl border border-logia-700 shadow-2xl p-2 z-40" aria-label="Opciones de cuenta">
           <p className="px-3 py-2 text-sm text-gray-400 truncate">{user.name}</p>
+          <a href="/manual-mi-logia.html" target="_blank" rel="noopener noreferrer" className="block w-full text-left p-3 rounded hover:bg-logia-700">Manual de uso</a>
           <button onClick={() => navigate('profile')} className="block w-full text-left p-3 rounded hover:bg-logia-700">Mi perfil</button>
           <button onClick={() => { setShowMore(false); void handleInstallClick(); }} className="block w-full text-left p-3 rounded hover:bg-logia-700">{canInstall ? 'Instalar ahora' : 'Instalar aplicación'}</button>
           {user.role === 'master' && onExitGroup && <button onClick={onExitGroup} className="block w-full text-left p-3 rounded hover:bg-logia-700">Cambiar de Logia</button>}

@@ -16,25 +16,14 @@ try {
   assert.equal(await page.getByRole('table').isVisible(),true);
   await page.getByRole('button',{name:'Ver ficha de Miembro 000'}).click();
   await page.getByRole('table',{name:'Tabla de meses, cuotas y abonos'}).waitFor();assert.equal(await page.evaluate(()=>window.__historyRequests),1,'opening a member loads the account directly');
-  await page.getByRole('button',{name:'Historial de cuotas',exact:true}).click();
+  await page.getByRole('button',{name:'Estado de cuenta',exact:true}).click();
   if(await page.getByRole('button',{name:'Expandir mes 2026-09',exact:true}).count())await page.getByRole('button',{name:'Expandir mes 2026-09',exact:true}).click();
   await page.getByText('Evento legado',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>window.__historyRequests),1);
-  await page.getByRole('button',{name:'Abonos y transferencias'}).first().click();
-  await page.getByText('En revisión',{exact:true}).waitFor();
-  await page.getByText('Adjunto registrado por administración',{exact:false}).waitFor();
-  assert.equal(await page.getByRole('button',{name:'Ver comprobante 1',exact:true}).count(),2);
-  await page.locator('article').filter({hasText:'En revisión'}).getByRole('button',{name:'Ver comprobante 1',exact:true}).click();
-  assert.equal(await page.locator('iframe[title="Comprobante PDF"]').getAttribute('src'),'https://example.test/proof.pdf');
-  await page.getByRole('button',{name:'Cerrar comprobante',exact:true}).click();
-  await page.getByRole('button',{name:'Ver comprobante 2',exact:true}).click();
-  await page.getByRole('dialog',{name:'Visor de comprobante'}).waitFor();
-  for(let iteration=0;iteration<5;iteration++){await page.evaluate(()=>window.__rerender());await page.waitForTimeout(200);assert.equal(await page.getByRole('dialog',{name:'Visor de comprobante'}).isVisible(),true,'parent updates must not dismiss evidence');}
-  await page.getByRole('button',{name:'Cerrar comprobante',exact:true}).click();
-  await page.getByRole('button',{name:'Historial de cuotas',exact:true}).click();
-  await page.getByRole('button',{name:'Cuotas y saldos',exact:true}).click();
-  if(await page.getByRole('button',{name:'Expandir mes 2026-09',exact:true}).count())await page.getByRole('button',{name:'Expandir mes 2026-09',exact:true}).click();
-  await page.getByText('Evento legado',{exact:true}).waitFor();
+  const pending=page.locator('.payment-line').filter({hasText:'En revisión'});await pending.getByRole('button',{name:'Ver 2 archivo(s)',exact:true}).click();
+  await page.getByRole('button',{name:'Ver comprobante 1',exact:true}).click();assert.equal(await page.locator('iframe[title="Comprobante PDF"]').getAttribute('src'),'https://example.test/proof.pdf');await page.getByRole('button',{name:'Cerrar comprobante',exact:true}).click();await page.getByRole('button',{name:'Ver comprobante 2',exact:true}).click();
+  for(let iteration=0;iteration<5;iteration++){await page.evaluate(()=>window.__rerender());await page.waitForTimeout(200);assert.equal(await page.getByRole('dialog',{name:'Visor de comprobante'}).isVisible(),true);}
+  await page.getByRole('button',{name:'Cerrar comprobante',exact:true}).click();await page.getByRole('button',{name:'Cerrar detalle',exact:true}).click();
   await page.getByLabel('Solo cuotas con adeudo').check();
   assert.equal(await page.getByText('Cuota mensual',{exact:true}).count(),0);
   assert.equal(await page.locator('.member-detail').evaluate(element=>getComputedStyle(element).position),'fixed');
@@ -58,15 +47,7 @@ try {
       assert.equal(await page.locator('.member-detail').evaluate(element=>getComputedStyle(element).position),'fixed');
       assert.ok(await page.locator('.member-detail').evaluate(element=>element.scrollWidth<=innerWidth),`detail must fit width ${width}`);
       await page.screenshot({path:`test-results/members-mobile-${width}.png`});
-      await page.getByRole('button',{name:'Comprobantes',exact:true}).click();
-      await page.getByText('En revisión',{exact:true}).waitFor();
-      await page.screenshot({path:`test-results/member-evidence-list-${width}.png`});
-      await page.getByRole('button',{name:'Ver comprobante 2',exact:true}).click();
-      assert.ok(await page.getByRole('dialog',{name:'Visor de comprobante',exact:true}).evaluate(element=>element.scrollWidth<=innerWidth));
-      await page.screenshot({path:`test-results/member-evidence-${width}.png`});
-      await page.keyboard.press('Escape');
-      assert.equal(await page.getByRole('dialog',{name:'Visor de comprobante',exact:true}).count(),0);
-      assert.equal(await page.locator('.member-detail').count(),1);
+      await page.getByRole('button',{name:'Expandir mes 2026-09',exact:true}).click();await page.locator('.payment-line').filter({hasText:'En revisión'}).getByRole('button',{name:'Ver 2 archivo(s)',exact:true}).click();await page.getByRole('button',{name:'Ver comprobante 2',exact:true}).click();assert.ok(await page.getByRole('dialog',{name:'Visor de comprobante',exact:true}).evaluate(element=>element.scrollWidth<=innerWidth));await page.keyboard.press('Escape');assert.equal(await page.getByRole('dialog',{name:'Visor de comprobante',exact:true}).count(),0);await page.getByRole('button',{name:'Cerrar detalle',exact:true}).click();assert.equal(await page.locator('.member-detail').count(),1);
       await page.getByRole('button',{name:'Perfil y acciones',exact:true}).click();
       await page.getByRole('button',{name:'Dar de baja',exact:true}).click();
       await page.getByRole('button',{name:'Reactivar miembro',exact:true}).waitFor();
@@ -79,13 +60,12 @@ try {
   await page.getByRole('button',{name:/Miembro 000/}).click();
   await page.getByRole('button',{name:'Perfil y acciones',exact:true}).click();
   assert.equal(await page.getByRole('button',{name:'Editar perfil',exact:true}).isDisabled(),true);
-  assert.equal(await page.getByRole('button',{name:'Gestionar pagos',exact:true}).isDisabled(),true);
+
   assert.equal(await page.getByRole('button',{name:'Dar de baja',exact:true}).isDisabled(),true);
-  await page.getByRole('button',{name:'Comprobantes',exact:true}).click();
-  await page.getByText('En revisión',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Estado de cuenta',exact:true}).click();await page.getByRole('button',{name:'Expandir mes 2026-09',exact:true}).click();await page.locator('.payment-line').filter({hasText:'En revisión'}).waitFor();
   await page.goto('http://127.0.0.1:5179/tests/member-ui.html?receipt-error=1');
   await page.getByRole('button',{name:/Miembro 000/}).click();
-  await page.getByRole('button',{name:'Comprobantes',exact:true}).click();
+
   await page.getByText('No se pudieron cargar los comprobantes. Reintenta la consulta.').waitFor();
   assert.equal(await page.getByText('No hay comprobantes asociados a esta consulta.').count(),0);
   for(const width of [1440,390,320]) {

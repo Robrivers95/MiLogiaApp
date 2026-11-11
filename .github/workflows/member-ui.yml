@@ -58,7 +58,10 @@ permissions:
 
 jobs:
   browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      options: --ipc=host
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -68,12 +71,6 @@ jobs:
       - run: npm ci
       - name: Install browser test tools
         run: npm install --no-save --package-lock=false playwright@1.62.1
-      - name: Install Chromium
-        timeout-minutes: 5
-        run: npx playwright install chromium
-      - name: Install WebKit for mobile admission
-        timeout-minutes: 5
-        run: npx playwright install --with-deps webkit
       - name: Verify responsive member UI
         run: node tests/member-ui.mjs
       - name: Verify visible monthly correction on mobile
@@ -85,7 +82,7 @@ jobs:
       - name: Verify reviewed multi-income capture
         run: node tests/income-capture-ui.mjs
       - name: Verify member accounts and statement expenses
-        run: node tests/member-account-ui.mjs && node tests/member-unified-ui.mjs && node tests/member-table-ui.mjs && node tests/member-account-live-ui.mjs
+        run: node tests/member-account-ui.mjs && node tests/member-unified-ui.mjs && node tests/member-table-ui.mjs && node tests/member-account-live-ui.mjs && node tests/member-quota-edit-ui.mjs
       - name: Verify quick finance
         run: node tests/quick-finance-ui.mjs
       - name: Verify treasury report
