@@ -10,7 +10,7 @@ export function incomeTargets(payments:Payment[]):IncomeTarget[]{
  return payments.flatMap(source=>{
   const p=normalizePayment(source);
   const regular:IncomeTarget={key:incomeTargetKey({period:p.period,kind:'regular'}),period:p.period,kind:'regular',concept:'Cuota normal',amount:p.amount,paid:p.paidRegular!,balance:Math.max(0,cents(p.amount)-cents(p.paidRegular!))/100,forgiven:false};
-  return [...(p.amount>0?[regular]:[]),...feeOptions([p]).map(f=>({key:incomeTargetKey({period:f.period,kind:'extra',feeId:f.feeId}),period:f.period,kind:'extra' as const,feeId:f.feeId,concept:f.description,amount:f.amount,paid:f.paid,balance:Math.round(f.balance*100)/100,forgiven:f.forgiven}))];
+  return [...(p.amount>0||p.paidRegular!>0?[regular]:[]),...feeOptions([p]).map(f=>({key:incomeTargetKey({period:f.period,kind:'extra',feeId:f.feeId}),period:f.period,kind:'extra' as const,feeId:f.feeId,concept:f.description,amount:f.amount,paid:f.paid,balance:Math.round(f.balance*100)/100,forgiven:f.forgiven}))];
  }).sort((a,b)=>a.period.localeCompare(b.period)||Number(a.kind==='extra')-Number(b.kind==='extra')||a.concept.localeCompare(b.concept,'es'));
 }
 export function memberIncomeSummary(payments:Payment[],through:string){

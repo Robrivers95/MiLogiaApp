@@ -16,7 +16,7 @@ export default function InlineQuotaEdit({target,date,onSave,onClose,legacy=false
  <label>Fecha real del pago<input aria-label="Fecha del pago corregido" type="date" value={when} onChange={e=>{setWhen(e.target.value);reset();}} className="block w-full p-3 bg-logia-900 rounded-lg"/></label>
  <label>Motivo de la corrección<input aria-label="Motivo de la corrección" maxLength={500} value={reason} onChange={e=>{setReason(e.target.value);reset();}} className="block w-full p-3 bg-logia-900 rounded-lg"/></label>
  </fieldset>
- {valid&&<p className="font-semibold">Quedará: {forgiven?'perdonada':received>=charge?'pagada':received>0?'parcial':'pendiente'} · Pago: {money(received)} · Neto: {money(balance)}</p>}
+ {valid&&<p className="font-semibold">Quedará: {forgiven?'perdonada':received>=charge?'pagada':received>0?'parcial':'pendiente'} · Pago: {money(received)} · Neto: {money(balance)}{!forgiven&&received>charge?' · Excedente: '+money(received-charge):''}</p>}
  {received!==target.paid&&<p className="text-xs text-amber-200">Se corrige el saldo de la cuota. Los comprobantes anteriores se conservarán como historial; no se cambian depósitos de bancos ni movimientos de tesorería.</p>}
  <label className="flex gap-2"><input type="checkbox" checked={confirmed} disabled={busy} onChange={e=>setConfirmed(e.target.checked)}/>Confirmo los importes y el saldo que quedarán.</label>
  {error&&<p role="alert" className="text-red-300">{error}</p>}
