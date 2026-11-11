@@ -1,0 +1,52 @@
+name: Apply project finance module
+
+on:
+  push:
+    branches:
+      - feature/project-finance
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/project-finance
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Apply project finance integration
+        run: node scripts/apply-project-finance.mjs
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Existing accounting regression tests
+        run: npm run test:accounting
+
+      - name: Project accounting regression tests
+        run: node tests/project-finance-accounting.mjs
+
+      - name: Production build
+        run: npm run build
+
+      - name: Commit validated source integration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/Admin.tsx types.ts firestore.rules
+          if git diff --cached --quiet; then
+            echo "No generated source changes to commit"
+          else
+            git commit -m "feat: integrate project profitability module"
+            git push origin HEAD:feature/project-finance
+          fi

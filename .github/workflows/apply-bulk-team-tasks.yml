@@ -1,0 +1,34 @@
+name: Apply bulk and team tasks
+
+on:
+  push:
+    branches: [bulk-and-team-tasks]
+    paths:
+      - scripts/apply-bulk-team-tasks.mjs
+      - .github/workflows/apply-bulk-team-tasks.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: bulk-and-team-tasks
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Apply code changes
+        run: node scripts/apply-bulk-team-tasks.mjs
+      - name: Build
+        run: npm ci && npm run build
+      - name: Commit generated changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/Admin.tsx components/Dashboard.tsx components/Layout.tsx types.ts package.json package-lock.json
+          git diff --cached --quiet || git commit -m "feat: add bulk individual and shared team tasks"
+          git push origin bulk-and-team-tasks

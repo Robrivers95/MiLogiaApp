@@ -1,0 +1,51 @@
+# V2 Beta: navegación y directorio
+
+## Punto de recuperación V1 Beta
+
+La rama `v1-beta` conserva el commit `25ad647ac833df56dac07f2166ba47035b3133c0` que estaba en `main` al iniciar este cambio. No modificar ni fusionar cambios nuevos en esa rama.
+
+V2 Beta está en `feature/v2-intuitive-navigation`. No requiere migraciones de datos, cambios de reglas, ni funciones de Firebase. Los registros de miembros, cuotas, comprobantes y proyectos conservan su formato.
+
+## Organización
+
+- Inicio, Mis pagos, Comunidad, Biblioteca y Gestionar (según permisos) son la navegación principal.
+- Comunidad contiene Avisos y Mi asistencia. Perfil, instalación, cambio de Logia para master y cierre de sesión están en el menú superior.
+- Gestionar contiene Resumen, Miembros, Finanzas, Organización y Formación. La búsqueda «Ir a una función» encuentra cualquiera de las 17 pantallas administrativas.
+- Miembros reúne Directorio, Solicitudes, Crear miembro y Vincular cuenta.
+- Finanzas reúne Tesorería, Matriz de pagos, Comprobantes, Cuotas, Proyectos, Bancos y efectivo y Recordatorios.
+
+## Directorio para más de 100 miembros
+
+Búsqueda por nombre, correo, identificador, grado y cargo, sin distinguir acentos; orden por nombre, mayor adeudo o fecha de registro. Páginas de 25, 50 o 100 miembros y columnas financieras opcionales. El historial se abre bajo demanda como antes.
+
+La búsqueda y la paginación solo afectan al directorio. El CSV incluye todos los resultados de la búsqueda, no solamente la página visible. No cambian los filtros ni el alcance de cuotas masivas, matriz o totales. Las consultas de saldos se ejecutan con un máximo de seis operaciones simultáneas; una respuesta anterior no reemplaza los saldos de una consulta más reciente.
+
+Esto reduce filas renderizadas y tiempo de espera secuencial. No implementa paginación de Firestore: la lista de miembros y los saldos siguen cargándose completos; para miles de miembros se necesitaría una segunda fase con consultas y agregados del servidor.
+
+## Publicación y recuperación
+
+Probar V2 con datos conocidos en un canal de preview antes de publicar en live. Un canal de preview comparte el mismo proyecto Firebase: las operaciones guardadas afectan a los mismos datos. Usar una Logia de pruebas para ensayar operaciones de escritura.
+
+Para volver a V1 en Hosting, hacer checkout de `v1-beta`, instalar con `npm ci`, generar con `npm run build` y ejecutar `firebase deploy --only hosting --project registrologia`. Ese procedimiento recupera el código; no restaura datos modificados por los usuarios. El service worker usa una nueva clave de caché en V2 para actualizar la interfaz.
+
+## Validación
+
+Ejecutar `npm run build`, `npm run test:accounting`, `node tests/project-finance-accounting.mjs` y `node tests/run-directory.mjs`.
+
+## Arquitectura adaptable de miembros
+
+`MemberManagement` muestra una tabla desde 768 px y una lista compacta en pantallas menores. `MemberDetail` muestra la misma ficha en un panel lateral desde 1024 px y ocupa la pantalla en dispositivos menores. El directorio concentra la búsqueda, filtros, orden y páginas; la ficha reúne perfil, rol, pagos, anticipos, estado y vinculación.
+
+Los componentes reciben datos y acciones por props y no importan Firebase. `Admin` conserva la integración con los servicios y los formularios existentes. El historial se carga al abrir su pestaña y descarta respuestas si cambia el miembro seleccionado. Se conserva la selección aunque un cambio de estado retire al miembro del filtro actual. Los saldos pendientes de carga no aparecen como cero. El estado se cambia desde la ficha, con el proceso existente de fecha de baja/reingreso, y no desde el editor del perfil.
+
+`memberPresentation` usa la normalización contable existente para mostrar cuotas antiguas, extraordinarias individuales y cuotas perdonadas sin escribir ni modificar los registros.
+
+## Consulta de adeudo y evidencia
+La ficha permite consultar cuotas pendientes y abrir comprobantes por período o todos los períodos. El adeudo completo se calcula exclusivamente con normalizePayment; los montos de comprobantes nunca se vuelven a sumar ni descuentan pendientes/rechazados. El resumen superior identifica el rango del directorio.
+MemberEvidence reúne registros paymentReceipts del miembro y adjuntos adminReceiptUrl/receiptImageBase64 del ledger. Un comprobante de varios meses sigue siendo una transacción; su importe no se atribuye individualmente a cada concepto. Se muestran todos los archivos, incluidos PDF, estado y comentarios. Las lecturas son bajo demanda, con errores visibles y reintento, sin cambios de esquema ni escrituras. La aprobación conserva el flujo de Tesorería.
+
+## Cuotas existentes y abonos voluntarios
+La matriz permite elegir una cuota existente (concepto, período, monto) y asignarla a miembros faltantes. Se evita duplicar el concepto en el mismo período. La transacción conserva pagos previos, convierte el extra legacy antes de agregar otro y no crea una mensualidad cuando falta el registro. Las cuotas perdonadas se pueden asignar sin adeudo; el administrador puede elegir si cobrar al nuevo miembro.
+El selector de comprobantes del miembro incluye cuotas perdonadas y cubiertas. Los abonos voluntarios se acumulan sin límite de meta, preservan el perdón y mantienen deuda cero. La aprobación de cuota extra y comprobante es atómica e idempotente. No se reabre el saldo ni se registra ingreso por el perdón en sí. Las cuotas activas conservan su desglose de saldo y excedente.
+El visor de comprobantes conserva el archivo mientras cambia la pantalla principal; solo se reinicia al cambiar de miembro o filtro de período, o al cerrar explícitamente.
+Validación: casos de 2000 perdonados +1000 abonados, abonos mayores a meta, aprobación concurrente/reintento/fallo, corrección de recibo, asignación tardía/duplicada, legacy y aislamiento de Logia; navegador en PC y celular.

@@ -1,0 +1,11 @@
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import TreasuryReport from '../components/TreasuryReport';
+import {quotaReportRows} from '../services/treasuryReport';
+import type {FinanceProject,TreasuryEntry} from '../types';
+const project={id:'cactus',groupId:'test',name:'Evento Cactus 2',linkedExtraConcepts:['Cena anual']} as FinanceProject;
+const rows=Array.from({length:60},(_,index)=>quotaReportRows({uid:`member-${index}`,name:`Miembro ${String(index).padStart(3,'0')}`},{period:'2027-09',amount:100,paid:300,paidRegular:100,paidExtra:200,paymentDate:'2027-10-03',status:'Pagado',comments:'',extraFees:[{id:'extra',description:'Cena anual',amount:200,paid:200,createdAt:'2026-02-01'}]},'test',[project])).flat();
+rows.push({...rows[0],id:'manual',date:'2027-09-05',description:'Venta de evento',amount:75,allocations:[{source:'tesoro_general',amount:25},{source:'beneficencia',amount:50}],quotaKind:undefined,quotaPeriod:undefined,memberId:undefined,memberName:undefined,quotaConcept:undefined,reportNote:undefined,reportProjects:undefined,projectId:'cactus',projectName:project.name});
+rows.push({...rows.at(-1)!,id:'expense',description:'Compra de material',type:'expense',amount:10,projectId:undefined,projectName:undefined,allocations:[{source:'tesoro_general',amount:10}]});
+(window as any).__edits=[];(window as any).__deletes=[];
+createRoot(document.getElementById('root')!).render(<div className="p-3 max-w-7xl mx-auto"><TreasuryReport groupId="test" entries={rows} readOnly={new URLSearchParams(location.search).has('readonly')} onRefresh={()=>{}} onEdit={entry=>(window as any).__edits.push(entry.id)} onDelete={id=>(window as any).__deletes.push(id)}/></div>);

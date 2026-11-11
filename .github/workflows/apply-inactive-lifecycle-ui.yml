@@ -1,0 +1,34 @@
+name: Apply inactive lifecycle UI
+
+on:
+  push:
+    branches: [inactive-lifecycle-ui]
+    paths:
+      - scripts/apply-inactive-lifecycle-ui.mjs
+      - .github/workflows/apply-inactive-lifecycle-ui.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: inactive-lifecycle-ui
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Apply changes
+        run: node scripts/apply-inactive-lifecycle-ui.mjs
+      - name: Install and build
+        run: npm ci && npm run build
+      - name: Commit generated changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/Admin.tsx components/Layout.tsx package.json package-lock.json
+          git diff --cached --quiet || git commit -m "fix: separate inactive members from pending requests"
+          git push origin inactive-lifecycle-ui

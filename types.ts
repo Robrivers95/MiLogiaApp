@@ -1,0 +1,367 @@
+
+export type Role = 'master' | 'admin' | 'member' | 'viewer';
+
+export type MasonicDegree = 'aprendiz' | 'companero' | 'maestro';
+
+export type LodgeRole = 
+  | 'venerable' 
+  | 'primer_vigilante' 
+  | 'segundo_vigilante' 
+  | 'orador' 
+  | 'secretario' 
+  | 'tesorero' 
+  | 'hospitalario' 
+  | 'maestro_ceremonias' 
+  | 'experto' 
+  | 'guarda_templo_interior' 
+  | 'guarda_templo_exterior' 
+  | 'sin_cargo'
+  | 'otro';
+
+export interface RpgCharacter {
+  name: string;
+  level: number;
+  xp: number;
+  xpNext: number;
+  hp: number;
+  maxHp: number;
+  mana: number;
+  maxMana: number;
+  magicLevel: number;
+  attack: number;
+  defense: number;
+  vocation?: 'guerrero' | 'paladin' | 'mago' | 'constructor';
+}
+
+export interface User {
+  requirePasswordChange?: boolean;
+  uid: string;
+  name: string;
+  email: string;
+  phoneNumber?: string;
+  whatsappRemindersAllowed?: boolean;
+  role: Role;
+  active: boolean;
+  groupId: string;
+  joinDate: string; // App Join Date (ISO)
+  
+  // Extended Profile
+  profession?: string;
+  job?: string;
+  workAddress?: string; // New field
+  city?: string;
+  state?: string;
+  country?: string;
+  
+  // Masonic Dates (Admin only edit)
+  masonicJoinDate?: string; // YYYY-MM-DD
+  masonicRejoinDate?: string; // YYYY-MM-DD (Used for billing calculation)
+  leaveDate?: string; // YYYY-MM-DD: fecha de baja; conserva historial y detiene cargos/notificaciones
+  
+  // Masonic Status
+  degree?: MasonicDegree;
+  numericDegree?: number;
+  lodgeRole?: LodgeRole;
+  
+  profileEditable: boolean;
+  rpg?: RpgCharacter;
+  totalPoints?: number;
+  lastLogin?: string; 
+}
+
+export interface Notice {
+  id: string;
+  groupId: string;
+  title: string;
+  description: string;
+  imageUrl?: string;       // Base64 image
+  sendPushOnCreate?: boolean; // Whether to send push notification
+  date: string; // ISO
+  createdBy: string;
+}
+
+export interface PaymentReceipt {
+  bankReference?: string;
+  bankOriginalReference?: string;
+  bankDepositDate?: string;
+  incomeDraftId?: string;
+  unappliedEntryId?: string;
+  quotaAllocations?: {period:string;kind:'regular'|'extra';feeId?:string;concept:string;amount:number}[];
+
+  quickMovementId?: string; // Captura enlazada: no volver a aplicar ni modificar por separado
+  id: string;
+  groupId: string;
+  userId: string;
+  userName: string;
+  periodAllocations?: {period:string;amount:number}[]; // Reparto confirmado del ingreso
+  periods: string[];           // Array de YYYY-MM que desea pagar
+  transferDate: string;        // ISO fecha/hora de la transferencia
+  receiptImageUrl: string;     // URL primera imagen (backward compat)
+  receiptImageUrls?: string[]; // URLs de todas las imágenes/archivos adjuntos
+  amount?: number;             // Monto declarado (opcional)
+  receiptType: 'cuota_mensual' | 'concepto_adicional'; // Tipo de pago
+  conceptDescription?: string; // Descripción para "concepto_adicional"
+  extraFeeId?: string;          // ID exacto de la cuota extra seleccionada
+  extraFeePeriod?: string;      // YYYY-MM del ledger donde vive la cuota extra
+  appliedAmount?: number;       // Monto realmente aplicado al saldo al aprobar
+  voluntaryContribution?: boolean; // Abono aceptado en cuota cubierta o perdonada
+  unappliedAmount?: number;     // Diferencia entre recibido y aplicado (excedente)
+  ledgerIncluded?: boolean;     // true si es desglose histórico ya incluido en el acumulado
+  status: 'pending' | 'approved' | 'rejected';
+  submittedAt: string;         // ISO
+  reviewedAt?: string;         // ISO
+  reviewedBy?: string;         // UID del admin
+  reviewComments?: string;
+}
+
+export interface Task {
+  dueDate?: string;
+  kind?: 'task' | 'agreement' | 'commitment';
+  confirmedBy?: string;
+  confirmedAt?: string;
+  captureRequestId?: string;
+  id: string;
+  groupId: string;
+  title: string;
+  description?: string;
+  assignedTo?: string; // User UID (tarea individual legacy)
+  assignedToName?: string; // User name for display
+  assignmentMode?: 'individual' | 'team';
+  assignedToMany?: string[]; // UIDs seleccionados para una tarea de equipo
+  assignedToNames?: string[]; // Nombres para mostrar
+  batchId?: string; // Agrupa tareas individuales creadas en una sola orden
+  completed: boolean;
+  completedAt?: string; // ISO
+  completedBy?: string; // User UID
+  createdAt: string; // ISO
+  createdBy: string;
+  createdByName?: string;
+}
+
+export interface IndividualExtraFee {
+  id: string; // Unique identifier for this extra fee item
+  description: string; // Description (e.g., "Cena anual", "Evento especial")
+  amount: number; // Amount for this specific extra fee
+  paid: number; // Amount paid for this specific extra fee
+  createdAt: string; // ISO Date when this was added
+  createdBy?: string; // UID of who created it
+  sourceFeeId?: string; // ID de la cuota original al asignarla posteriormente
+  forgiven?: boolean;    // true = deuda perdonada/cerrada (no se cobra más)
+  forgivenAt?: string;   // ISO cuando se perdonó
+  forgivenBy?: string;   // UID del admin que lo perdonó
+  forgivenNote?: string; // Nota opcional del perdón
+}
+
+export interface QuotaCorrectionAudit {
+ at:string;by:string;kind:'regular'|'extra';feeId:string|null;concept:string;
+ beforeAmount:number;afterAmount:number;beforePaid:number;afterPaid:number;
+ beforeForgiven:boolean;afterForgiven:boolean;reason:string;historicalReceiptIds:string[];
+}
+export interface Payment {
+  quotaCorrections?: QuotaCorrectionAudit[];
+  quotaCreatedAt?: string;
+  quotaCreatedBy?: string;
+  correctionHistory?: { at: string; by: string; reason: string; before: number; after: number; beforeDate?: string | null; afterDate?: string | null }[];
+  period: string; // YYYY-MM
+  amount: number; // Base Amount (cuota mensual)
+  
+  // LEGACY: Single extra fee (mantener para compatibilidad)
+  extraAmount?: number; // Extra Fee (cuota extraordinaria)
+  extraDescription?: string; // Reason for extra fee
+  
+  // v3.1.0: Multiple individual extra fees
+  extraFees?: IndividualExtraFee[]; // Array of individual extra fees
+  
+  paid: number; // DEPRECATED: Total paid (mantener por compatibilidad)
+  paidRegular?: number; // Paid for regular monthly fee
+  paidExtra?: number; // Paid for extra fee (suma de todos los extra fees individuales)
+  status: 'Pendiente' | 'Parcial' | 'Pagado';
+  comments: string;
+  paymentDate?: string | null; // ISO Date
+  groupId?: string; // Logia/Group ID para filtrado
+  regularCovered?: boolean; // Si la cuota mensual está cubierta
+  extraCovered?: boolean; // Si la cuota extraordinaria está cubierta
+  adminReceiptUrl?: string; // URL de comprobante subido por el admin (Storage)
+  receiptImageBase64?: string; // Comprobante adjunto por el admin (base64)
+}
+
+export interface PriceHistoryEntry {
+  startDate: string; // YYYY-MM
+  amount: number;
+}
+
+export interface Attendance {
+  date: string; // YYYY-MM-DD
+  attended: boolean;
+  notes?: string;
+}
+
+export interface TriviaOption {
+  text: string;
+}
+
+export interface Trivia {
+  id: string;
+  groupId: string;
+  week: string; // YYYY-Www
+  question: string;
+  options: string[];
+  correctIndex: number;
+  createdAt: number;
+}
+
+export interface TriviaAnswer {
+  uid: string;
+  triviaId: string;
+  answerIndex: number;
+  correct: boolean;
+  points: number;
+  answeredAt: string;
+}
+
+export interface Group {
+  logoImageUrl?: string;
+  logoUpdatedAt?: number;
+  logoUpdatedBy?: string;
+  id: string;
+  name: string;
+  description: string;
+  createdAt?: number;
+  priceHistory?: PriceHistoryEntry[];
+  active?: boolean;
+  suspendedAt?: string;
+}
+
+export interface Fee {
+  groupId: string;
+  period: string;
+  amount: number;
+}
+
+// --- TREASURY ---
+export type TransactionType = 'income' | 'expense';
+export type FundSource = 'tesoro_general' | 'beneficencia' | 'cuotas'; 
+
+export interface TreasuryAllocation {
+  source: FundSource;
+  amount: number;
+}
+
+export interface TreasuryEntry {
+  bankReference?: string;
+  bankOriginalReference?: string;
+  bankDepositDate?: string;
+  incomeDraftId?: string;
+
+  quotaPeriod?: string; // Mes asignado en la matriz; no es fecha del depósito
+  quotaKind?: 'regular' | 'extra' | 'unclassified';
+  quotaConcept?: string;
+  quotaFeeId?: string;
+  reportNote?: string;
+  reportProjects?: { id: string; name: string }[];
+  quickStatus?: 'pending' | 'completed' | 'applied';
+  memberId?: string;
+  memberName?: string;
+  paymentMethod?: 'cash' | 'card' | 'transfer';
+  accountId?: string;
+  accountName?: string;
+  payee?: string;
+  appliedPeriod?: string;
+  appliedFeeId?: string;
+  completedBy?: string;
+  id: string;
+  groupId: string;
+  date: string; // YYYY-MM-DD
+  type: TransactionType;
+  category: 'saco_beneficencia' | 'cuota_extra' | 'evento' | 'donacion' | 'gasto_operativo' | 'gasto_social' | 'compra_material' | 'otro';
+  description: string;
+  amount: number;
+  allocations: TreasuryAllocation[]; // Multi-source split
+  createdBy: string;
+  createdAt: number;
+  projectId?: string; // Proyecto financiero asociado, sin duplicar el movimiento
+  projectName?: string;
+  notes?: string;
+  receiptImageUrls?: string[];
+  updatedAt?: number;
+}
+
+export interface FinanceProject {
+  id: string;
+  groupId: string;
+  name: string;
+  description: string;
+  status: 'active' | 'closed';
+  startDate: string; // YYYY-MM-DD
+  endDate?: string;
+  linkedExtraConcepts: string[]; // Cuotas extraordinarias que alimentan ingresos del proyecto
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface VisitRequest {
+  id: string;
+  fromGroupId: string; // Logia que solicita la visita
+  fromGroupName: string;
+  toGroupId: string; // Logia que recibe la solicitud
+  toGroupName: string;
+  requestedBy: string; // uid del admin que solicita
+  requestedByName: string;
+  visitDate: string; // YYYY-MM-DD
+  numberOfVisitors: number;
+  message: string; // Mensaje inicial
+  status: 'pending' | 'accepted' | 'rejected' | 'completed';
+  createdAt: number;
+  messages: VisitMessage[]; // Chat dentro de la solicitud
+}
+
+export interface VisitMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  timestamp: number;
+}
+
+export interface BankBalance {
+  id: string;
+  groupId: string;
+  type: 'bank' | 'cash'; // Banco o Efectivo
+  name: string; // Nombre del banco o "Efectivo"
+  amount: number;
+  lastUpdated: string; // ISO date
+  comment?: string;
+  updatedBy: string; // uid del admin que actualizó
+}
+
+export interface ExtraFee {
+  id: string;
+  groupId: string;
+  period: string; // YYYY-MM
+  amount: number;
+  description: string;
+  type: 'mass' | 'individual'; // Masiva o individual
+  targetUserId?: string; // Solo si es individual
+  targetUserName?: string; // Solo si es individual
+  createdBy: string;
+  createdByName: string;
+  createdAt: string; // ISO date
+  appliedToUsers: string[]; // Lista de UIDs a los que se aplicó
+}
+
+// In-app + browser notifications vía Firestore
+export type NotificationType = 'attendance' | 'trivia' | 'notice' | 'profile_edit' | 'payment' | 'payment_receipt' | 'task';
+
+export interface AppNotification {
+  id: string;
+  uid: string;         // destinatario
+  groupId: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  read: boolean;
+  createdAt: number;   // timestamp ms
+}
+
+

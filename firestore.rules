@@ -1,0 +1,412 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null &&
+        (!exists(/databases/$(database)/documents/accountSecurity/$(request.auth.uid)) ||
+          (get(/databases/$(database)/documents/accountSecurity/$(request.auth.uid)).data.get('mustChangePassword', false) == false &&
+           request.auth.token.auth_time >= get(/databases/$(database)/documents/accountSecurity/$(request.auth.uid)).data.get('validAfterSeconds', 0)));
+    }
+
+    function isAdminOrMaster() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master');
+    }
+
+    function isGroupActive(groupId) {
+      return !exists(/databases/$(database)/documents/groups/$(groupId)) ||
+             !('active' in get(/databases/$(database)/documents/groups/$(groupId)).data) ||
+             get(/databases/$(database)/documents/groups/$(groupId)).data.active == true;
+    }
+
+    function isUserGroupActive() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             isGroupActive(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId);
+    }
+
+    function isMaster() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master';
+    }
+
+    function canWriteLibrary() {
+      return isSignedIn() && (isMaster() || isUserGroupActive());
+    }
+
+    // Recovery state and audit can only be changed by the trusted server.
+    match /accountSecurity/{userId} {
+      allow get: if request.auth != null && request.auth.uid == userId;
+      allow list, write: if false;
+    }
+    match /accountRecoveryAudit/{entryId} {
+      allow read, write: if false;
+    }
+
+    function managesProfile(groupId, role) {
+      return isMaster() || (isAdminOrMaster() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId && role != 'master');
+    }
+
+    function canUseMinutes(groupId) {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        (isMaster() || (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('active',false) == true &&
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('lodgeRole','sin_cargo') == 'secretario')));
+    }
+    match /taskCaptureRequests/{requestId} { allow read, write: if false; }
+    match /meetingAudioRequestLocks/{userId} { allow read, write: if false; }
+    match /meetingAudioJobs/{jobId} {
+      allow get: if isSignedIn() && resource.data.uid == request.auth.uid && canUseMinutes(resource.data.groupId);
+      allow list, write: if false;
+    }
+    match /financeImportRequests/{requestId} { allow read, write: if false; }
+    match /financeBankReferences/{referenceId} { allow read, write: if false; }
+    match /financeImportLocks/{userId} { allow read, write: if false; }
+    match /secretariatAnalysisLocks/{userId} { allow read, write: if false; }
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == userId &&
+        request.resource.data.uid == userId && request.resource.data.role in ['member', 'viewer'] &&
+        request.resource.data.get('lodgeRole','sin_cargo') in ['sin_cargo','otro'];
+      allow create: if isSignedIn() && managesProfile(request.resource.data.groupId, request.resource.data.role);
+      allow update: if isSignedIn() && request.auth.uid == userId &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'groupId','lodgeRole','active']) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid']) || request.resource.data.uid == userId);
+      allow update: if isSignedIn() && managesProfile(resource.data.groupId, resource.data.role) &&
+        managesProfile(request.resource.data.groupId, request.resource.data.role) &&
+        (isMaster() || request.resource.data.groupId == resource.data.groupId);
+      allow delete: if isSignedIn() && managesProfile(resource.data.groupId, resource.data.role) && request.auth.uid != userId;
+
+      match /ledger/{ledgerId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn() &&
+                        (request.auth.uid == userId || isAdminOrMaster()) &&
+                        (isMaster() || isUserGroupActive());
+      }
+
+      match /attendance/{attendanceId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn() &&
+                        (request.auth.uid == userId || isAdminOrMaster()) &&
+                        (isMaster() || isUserGroupActive());
+      }
+
+      match /triviaAnswers/{answerId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn() && request.auth.uid == userId && (isMaster() || isUserGroupActive());
+        allow write: if isMaster();
+      }
+
+      match /notifications/{notifId} {
+        allow read: if isSignedIn() && request.auth.uid == userId;
+        allow create: if isSignedIn();
+        allow update: if isSignedIn() && (request.auth.uid == userId || isAdminOrMaster());
+        allow delete: if isSignedIn() && (request.auth.uid == userId || isAdminOrMaster());
+      }
+    }
+
+    match /groups/{groupId} {
+      allow read: if true;
+      allow create, delete: if isMaster();
+      allow update: if (isMaster() || (isAdminOrMaster() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['active', 'suspendedAt']))) &&
+        (!request.resource.data.keys().hasAny(['logoImageUrl']) ||
+          (request.resource.data.logoImageUrl is string && request.resource.data.logoImageUrl.size() <= 150000 &&
+            (request.resource.data.logoImageUrl == '' || request.resource.data.logoImageUrl.matches('data:image/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+'))));
+
+      match /incomeDrafts/{draftId} {
+        allow read: if isMaster() || (isAdminOrMaster() &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId);
+        allow create, delete: if false;
+        allow update: if (isMaster() || (isAdminOrMaster() &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId)) && isGroupActive(groupId) &&
+          resource.data.status == 'pending' && request.resource.data.status in ['approved','rejected'] &&
+          request.resource.data.reviewedBy == request.auth.uid &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','reviewedBy','reviewedAt','approvedReview','receiptId']);
+      }
+
+      match /minutes/{minuteId} {
+        allow read: if canUseMinutes(groupId);
+        allow create, update: if canUseMinutes(groupId) && (isMaster() || isGroupActive(groupId)) &&
+          request.resource.data.groupId == groupId && request.resource.data.id == minuteId &&
+          request.resource.data.schemaVersion == 1 && request.resource.data.savedBy == request.auth.uid &&
+          request.resource.data.title is string && request.resource.data.title.size() <= 160 &&
+          request.resource.data.fields is list && request.resource.data.fields.size() <= 15 &&
+          request.resource.data.texts is list && request.resource.data.texts.size() <= 1200 &&
+          request.resource.data.takes is list && request.resource.data.takes.size() == 0;
+        allow delete: if isAdminOrMaster() && canUseMinutes(groupId) && (isMaster() || isGroupActive(groupId));
+      }
+
+      match /treasury/{entryId} {
+        allow read: if isSignedIn();
+        allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
+      }
+
+      match /projects/{projectId} {
+        allow read: if isSignedIn();
+        allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
+      }
+
+      match /notices/{noticeId} {
+        allow read: if isSignedIn();
+        allow write: if isAdminOrMaster() && (isMaster() || isGroupActive(groupId));
+      }
+
+      match /paymentReceipts/{receiptId} {
+        allow read: if isSignedIn() &&
+                       (isAdminOrMaster() || resource.data.userId == request.auth.uid);
+        allow create: if isSignedIn() &&
+                         (request.resource.data.userId == request.auth.uid || isAdminOrMaster());
+        allow update: if isAdminOrMaster();
+        allow delete: if isAdminOrMaster();
+      }
+
+      match /tasks/{taskId} {
+        allow read: if isSignedIn() && (isMaster() ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId);
+        // Member-created tasks require the server confirmation callable.
+        allow write: if isAdminOrMaster() && (isMaster() ||
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.groupId == groupId && isGroupActive(groupId)));
+      }
+    }
+
+    match /trivias/{triviaId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
+    }
+
+    match /visitRequests/{requestId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
+    }
+
+    match /bankBalances/{balanceId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
+    }
+
+    match /extraFees/{feeId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
+    }
+
+    match /questions/{questionId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminOrMaster() && (isMaster() || isUserGroupActive());
+    }
+
+    match /gameProfiles/{userId} {
+      allow read, create, update: if isSignedIn() && request.auth.uid == userId;
+      allow delete: if isSignedIn() && (request.auth.uid == userId || isAdminOrMaster());
+    }
+
+    // Perfil social separado de Registro Logia. Todos los usuarios autenticados
+    // pueden ver el directorio; cada persona controla únicamente su propio perfil.
+    match /gameSocialProfiles/{userId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Salas de juego con jugadores activos + invitados. Los jugadores pueden
+    // actualizar el estado del juego; los invitados sólo pueden entrar/salir y chatear.
+    match /gameRooms/{roomId} {
+      function guestIdsBefore() {
+        return ('guestIds' in resource.data) ? resource.data.guestIds : [];
+      }
+      function bannedIdsBefore() {
+        return ('bannedIds' in resource.data) ? resource.data.bannedIds : [];
+      }
+      function roomLocked() {
+        return ('isLocked' in resource.data) && resource.data.isLocked == true;
+      }
+      function isExistingPlayer() {
+        return isSignedIn() && request.auth.uid in resource.data.playerIds;
+      }
+      function isExistingGuest() {
+        return isSignedIn() && request.auth.uid in guestIdsBefore();
+      }
+      function hostUpdate() {
+        return isSignedIn() && request.auth.uid == resource.data.hostUid;
+      }
+      function playerGameUpdate() {
+        return isExistingPlayer() &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'players', 'currentPlayerIndex', 'currentQuestionId', 'currentCategory',
+            'lastDice', 'winnerUid', 'status', 'updatedAt'
+          ]);
+      }
+      function playerSelfLeave() {
+        return isExistingPlayer() &&
+          !(request.auth.uid in request.resource.data.playerIds) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'players', 'playerIds', 'currentPlayerIndex', 'updatedAt'
+          ]);
+      }
+      function guestSelfLeave() {
+        return isExistingGuest() &&
+          !(request.auth.uid in request.resource.data.guestIds) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'guests', 'guestIds', 'updatedAt'
+          ]);
+      }
+      function joinAsPlayer() {
+        return isSignedIn() &&
+          !roomLocked() &&
+          resource.data.status == 'waiting' &&
+          !(request.auth.uid in bannedIdsBefore()) &&
+          !(request.auth.uid in resource.data.playerIds) &&
+          request.auth.uid in request.resource.data.playerIds &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'players', 'playerIds', 'guests', 'guestIds', 'updatedAt'
+          ]);
+      }
+      function joinAsGuest() {
+        return isSignedIn() &&
+          !roomLocked() &&
+          !(request.auth.uid in bannedIdsBefore()) &&
+          !(request.auth.uid in resource.data.playerIds) &&
+          !(request.auth.uid in guestIdsBefore()) &&
+          request.auth.uid in request.resource.data.guestIds &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'guests', 'guestIds', 'updatedAt'
+          ]);
+      }
+
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+                       request.resource.data.hostUid == request.auth.uid &&
+                       request.auth.uid in request.resource.data.playerIds &&
+                       request.resource.data.maxAttendees == 20;
+      allow update: if hostUpdate() || playerGameUpdate() || playerSelfLeave() || guestSelfLeave() || joinAsPlayer() || joinAsGuest();
+      allow delete: if isSignedIn() && (request.auth.uid == resource.data.hostUid || isAdminOrMaster());
+
+      match /chat/{messageId} {
+        function parentRoom() {
+          return get(/databases/$(database)/documents/gameRooms/$(roomId)).data;
+        }
+        function parentGuestIds() {
+          return ('guestIds' in parentRoom()) ? parentRoom().guestIds : [];
+        }
+        function isRoomMember() {
+          return isSignedIn() &&
+            (request.auth.uid in parentRoom().playerIds || request.auth.uid in parentGuestIds());
+        }
+        allow read: if isRoomMember();
+        allow create: if isRoomMember() &&
+                         request.resource.data.senderUid == request.auth.uid &&
+                         request.resource.data.text is string &&
+                         request.resource.data.text.size() > 0 &&
+                         request.resource.data.text.size() <= 500;
+        allow update, delete: if false;
+      }
+    }
+
+    // Señalización efímera para voz. La interfaz del juego sólo permite entrar
+    // a esta llamada a jugadores activos; los invitados no reciben controles de voz.
+    match /voiceRooms/{voiceRoomId} {
+      allow read: if isSignedIn();
+
+      match /participants/{userId} {
+        allow read: if isSignedIn();
+        allow create, update, delete: if isSignedIn() && request.auth.uid == userId;
+
+        match /signals/{signalId} {
+          allow read, delete: if isSignedIn() && request.auth.uid == userId;
+          allow create: if isSignedIn() &&
+                           request.resource.data.from == request.auth.uid &&
+                           request.resource.data.type in ['offer', 'answer', 'candidate'];
+          allow update: if false;
+        }
+      }
+    }
+
+    // Conversaciones privadas uno-a-uno del juego.
+    match /directConversations/{conversationId} {
+      function isConversationMember() {
+        return isSignedIn() && request.auth.uid in resource.data.memberIds;
+      }
+      allow create: if isSignedIn() &&
+                       request.resource.data.memberIds.size() == 2 &&
+                       request.auth.uid in request.resource.data.memberIds;
+      allow read: if isConversationMember();
+      allow update: if isConversationMember() &&
+                       request.resource.data.memberIds == resource.data.memberIds;
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        function parentConversation() {
+          return get(/databases/$(database)/documents/directConversations/$(conversationId)).data;
+        }
+        function isParentMember() {
+          return isSignedIn() && request.auth.uid in parentConversation().memberIds;
+        }
+        allow read: if isParentMember();
+        allow create: if isParentMember() &&
+                         request.resource.data.senderUid == request.auth.uid &&
+                         request.resource.data.text is string &&
+                         request.resource.data.text.size() > 0 &&
+                         request.resource.data.text.size() <= 1000;
+        allow update, delete: if false;
+      }
+    }
+
+    match /duels/{duelId} {
+      allow create: if isSignedIn() && request.resource.data.challengerUid == request.auth.uid;
+      allow read, update: if isSignedIn() &&
+                             (resource.data.challengerUid == request.auth.uid ||
+                              resource.data.opponentUid == request.auth.uid);
+      allow delete: if isAdminOrMaster() ||
+                       (isSignedIn() && resource.data.challengerUid == request.auth.uid);
+    }
+
+    match /appConfig/{configId} {
+      allow read: if true;
+      allow write: if isMaster();
+    }
+
+    match /libraryPosts/{postId} {
+      allow read: if isSignedIn();
+      allow create: if canWriteLibrary() && request.resource.data.authorId == request.auth.uid;
+      allow update: if canWriteLibrary();
+      allow delete: if isAdminOrMaster() || (isSignedIn() && resource.data.authorId == request.auth.uid);
+    }
+
+    match /biblioteca/{postId} {
+      allow read: if isSignedIn();
+      allow update: if canWriteLibrary();
+      allow create, delete: if isAdminOrMaster();
+    }
+
+    match /bibliotecaAlejandria/{postId} {
+      allow read: if isSignedIn();
+      allow update: if canWriteLibrary();
+      allow create, delete: if isAdminOrMaster();
+    }
+
+    match /library/{postId} {
+      allow read: if isSignedIn();
+      allow update: if canWriteLibrary();
+      allow create, delete: if isAdminOrMaster();
+    }
+
+    match /publications/{postId} {
+      allow read: if isSignedIn();
+      allow update: if canWriteLibrary();
+      allow create, delete: if isAdminOrMaster();
+    }
+
+    match /documents/{postId} {
+      allow read: if isSignedIn();
+      allow update: if canWriteLibrary();
+      allow create, delete: if isAdminOrMaster();
+    }
+  }
+}
+

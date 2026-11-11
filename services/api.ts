@@ -1,0 +1,2582 @@
+import {approveMonthlyReceipt} from './monthlyReceiptApproval';
+
+import { User, Payment, IndividualExtraFee, Trivia, TriviaAnswer, Fee, Attendance, RpgCharacter, PriceHistoryEntry, TreasuryEntry, FundSource, TreasuryAllocation, Notice, Task, Group, VisitRequest, VisitMessage, BankBalance, ExtraFee, FinanceProject, AppNotification, NotificationType, PaymentReceipt } from '../types';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import {MEMBER_ACCESS_ENABLED} from './features';
+import { auth, db, storage } from './firebase';
+import { canUseWhatsApp, currentReminderPeriod, debtReminder, normalizeWhatsAppPhone, WhatsAppPreparation, WhatsAppRecipient } from './whatsappReminders';
+import { assignmentPeriod, assignExistingFee, hasAssignedFee, applyExtraReceipt, ExistingFeeTemplate } from './extraFeeLifecycle';
+import { normalizePayment, correctAppliedPayment } from './paymentAccounting';
+import { countsInTreasury,validCaptureDate } from './quickFinance';
+import { quotaReportRows } from './treasuryReport';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  updateProfile 
+} from "firebase/auth";
+import { 
+  doc,
+  getDoc,
+  setDoc, 
+  updateDoc, 
+  deleteDoc,
+  deleteField,
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  orderBy, 
+  limit,
+  increment,
+  writeBatch,
+  addDoc,
+  runTransaction
+} from "firebase/firestore";
+
+const INITIAL_RPG: RpgCharacter = {
+  name: 'Iniciado',
+  level: 1,
+  xp: 0,
+  xpNext: 100,
+  hp: 100,
+  maxHp: 100,
+  mana: 50,
+  maxMana: 50,
+  magicLevel: 0,
+  attack: 10,
+  defense: 5,
+};
+
+// --- Service Methods ---
+
+export const authService = {
+  signIn: async (email: string, password: string): Promise<User> => {
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const uid = userCredential.user.uid;
+    const security = MEMBER_ACCESS_ENABLED ? await getDoc(doc(db,'accountSecurity',uid)) : null;
+    if (security?.data()?.mustChangePassword) return {uid,name:userCredential.user.displayName || '',email:userCredential.user.email || email,role:'member',active:false,groupId:'',joinDate:'',profileEditable:false,requirePasswordChange:true};
+    
+    const userRef = doc(db, "users", uid);
+    const userDoc = await getDoc(userRef);
+    
+    let userData: User;
+
+    if (!userDoc.exists()) {
+      // Legacy or unexpected state: authenticated but no doc. 
+      // We return a skeleton, but app should handle "no group" state.
+      const name = userCredential.user.displayName || email.split('@')[0];
+      userData = {
+        uid,
+        name,
+        email,
+        role: 'member',
+        active: false, 
+        groupId: '', // Pending assignment
+        joinDate: new Date().toISOString(),
+        profileEditable: true,
+        rpg: { ...INITIAL_RPG, name: name.split(' ')[0] },
+        totalPoints: 0
+      };
+      // We do NOT save automatically here to avoid overwriting registration logic with empty group
+    } else {
+      userData = userDoc.data() as User;
+      
+      let dirty = false;
+      if (!userData.uid) { userData.uid = uid; dirty = true; }
+      if (!userData.rpg) { userData.rpg = { ...INITIAL_RPG }; dirty = true; }
+      
+      // Privileged roles are assigned by an authorized administrator, never by an email check in the client.
+
+      if (dirty) {
+          await setDoc(userRef, userData, { merge: true });
+      }
+    }
+    return userData;
+  },
+  
+  register: async (name: string, email: string, password: string, groupId: string): Promise<User> => {
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const uid = userCredential.user.uid;
+    
+    // --- MERGE WITH EXISTING USER DATA (v3.0.1) ---
+    // Check if an admin created a user profile with this email
+    const usersQuery = query(collection(db, "users"), where("email", "==", email));
+    const existingUsers = await getDocs(usersQuery);
+    
+    let existingUserData: any = null;
+    let tempUidToDelete: string | null = null;
+    
+    existingUsers.forEach(doc => {
+      // Found a user with this email but different UID (created by admin)
+      if (doc.id !== uid && doc.id.startsWith('temp_')) {
+        existingUserData = doc.data();
+        tempUidToDelete = doc.id;
+      }
+    });
+    // -----------------------------------------------
+    
+    // Privileged invitations require an administrator to link/approve the account.
+    // Keep their existing profile and ledger intact instead of granting a role from client input.
+    if (existingUserData && ['admin','master'].includes(existingUserData.role)) {
+      existingUserData = null;
+      tempUidToDelete = null;
+    }
+    const role = existingUserData?.role === 'viewer' ? 'viewer' : 'member';
+
+    const newUser: User = {
+      uid,
+      name: existingUserData?.name || name,
+      email,
+      role: role,
+      active: existingUserData?.active ?? false,
+      groupId: existingUserData?.groupId || groupId,
+      joinDate: existingUserData?.joinDate || new Date().toISOString(),
+      profileEditable: true,
+      rpg: existingUserData?.rpg || { ...INITIAL_RPG, name: name.split(' ')[0] },
+      totalPoints: existingUserData?.totalPoints || 0,
+      // Only include optional fields if they have a value (Firestore rejects undefined)
+      ...(existingUserData?.degree !== undefined && { degree: existingUserData.degree }),
+      ...(existingUserData?.lodgeRole !== undefined && { lodgeRole: existingUserData.lodgeRole }),
+      ...(existingUserData?.numericDegree !== undefined && { numericDegree: existingUserData.numericDegree }),
+      ...(existingUserData?.profession !== undefined && { profession: existingUserData.profession }),
+      ...(existingUserData?.job !== undefined && { job: existingUserData.job }),
+      ...(existingUserData?.workAddress !== undefined && { workAddress: existingUserData.workAddress }),
+      ...(existingUserData?.city !== undefined && { city: existingUserData.city }),
+      ...(existingUserData?.state !== undefined && { state: existingUserData.state }),
+      ...(existingUserData?.country !== undefined && { country: existingUserData.country }),
+      ...(existingUserData?.masonicJoinDate !== undefined && { masonicJoinDate: existingUserData.masonicJoinDate }),
+      ...(existingUserData?.masonicRejoinDate !== undefined && { masonicRejoinDate: existingUserData.masonicRejoinDate }),
+    };
+    
+    await setDoc(doc(db, "users", uid), newUser);
+    await updateProfile(userCredential.user, { displayName: newUser.name });
+    
+    // If there was a temp user, copy subcollections and delete temp user
+    if (tempUidToDelete) {
+      try {
+        // Copy ledger
+        const ledgerSnap = await getDocs(collection(db, "users", tempUidToDelete, "ledger"));
+        for (const ldoc of ledgerSnap.docs) {
+          await setDoc(doc(db, "users", uid, "ledger", ldoc.id), ldoc.data());
+        }
+        
+        // Copy attendance
+        const attSnap = await getDocs(collection(db, "users", tempUidToDelete, "attendance"));
+        for (const adoc of attSnap.docs) {
+          await setDoc(doc(db, "users", uid, "attendance", adoc.id), adoc.data());
+        }
+        
+        // Delete temp user
+        await deleteDoc(doc(db, "users", tempUidToDelete));
+      } catch (e) {
+        console.error("Error merging temp user data:", e);
+      }
+    }
+    
+    return newUser;
+  },
+
+  resetPassword: async (email: string): Promise<void> => {
+    try {
+      const { sendPasswordResetEmail } = await import('firebase/auth');
+      await sendPasswordResetEmail(auth, email);
+    } catch (e: any) {
+      console.error('Error sending password reset email', e);
+      throw e;
+    }
+  },
+
+  // Admin creates a user without Firebase Auth (user will register later themselves)
+  // Manual merge: admin manually links a temp user with a real registered user
+  manualMergeUsers: async (tempUserId: string, realUserId: string): Promise<void> => {
+    try {
+      // Get both users
+      const tempUserDoc = await getDoc(doc(db, "users", tempUserId));
+      const realUserDoc = await getDoc(doc(db, "users", realUserId));
+
+      if (!tempUserDoc.exists()) {
+        throw new Error("Usuario temporal no encontrado");
+      }
+      if (!realUserDoc.exists()) {
+        throw new Error("Usuario real no encontrado");
+      }
+
+      const tempUser = tempUserDoc.data() as User;
+      const realUser = realUserDoc.data() as User;
+
+      // Validate that tempUser is actually a temp user
+      if (!tempUserId.startsWith('temp_')) {
+        throw new Error("El primer usuario debe ser un usuario temporal");
+      }
+
+      // Copy ledger from temp to real user
+      const tempLedgerRef = collection(db, "users", tempUserId, "ledger");
+      const tempLedgerSnapshot = await getDocs(tempLedgerRef);
+      
+      for (const ledgerDoc of tempLedgerSnapshot.docs) {
+        const ledgerData = ledgerDoc.data();
+        const realLedgerRef = doc(db, "users", realUserId, "ledger", ledgerDoc.id);
+        await setDoc(realLedgerRef, ledgerData);
+      }
+
+      // Copy attendance from temp to real user
+      const tempAttendanceRef = collection(db, "users", tempUserId, "attendance");
+      const tempAttendanceSnapshot = await getDocs(tempAttendanceRef);
+      
+      for (const attendanceDoc of tempAttendanceSnapshot.docs) {
+        const attendanceData = attendanceDoc.data();
+        const realAttendanceRef = doc(db, "users", realUserId, "attendance", attendanceDoc.id);
+        await setDoc(realAttendanceRef, attendanceData);
+      }
+
+      // Update real user profile with any missing data from temp user
+      const updates: Partial<User> = {};
+      if (tempUser.degree && !realUser.degree) {
+        updates.degree = tempUser.degree;
+      }
+      if (tempUser.phoneNumber && !realUser.phoneNumber) {
+        updates.phoneNumber = tempUser.phoneNumber;
+        updates.whatsappRemindersAllowed = tempUser.whatsappRemindersAllowed === true;
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await updateDoc(doc(db, "users", realUserId), updates as any);
+      }
+
+      // Delete the temp user
+      await deleteDoc(doc(db, "users", tempUserId));
+
+      console.log(`Successfully merged temp user ${tempUserId} into ${realUserId}`);
+    } catch (e: any) {
+      console.error("Error in manual merge:", e);
+      throw new Error(`Error al vincular usuarios: ${e.message}`);
+    }
+  },
+
+  createUserByAdmin: async (email: string, name: string, role: string, degree: string, groupId: string): Promise<User> => {
+    // Create a temporary UID based on email
+    const tempUid = `temp_${email.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}`;
+    
+    const newUser: User = {
+      uid: tempUid,
+      name,
+      email,
+      role: role as 'member' | 'admin' | 'master',
+      active: false,
+      groupId: groupId,
+      joinDate: new Date().toISOString(),
+      profileEditable: true,
+      degree: degree,
+      rpg: { ...INITIAL_RPG, name: name.split(' ')[0] },
+      totalPoints: 0
+    };
+    
+    await setDoc(doc(db, "users", tempUid), newUser);
+    return newUser;
+  },
+
+  // Upload app icon (Master only) - Using Firestore with base64
+  uploadAppIcon: async (file: File, size: '192' | '512'): Promise<void> => {
+    try {
+      // Convert image to base64
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      // Save to Firestore in appConfig collection
+      const configRef = doc(db, "appConfig", "icons");
+      const configSnap = await getDoc(configRef);
+      
+      const currentData = configSnap.exists() ? configSnap.data() : {};
+      
+      await setDoc(configRef, {
+        ...currentData,
+        [`icon${size}`]: base64,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+    } catch (e: any) {
+      console.error("Error uploading app icon:", e);
+      throw new Error(`Error subiendo icono: ${e.message}`);
+    }
+  },
+
+  // Get app icon base64 data
+  getAppIcon: async (size: '192' | '512'): Promise<string | null> => {
+    try {
+      const configRef = doc(db, "appConfig", "icons");
+      const configSnap = await getDoc(configRef);
+      
+      if (!configSnap.exists()) {
+        return null;
+      }
+      
+      const data = configSnap.data();
+      return data[`icon${size}`] || null;
+    } catch (e: any) {
+      console.error("Error getting app icon:", e);
+      return null;
+    }
+  }
+};
+
+const isBillableForPeriod = (u: User, period: string) => {
+  if (!u.active) return false;
+  const periodStart = period + '-01';
+  const periodEnd = period + '-31';
+  if (u.masonicRejoinDate && u.masonicRejoinDate > periodEnd) return false;
+  if (u.leaveDate && u.leaveDate < periodStart) return false;
+  return true;
+};
+
+export const dataService = {
+  assertWhatsAppAdmin: async (groupId: string): Promise<User> => {
+    if (!auth.currentUser?.uid || !groupId) throw new Error('Necesitas iniciar sesión como administrador.');
+    const actorSnap = await getDoc(doc(db, 'users', auth.currentUser.uid));
+    const actor = actorSnap.exists() ? { ...actorSnap.data(), uid: actorSnap.id } as User : null;
+    if (!actor || !canUseWhatsApp({ ...actor, groupId }) || (actor.role !== 'master' && actor.groupId !== groupId)) throw new Error('Solo los administradores de esta Logia o Master pueden usar WhatsApp.');
+    const group = await getDoc(doc(db, 'groups', groupId));
+    if (!group.exists() || group.data().active === false) throw new Error('La Logia no está activa.');
+    return actor;
+  },
+  saveWhatsAppContact: async (groupId: string, uid: string, phone: string, permitted: boolean): Promise<void> => {
+    const normalized = normalizeWhatsAppPhone(phone);
+    if (permitted && !normalized) throw new Error('Guarda un teléfono antes de autorizar recordatorios.');
+    await dataService.assertWhatsAppAdmin(groupId);
+    const target = doc(db, 'users', uid);
+    const member = await getDoc(target);
+    if (!member.exists() || member.data().groupId !== groupId) throw new Error('El miembro no pertenece a esta Logia.');
+    await updateDoc(target, { phoneNumber: normalized, whatsappRemindersAllowed: permitted });
+  },
+  prepareWhatsAppReminders: async (groupId: string): Promise<WhatsAppPreparation> => {
+    await dataService.assertWhatsAppAdmin(groupId);
+    const group = await getDoc(doc(db, 'groups', groupId));
+    const snapshot = await getDocs(query(collection(db,'users'),where('groupId','==',groupId)));
+    const users = snapshot.docs.map(snapshot=>({...snapshot.data(),uid:snapshot.id} as User)).filter(member => member.groupId === groupId && member.active && member.role !== 'viewer');
+    const recipients: WhatsAppRecipient[] = [];
+    const period = currentReminderPeriod();
+    let next=0;
+    await Promise.all(Array.from({length:Math.min(5,users.length)},async()=>{
+      while(next<users.length){
+        const member=users[next++];
+        try { const reminder=debtReminder(await dataService.getPayments(member.uid,true),groupId,period);if(reminder.total>0)recipients.push({member,reminder}); }
+        catch { recipients.push({member,reminder:{rows:[],periods:[],body:'',total:0},error:'No se pudo consultar su saldo. Actualiza antes de enviar.'}); }
+      }
+    }));
+    recipients.sort((a,b)=>a.member.name.localeCompare(b.member.name));
+    return {groupName:group.data()?.name || 'Mi Logia',recipients,calculatedAt:new Date().toISOString()};
+  },
+  getAllGroups: async (): Promise<Group[]> => {
+    try {
+      const q = query(collection(db, "groups"));
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Group));
+    } catch (e) {
+      console.error("Error fetching groups", e);
+      return [];
+    }
+  },
+
+  createGroup: async (name: string, description: string): Promise<Group> => {
+    const newGroup = {
+      name,
+      description,
+      createdAt: Date.now(),
+      priceHistory: [],
+      active: true
+    };
+    const docRef = await addDoc(collection(db, "groups"), newGroup);
+    return { id: docRef.id, ...newGroup };
+  },
+
+  updateGroup: async (groupId: string, data: Partial<Group>) => {
+    if (!groupId) return;
+    const ref = doc(db, "groups", groupId);
+    await updateDoc(ref, data);
+  },
+
+  deleteGroup: async (groupId: string) => {
+    if (!groupId) return;
+    const ref = doc(db, "groups", groupId);
+    await deleteDoc(ref);
+  },
+
+  toggleGroupStatus: async (groupId: string, active: boolean) => {
+    if (!groupId) return;
+    const ref = doc(db, "groups", groupId);
+    await updateDoc(ref, { 
+      active, 
+      suspendedAt: active ? deleteField() : new Date().toISOString() 
+    });
+  },
+
+  getGroupDetails: async (groupId: string): Promise<Group | null> => {
+    if (!groupId) return null;
+    const snap = await getDoc(doc(db, "groups", groupId));
+    return snap.exists() ? { id: snap.id, ...snap.data() } as Group : null;
+  },
+
+  getUserProfile: async (uid: string): Promise<User | null> => {
+    try {
+      const snap = await getDoc(doc(db, "users", uid));
+      return snap.exists() ? snap.data() as User : null;
+    } catch (e) {
+      console.error("Error fetching user profile", e);
+      return null;
+    }
+  },
+
+  updateUser: async (uid: string, data: Partial<User>) => {
+    await updateDoc(doc(db, "users", uid), data);
+  },
+
+  getPriceHistory: async (groupId: string): Promise<PriceHistoryEntry[]> => {
+    try {
+      const snap = await getDoc(doc(db, "groups", groupId));
+      if (snap.exists() && snap.data().priceHistory) {
+        return snap.data().priceHistory.sort((a: PriceHistoryEntry, b: PriceHistoryEntry) => 
+          a.startDate.localeCompare(b.startDate)
+        );
+      }
+      return [];
+    } catch (e) {
+      console.error("Error fetching price history", e);
+      return [];
+    }
+  },
+
+  addPriceChange: async (groupId: string, entry: PriceHistoryEntry) => {
+    const docRef = doc(db, "groups", groupId);
+    const snap = await getDoc(docRef);
+    let history: PriceHistoryEntry[] = [];
+    
+    if (snap.exists()) {
+        if (snap.data().priceHistory) {
+            history = snap.data().priceHistory;
+        }
+    } else {
+        await setDoc(docRef, { name: "Logia Nueva", priceHistory: [] }, { merge: true });
+    }
+    
+    // Remove duplicates if any
+    history = history.filter(h => h.startDate !== entry.startDate);
+    history.push(entry);
+    history.sort((a, b) => a.startDate.localeCompare(b.startDate));
+    
+    await setDoc(docRef, { priceHistory: history }, { merge: true });
+  },
+
+  updatePriceChange: async (groupId: string, oldDate: string, newEntry: PriceHistoryEntry) => {
+    const docRef = doc(db, "groups", groupId);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return;
+    
+    let history: PriceHistoryEntry[] = snap.data().priceHistory || [];
+    // Filter out OLD date (strict string compare)
+    history = history.filter(h => h.startDate.trim() !== oldDate.trim());
+    // Also filter if new date already exists (overwrite case)
+    history = history.filter(h => h.startDate.trim() !== newEntry.startDate.trim());
+    
+    history.push(newEntry);
+    history.sort((a, b) => a.startDate.localeCompare(b.startDate));
+    
+    await updateDoc(docRef, { priceHistory: history });
+  },
+
+  removePriceChange: async (groupId: string, startDate: string) => {
+    if (!groupId || !startDate) return;
+    const docRef = doc(db, "groups", groupId);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return;
+    
+    let history: PriceHistoryEntry[] = snap.data().priceHistory || [];
+    // Strict filter with trim safety to ensure deletion works
+    const newHistory = history.filter(h => h.startDate.trim() !== startDate.trim());
+    
+    await updateDoc(docRef, { priceHistory: newHistory });
+  },
+
+  getUserFinancialStats: async (uid: string, startPeriod?: string, endPeriod?: string, strict = false) => {
+    try {
+        const q = collection(db, "users", uid, "ledger");
+        const snap = await getDocs(q);
+        let totalPaid = 0;
+        let totalDebt = 0;
+        let totalBilled = 0;
+        let totalPaidRegular = 0;
+        let totalPaidExtra = 0;
+        let totalBilledRegular = 0;
+        let totalBilledExtra = 0;
+        let totalDebtRegular = 0;
+        let totalDebtExtra = 0;
+
+        snap.forEach(docSnap => {
+            const p = docSnap.data() as Payment;
+            if (startPeriod && p.period < startPeriod) return;
+            if (endPeriod && p.period > endPeriod) return;
+
+            const regularAmount = Number(p.amount) || 0;
+            let paidRegular = 0;
+            if (p.paidRegular !== undefined) {
+                paidRegular = Number(p.paidRegular) || 0;
+            } else {
+                const legacyPaid = Number(p.paid) || 0;
+                paidRegular = Math.min(legacyPaid, regularAmount);
+            }
+
+            const hasIndividualExtras = Array.isArray(p.extraFees) && p.extraFees.length > 0;
+            const extraBilled = hasIndividualExtras
+                ? p.extraFees!.reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0)
+                : (Number(p.extraAmount) || 0);
+            const paidExtra = hasIndividualExtras
+                ? p.extraFees!.reduce((sum, fee) => sum + (Number(fee.paid) || 0), 0)
+                : (Number(p.paidExtra) || 0);
+            const regularDebt = Math.max(0, regularAmount - paidRegular);
+            const extraDebt = hasIndividualExtras
+                ? p.extraFees!.reduce((sum, fee) => sum + (fee.forgiven ? 0 : Math.max(0, (Number(fee.amount) || 0) - (Number(fee.paid) || 0))), 0)
+                : Math.max(0, extraBilled - paidExtra);
+
+            totalBilledRegular += regularAmount;
+            totalBilledExtra += extraBilled;
+            totalPaidRegular += paidRegular;
+            totalPaidExtra += paidExtra;
+            totalDebtRegular += regularDebt;
+            totalDebtExtra += extraDebt;
+            totalBilled += regularAmount + extraBilled;
+            totalPaid += paidRegular + paidExtra;
+            totalDebt += regularDebt + extraDebt;
+        });
+
+        return {
+            totalPaid,
+            totalDebt,
+            totalBilled,
+            totalPaidRegular,
+            totalPaidExtra,
+            totalBilledRegular,
+            totalBilledExtra,
+            totalDebtRegular,
+            totalDebtExtra
+        };
+    } catch (error) {
+        console.error('Error calculating user financial stats', error);
+        if (strict) throw error;
+        return {
+            totalPaid: 0,
+            totalDebt: 0,
+            totalBilled: 0,
+            totalPaidRegular: 0,
+            totalPaidExtra: 0,
+            totalBilledRegular: 0,
+            totalBilledExtra: 0,
+            totalDebtRegular: 0,
+            totalDebtExtra: 0
+        };
+    }
+  },
+  
+  getGlobalFinancials: async (groupId: string, startDate: string, endDate: string) => {
+      try {
+          // 1. Treasury (Manual Entries)
+          const tQ = query(collection(db, "groups", groupId, "treasury"));
+          const tSnap = await getDocs(tQ);
+          
+          let treasuryIncome = 0;
+          let treasuryExpense = 0;
+          
+          tSnap.forEach(doc => {
+              const t = doc.data() as TreasuryEntry;
+              if (countsInTreasury(t) && t.date >= startDate && t.date <= endDate) {
+                  if (t.type === 'income') treasuryIncome += (Number(t.amount) || 0);
+                  else treasuryExpense += (Number(t.amount) || 0);
+              }
+          });
+
+          // 2. User Payments (Iterate all active users to sum payments in range)
+          const usersQ = query(collection(db, "users"), where("groupId", "==", groupId));
+          const usersSnap = await getDocs(usersQ);
+          
+          let userPaymentsIncome = 0;
+          
+          const promises = usersSnap.docs.map(async (uDoc) => {
+              try {
+                const paymentsSnap = await getDocs(collection(db, "users", uDoc.id, "ledger"));
+                let uTotal = 0;
+                paymentsSnap.forEach(p => {
+                    const pay = p.data() as Payment;
+                    if (pay.paid > 0 && pay.paymentDate) {
+                        const payDate = pay.paymentDate.slice(0, 10); // YYYY-MM-DD
+                        if (payDate >= startDate && payDate <= endDate) {
+                             uTotal += (Number(pay.paid) || 0);
+                        }
+                    }
+                });
+                return uTotal;
+              } catch {
+                return 0; 
+              }
+          });
+          
+          const userResults = await Promise.all(promises);
+          userPaymentsIncome = userResults.reduce((a, b) => a + b, 0);
+          
+          return {
+              income: treasuryIncome + userPaymentsIncome, // Total combined income
+              expense: treasuryExpense // Total expenses
+          };
+
+      } catch (e) {
+          console.error(e);
+          return { income: 0, expense: 0 };
+      }
+  },
+
+  // TREASURY
+  addTreasuryEntry: async (entry: Omit<TreasuryEntry, 'id' | 'createdAt'>) => {
+     const ref = doc(collection(db, "groups", entry.groupId, "treasury"));
+     await setDoc(ref, {
+         ...entry,
+         id: ref.id,
+         createdAt: Date.now()
+     });
+  },
+
+  updateTreasuryEntry: async (entry: TreasuryEntry) => {
+     const ref = doc(db, "groups", entry.groupId, "treasury", entry.id);
+     const current = await getDoc(ref);
+     if (current.data()?.quickStatus) throw new Error('Completa esta captura desde el botón de dinero.');
+     await updateDoc(ref, {
+        date: entry.date,
+        type: entry.type,
+        category: entry.category,
+        description: entry.description,
+        amount: Number(entry.amount),
+        allocations: entry.allocations
+     });
+  },
+
+  deleteTreasuryEntry: async (groupId: string, entryId: string) => {
+     if (!entryId) throw new Error("Missing entry ID");
+     const ref = doc(db, "groups", groupId, "treasury", entryId);
+     const current = await getDoc(ref);
+     if (current.data()?.quickStatus) throw new Error('Una captura enlazada no puede eliminarse como un movimiento manual.');
+     await deleteDoc(ref);
+  },
+
+  getTreasuryEntries: async (groupId: string, strict = false): Promise<TreasuryEntry[]> => {
+      if (!groupId) return [];
+      try {
+        const q = query(collection(db, "groups", groupId, "treasury"));
+        const snap = await getDocs(q);
+        
+        const entries = snap.docs.map(d => {
+            const data = d.data();
+            return { 
+                ...data, 
+                id: d.id, // Always use Firestore Document ID as the source of truth
+                amount: Number(data.amount) || 0
+            } as TreasuryEntry;
+        });
+        
+        return entries.filter(countsInTreasury).sort((a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+      } catch (e) {
+          console.error("Error fetching treasury", e);
+          if (strict) throw e;
+          return [];
+      }
+  },
+  
+  // A read-only income breakdown, using the same member/month records as the payment matrix.
+  getDetailedQuotaTransactions: async (groupId: string): Promise<TreasuryEntry[]> => {
+      if (!groupId) return [];
+      const [usersSnap, projectsSnap] = await Promise.all([
+          getDocs(query(collection(db, 'users'), where('groupId', '==', groupId))),
+          getDocs(collection(db, 'groups', groupId, 'projects'))
+      ]);
+      const projects = projectsSnap.docs.map(item => ({ ...item.data(), id: item.id } as FinanceProject));
+      const rows = await Promise.all(usersSnap.docs.map(async memberDoc => {
+          const member = memberDoc.data() as User;
+          const ledger = await getDocs(collection(db, 'users', memberDoc.id, 'ledger'));
+          return ledger.docs.flatMap(item => quotaReportRows(
+              { uid: memberDoc.id, name: member.name || member.email || memberDoc.id },
+              { ...item.data(), period: item.id } as Payment, groupId, projects
+          ));
+      }));
+      return rows.flat();
+  },
+  
+  getAllPaidQuotas: async (groupId: string): Promise<number> => {
+      if (!groupId) return 0;
+      try {
+          const usersQ = query(collection(db, "users"), where("groupId", "==", groupId));
+          const usersSnap = await getDocs(usersQ);
+          
+          const promises = usersSnap.docs.map(async (uDoc) => {
+              try {
+                const paymentsSnap = await getDocs(collection(db, "users", uDoc.id, "ledger"));
+                let uTotal = 0;
+                paymentsSnap.forEach(p => {
+                    uTotal += (Number(p.data().paid) || 0);
+                });
+                return uTotal;
+              } catch {
+                return 0; 
+              }
+          });
+          
+          const results = await Promise.all(promises);
+          return results.reduce((a, b) => a + b, 0);
+      } catch (e) {
+          return 0;
+      }
+  },
+
+  syncUserDebts: async (user: User, history: PriceHistoryEntry[]) => {
+    // 1. Validation
+    if (!user.active || history.length === 0 || !user.uid) return 0;
+
+    // 2. Determine Start Date (Robust Parsing)
+    let startStr = user.masonicRejoinDate || user.masonicJoinDate || user.joinDate;
+    if (!startStr) startStr = new Date().toISOString();
+
+    let startYear, startMonth, startDay;
+
+    // Parse date
+    if (startStr.includes('-') && !startStr.includes('T')) {
+        const parts = startStr.split('-');
+        startYear = parseInt(parts[0]);
+        startMonth = parseInt(parts[1]);
+        startDay = parseInt(parts[2]);
+    } else {
+        const d = new Date(startStr);
+        if (isNaN(d.getTime())) {
+            const now = new Date();
+            startYear = now.getFullYear();
+            startMonth = now.getMonth() + 1;
+            startDay = now.getDate();
+        } else {
+            startYear = d.getFullYear();
+            startMonth = d.getMonth() + 1;
+            startDay = d.getDate();
+        }
+    }
+
+    const cutoffDay = startDay; 
+    
+    // Current Date
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1; 
+    const currentDay = now.getDate();
+
+    // 3. Fetch Existing Ledger
+    const existingSnap = await getDocs(collection(db, "users", user.uid, "ledger"));
+    const existingMap = new Map<string, Payment>();
+    existingSnap.forEach(d => existingMap.set(d.id, d.data() as Payment));
+
+    const newBatch = writeBatch(db);
+    let opCount = 0;
+    
+    // 4. Iterate Logic
+    let loopYear = startYear;
+    let loopMonth = startMonth;
+    let safeGuard = 0;
+
+    while (safeGuard < 120) {
+        safeGuard++;
+        if (loopYear > currentYear || (loopYear === currentYear && loopMonth > currentMonth)) {
+            break;
+        }
+
+        const monthStr = String(loopMonth).padStart(2, '0');
+        const period = `${loopYear}-${monthStr}`;
+
+        let shouldGenerate = true;
+        if (loopYear === currentYear && loopMonth === currentMonth) {
+            if (currentDay < cutoffDay) shouldGenerate = false;
+        }
+
+        if (shouldGenerate) {
+            // Find Price
+            const sortedHistory = [...history].sort((a,b) => b.startDate.localeCompare(a.startDate));
+            const applicable = sortedHistory.find(h => h.startDate <= period);
+            const basePrice = applicable ? applicable.amount : (sortedHistory.length > 0 ? sortedHistory[sortedHistory.length-1].amount : 0);
+            const amount = Number(basePrice);
+
+            const ref = doc(db, "users", user.uid, "ledger", period);
+
+            if (!existingMap.has(period)) {
+                // Period doesn't exist, create it
+                newBatch.set(ref, {
+                    period,
+                    amount,
+                    paid: 0,
+                    paidRegular: 0,
+                    paidExtra: 0,
+                    status: 'Pendiente',
+                    comments: '',
+                    quotaCreatedAt: new Date().toISOString(), quotaCreatedBy: auth.currentUser?.uid || '',
+                    groupId: user.groupId,
+                    regularCovered: false,
+                    extraCovered: true
+                });
+                opCount++;
+            } else {
+                const existing = existingMap.get(period)!;
+                
+                // IMPORTANT: Don't modify periods that are already fully paid
+                // This protects advanced payments from being overwritten
+                if (existing.regularCovered || existing.status === 'Pagado') {
+                    // Period is already paid, skip it
+                    continue;
+                }
+                
+                // Only update amount if status is not 'Pagado' and amount changed
+                if (existing.status !== 'Pagado' && Number(existing.amount) !== amount) {
+                    newBatch.update(ref, { amount: amount });
+                    opCount++;
+                }
+            }
+        }
+
+        loopMonth++;
+        if (loopMonth > 12) {
+            loopMonth = 1;
+            loopYear++;
+        }
+    }
+    
+    if (opCount > 0) {
+        await newBatch.commit();
+    }
+    return opCount;
+  },
+
+  assignExtraFeeToAll: async (groupId: string, period: string, amount: number, description: string) => {
+    if (!groupId || !amount || !period) return;
+    const users = await dataService.getUsers(groupId);
+    
+    const chunkSize = 450; 
+    for (let i = 0; i < users.length; i += chunkSize) {
+        const chunk = users.slice(i, i + chunkSize);
+        const batch = writeBatch(db);
+        let hasOps = false;
+
+        for (const u of chunk) {
+            if (!u.active) continue;
+            const ref = doc(db, "users", u.uid, "ledger", period);
+            batch.set(ref, {
+                period,
+                extraAmount: increment(Number(amount)),
+                extraDescription: description,
+            }, { merge: true });
+            hasOps = true;
+        }
+        if (hasOps) {
+             await batch.commit();
+        }
+    }
+  },
+
+  getPayments: async (uid: string, strict = false): Promise<Payment[]> => {
+    if (!uid) return [];
+    try {
+        const snapshot = await getDocs(collection(db, "users", uid, "ledger"));
+        return snapshot.docs.map(d => {
+            const data = d.data();
+            return {
+                ...data,
+                amount: Number(data.amount) || 0,
+                paid: Number(data.paid) || 0,
+                extraAmount: Number(data.extraAmount) || 0,
+                paidRegular: data.paidRegular !== undefined ? (Number(data.paidRegular) || 0) : undefined,
+                paidExtra: data.paidExtra !== undefined ? (Number(data.paidExtra) || 0) : undefined,
+                extraFees: Array.isArray(data.extraFees) ? data.extraFees.map((fee: IndividualExtraFee) => ({
+                    ...fee,
+                    amount: Number(fee.amount) || 0,
+                    paid: Number(fee.paid) || 0,
+                })) : [] // Normalize amounts so partial payments never become strings
+            } as Payment;
+        });
+    } catch (e) {
+        if (strict) throw e;
+        return [];
+    }
+  },
+
+  updatePayment: async (uid: string, payment: Payment) => {
+    const ref = doc(db, "users", uid, "ledger", payment.period);
+    const normalized = normalizePayment(payment);
+    await runTransaction(db, async transaction => {
+      const snapshot = await transaction.get(ref);
+      const before = snapshot.exists() ? snapshot.data() as Payment : undefined;
+      transaction.set(ref, { ...normalized, correctionHistory: [...(before?.correctionHistory || []), {
+        at: new Date().toISOString(), by: auth.currentUser?.uid || '', reason: payment.comments || 'Edición administrativa',
+        before: Number(before?.paid) || 0, after: normalized.paid,
+        beforeDate: before?.paymentDate || null, afterDate: payment.paymentDate || null
+      }] }, { merge: true });
+    });
+  },
+
+  deletePayment: async (uid: string, period: string) => {
+    const ref = doc(db, "users", uid, "ledger", period);
+    await deleteDoc(ref);
+  },
+
+  getAttendance: async (uid: string): Promise<Attendance[]> => {
+    if (!uid) return [];
+    try {
+        const snapshot = await getDocs(collection(db, "users", uid, "attendance"));
+        return snapshot.docs.map(d => d.data() as Attendance);
+    } catch (e) {
+        return [];
+    }
+  },
+  
+  // Get all attendance dates from a group (all meetings registered)
+  getAllAttendanceDates: async (groupId: string): Promise<string[]> => {
+    if (!groupId) return [];
+    try {
+        const users = await dataService.getUsers(groupId);
+        const datesSet = new Set<string>();
+        
+        for (const user of users) {
+            const attendance = await dataService.getAttendance(user.uid);
+            attendance.forEach(a => datesSet.add(a.date));
+        }
+        
+        return Array.from(datesSet).sort().reverse();
+    } catch (e) {
+        console.error('Error getting all attendance dates:', e);
+        return [];
+    }
+  },
+  
+  // Get full attendance for a user including absences
+  getFullAttendance: async (uid: string, groupId: string, joinDate?: string): Promise<Attendance[]> => {
+    if (!uid || !groupId) return [];
+    try {
+        // Get all meeting dates
+        const allDates = await dataService.getAllAttendanceDates(groupId);
+        
+        // Get user's attendance records
+        const userAttendance = await dataService.getAttendance(uid);
+        const attendedDates = new Set(userAttendance.map(a => a.date));
+        
+        // Filter dates after user's join date if provided
+        const relevantDates = joinDate 
+            ? allDates.filter(date => date >= joinDate)
+            : allDates;
+        
+        // Build full attendance list
+        return relevantDates.map(date => ({
+            date,
+            attended: attendedDates.has(date)
+        }));
+    } catch (e) {
+        console.error('Error getting full attendance:', e);
+        return [];
+    }
+  },
+  
+  getAttendanceListForDate: async (groupId: string, date: string): Promise<{name: string, attended: boolean, uid: string}[]> => {
+      const users = await dataService.getUsers(groupId);
+      // Incluir usuarios que estaban activos en esa fecha según su masonicRejoinDate
+      const eligibleUsers = users.filter(u => {
+          if (!u.groupId || u.groupId !== groupId) return false;
+          // Si tiene fecha de reingreso, debe ser anterior o igual a la fecha consultada
+          if (u.masonicRejoinDate) {
+              return u.masonicRejoinDate <= date;
+          }
+          // Si no tiene fecha de reingreso pero está activo, incluirlo
+          return u.active;
+      }).sort((a,b) => a.name.localeCompare(b.name));
+      
+      const results: {name: string, attended: boolean, uid: string}[] = [];
+      
+      for(const u of eligibleUsers) {
+          const ref = doc(db, "users", u.uid, "attendance", date);
+          const snap = await getDoc(ref);
+          results.push({
+              name: u.name,
+              attended: snap.exists() && snap.data().attended === true,
+              uid: u.uid
+          });
+      }
+      return results;
+  },
+  
+  generateDetailedAttendanceCSV: async (groupId: string, users: User[]) => {
+      const activeUsers = users.filter(u => u.active).sort((a,b) => a.name.localeCompare(b.name));
+      const allRecords: {date: string, uid: string, attended: boolean}[] = [];
+      
+      // Fetch all attendance for all users
+      for(const u of activeUsers) {
+          const userAtt = await dataService.getAttendance(u.uid);
+          userAtt.forEach(a => {
+              allRecords.push({ date: a.date, uid: u.uid, attended: a.attended });
+          });
+      }
+      
+      // Get all unique dates sorted chronologically
+      const uniqueDates = Array.from(new Set(allRecords.map(r => r.date))).sort();
+      
+      // Build lookup map: date_uid -> bool
+      const lookup = new Map<string, boolean>();
+      allRecords.forEach(r => lookup.set(`${r.date}_${r.uid}`, r.attended));
+
+      // CSV Format: Nombre,Fecha,Asistencia (1=asistió, 0=no asistió pero estaba inscrito)
+      const csvRows = ["Nombre,Fecha,Asistencia"];
+      
+      uniqueDates.forEach(date => {
+          activeUsers.forEach(u => {
+              const attended = lookup.get(`${date}_${u.uid}`);
+              // Si hay registro de ese día, ponemos 1 si asistió, 0 si no
+              // Si no hay registro, significa que no estaba inscrito aún en esa fecha
+              if (attended !== undefined) {
+                  const value = attended ? 1 : 0;
+                  csvRows.push(`"${u.name}",${date},${value}`);
+              }
+          });
+      });
+      
+      return csvRows.join('\n');
+  },
+  
+  getUsers: async (groupId: string): Promise<User[]> => {
+    if (!groupId) return [];
+    try {
+      console.log("getUsers: Fetching users for groupId:", groupId);
+      
+      // Query 1: Users with matching groupId
+      const q1 = query(collection(db, "users"), where("groupId", "==", groupId));
+      const snapshot1 = await getDocs(q1);
+      
+      // Query 2: Users with empty or missing groupId (pending assignment)
+      const q2 = query(collection(db, "users"), where("groupId", "==", ""));
+      const snapshot2 = await getDocs(q2);
+      
+      console.log("getUsers: Found", snapshot1.docs.length, "users with groupId");
+      console.log("getUsers: Found", snapshot2.docs.length, "users without groupId");
+      
+      const users = [
+        ...snapshot1.docs.map(d => d.data() as User),
+        ...snapshot2.docs.map(d => d.data() as User)
+      ];
+      
+      users.forEach(data => {
+        console.log("User:", data.name, "- active:", data.active, "- role:", data.role, "- groupId:", data.groupId || "(empty)");
+      });
+      
+      return users;
+    } catch (e) {
+      console.error("Error in getUsers:", e);
+      throw e;
+    }
+  },
+
+  updateUserStatus: async (uid: string, active: boolean) => {
+    await updateDoc(doc(db, "users", uid), { active });
+  },
+
+  changeMemberStatus: async (groupId: string, uid: string, active: boolean, effectiveDate: string) => {
+    const date = new Date(`${effectiveDate}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate) || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== effectiveDate) {
+      throw new Error('Escribe una fecha válida con formato YYYY-MM-DD.');
+    }
+    const actorUid = auth.currentUser?.uid;
+    if (!groupId || !uid || !actorUid) throw new Error('Selecciona una logia e inicia sesión de nuevo.');
+    // Keep assignment and activation together; canceling or a failed write must not move the profile.
+    await runTransaction(db, async transaction => {
+      const memberRef = doc(db, 'users', uid);
+      const [actorSnap, memberSnap] = await Promise.all([
+        transaction.get(doc(db, 'users', actorUid)), transaction.get(memberRef)
+      ]);
+      if (!actorSnap.exists() || !memberSnap.exists()) throw new Error('No se encontró el perfil. Actualiza la lista.');
+      const actor = actorSnap.data() as User, member = memberSnap.data() as User;
+      const master = actor.role === 'master';
+      if (!master && (actor.role !== 'admin' || !actor.active || actor.groupId !== groupId || member.role === 'master')) {
+        throw new Error('Solo un administrador de esta logia o Admin Master puede cambiar el estado.');
+      }
+      if (member.groupId && member.groupId !== groupId) throw new Error('El hermano pertenece a otra logia. Actualiza la lista.');
+      // Existing rules reserve reassignment of profiles without a lodge to Master.
+      if (!member.groupId && !master) throw new Error('Este perfil no tiene logia asignada. Admin Master debe asignarla antes de dar entrada.');
+      transaction.update(memberRef, {
+        ...(active ? { active: true, masonicRejoinDate: effectiveDate, leaveDate: deleteField() } : { active: false, leaveDate: effectiveDate }),
+        ...(!member.groupId && active ? { groupId } : {})
+      });
+    });
+  },
+
+  assignUserToGroup: async (uid: string, groupId: string) => {
+    await updateDoc(doc(db, "users", uid), { groupId });
+  },
+
+  recordAttendance: async (date: string, uidsPresent: string[]) => {
+    // Esta función solo registra a los presentes
+    // Los ausentes simplemente no tendrán registro para esa fecha
+    const batch = writeBatch(db);
+    for (const uid of uidsPresent) {
+      const ref = doc(db, "users", uid, "attendance", date);
+      batch.set(ref, {
+        date,
+        attended: true
+      }, { merge: true });
+    }
+    await batch.commit();
+  },
+
+  deleteAttendance: async (uid: string, date: string) => {
+    const ref = doc(db, "users", uid, "attendance", date);
+    await deleteDoc(ref);
+  },
+
+  deleteAttendanceForAllUsers: async (groupId: string, date: string) => {
+    // Obtiene TODOS los usuarios del grupo (activos e inactivos)
+    const allUsers = await dataService.getUsers(groupId);
+    const batch = writeBatch(db);
+    
+    for (const user of allUsers) {
+      const ref = doc(db, "users", user.uid, "attendance", date);
+      batch.delete(ref);
+    }
+    
+    await batch.commit();
+  },
+
+  createTrivia: async (trivia: Omit<Trivia, 'id' | 'createdAt'>) => {
+    if (!trivia.groupId) throw new Error("Group ID missing for trivia");
+    const ref = doc(collection(db, "trivias"));
+    await setDoc(ref, {
+      ...trivia,
+      id: ref.id,
+      createdAt: Date.now()
+    });
+  },
+
+  getActiveTrivia: async (groupId: string): Promise<Trivia | null> => {
+    if (!groupId) return null;
+    try {
+      const q = query(
+        collection(db, "trivias"),
+        where("groupId", "==", groupId),
+        orderBy("createdAt", "desc"),
+        limit(1)
+      );
+      const snapshot = await getDocs(q);
+      if (snapshot.empty) return null;
+      return snapshot.docs[0].data() as Trivia;
+    } catch (e) {
+      console.error("Error fetching active trivia", e);
+      return null;
+    }
+  },
+
+  getUserAnswer: async (uid: string, triviaId: string): Promise<TriviaAnswer | undefined> => {
+    if (!uid || !triviaId) return undefined;
+    try {
+      const docRef = doc(db, "users", uid, "triviaAnswers", triviaId);
+      const snap = await getDoc(docRef);
+      return snap.exists() ? snap.data() as TriviaAnswer : undefined;
+    } catch (e) {
+      console.error("Error fetching user answer", e);
+      return undefined;
+    }
+  },
+
+  submitAnswer: async (uid: string, triviaId: string, answerIndex: number): Promise<TriviaAnswer> => {
+    if (!uid || !triviaId) throw new Error("Missing uid or triviaId");
+    
+    console.log("submitAnswer called with:", { uid, triviaId, answerIndex });
+    
+    // Get the trivia to check correct answer
+    const triviaQuery = query(collection(db, "trivias"), where("id", "==", triviaId), limit(1));
+    const triviaSnap = await getDocs(triviaQuery);
+    
+    if (triviaSnap.empty) throw new Error("Trivia not found");
+    
+    const trivia = triviaSnap.docs[0].data() as Trivia;
+    const correct = answerIndex === trivia.correctIndex;
+    const points = correct ? 10 : 0;
+
+    console.log("Answer evaluation:", { correct, points, correctIndex: trivia.correctIndex, answerIndex });
+
+    const answer: TriviaAnswer = {
+      uid,
+      triviaId,
+      answerIndex,
+      correct,
+      points,
+      answeredAt: new Date().toISOString()
+    };
+
+    // Save answer
+    try {
+      const answerRef = doc(db, "users", uid, "triviaAnswers", triviaId);
+      console.log("Saving answer to:", answerRef.path);
+      await setDoc(answerRef, answer);
+      console.log("Answer saved successfully");
+    } catch (e) {
+      console.error("Error saving answer:", e);
+      throw new Error("Error guardando respuesta: " + ((e as any)?.message || e));
+    }
+
+    // Update total points if correct
+    if (correct) {
+      try {
+        const userRef = doc(db, "users", uid);
+        console.log("Updating totalPoints for user:", uid);
+        await updateDoc(userRef, {
+          totalPoints: increment(points)
+        });
+        console.log("Points updated successfully");
+      } catch (e) {
+        console.error("Error updating points:", e);
+        throw new Error("Error actualizando puntos: " + ((e as any)?.message || e));
+      }
+    }
+
+    return answer;
+  },
+
+  getLeaderboard: async (groupId?: string): Promise<{name: string, points: number}[]> => {
+    try {
+      const q = groupId
+        ? query(collection(db, "users"), where("groupId", "==", groupId))
+        : query(collection(db, "users"));
+
+      const snapshot = await getDocs(q);
+      return snapshot.docs
+        .map(d => {
+          const data = d.data() as User;
+          return { name: data.name, points: Number(data.totalPoints) || 0 };
+        })
+        .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
+    } catch (e) {
+      console.error("Error fetching leaderboard", e);
+      return [];
+    }
+  },
+
+  deleteTrivia: async (triviaId: string) => {
+    if (!triviaId) return;
+    const ref = doc(db, "trivias", triviaId);
+    await deleteDoc(ref);
+  },
+
+  getAllTrivias: async (groupId: string): Promise<Trivia[]> => {
+    if (!groupId) return [];
+    try {
+      const q = query(
+        collection(db, "trivias"),
+        where("groupId", "==", groupId),
+        orderBy("createdAt", "desc")
+      );
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(d => d.data() as Trivia);
+    } catch (e) {
+      console.error("Error fetching all trivias", e);
+      return [];
+    }
+  },
+
+  resetTriviaAnswersForUser: async (uid: string) => {
+    if (!uid) return;
+    try {
+      const answersQuery = query(collection(db, "users", uid, "triviaAnswers"));
+      const snapshot = await getDocs(answersQuery);
+      const batch = writeBatch(db);
+      snapshot.docs.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+      await batch.commit();
+    } catch (e) {
+      console.error("Error resetting trivia answers", e);
+    }
+  },
+
+  resetAllTriviaAnswers: async (groupId: string) => {
+    if (!groupId) return;
+    try {
+      const users = await dataService.getUsers(groupId);
+      const batch = writeBatch(db);
+      for (const user of users) {
+        // Reset trivia answers
+        await dataService.resetTriviaAnswersForUser(user.uid);
+        // Reset total points to 0
+        const userRef = doc(db, "users", user.uid);
+        batch.update(userRef, { totalPoints: 0 });
+      }
+      await batch.commit();
+    } catch (e) {
+      console.error("Error resetting all trivia answers", e);
+    }
+  },
+
+  // --- NOTICES ---
+  getNotices: async (groupId: string): Promise<Notice[]> => {
+    if (!groupId) return [];
+    try {
+      const q = query(collection(db, "groups", groupId, "notices"));
+      const snapshot = await getDocs(q);
+      const list = snapshot.docs.map(d => {
+        const raw = d.data() as any;
+        return {
+          id: d.id,
+          ...raw,
+          // Normalizar: versiones antiguas guardaban el contenido como 'content' en vez de 'description'
+          description: raw.description || raw.content || '',
+        } as Notice;
+      });
+      // Client sort by date desc
+      return list.sort((a,b) => b.date.localeCompare(a.date));
+    } catch (e) {
+      // If permissions fail, return empty list gracefully instead of throwing
+      // console.error(e); 
+      return [];
+    }
+  },
+
+  createNotice: async (notice: Omit<Notice, 'id'>) => {
+     const ref = doc(collection(db, "groups", notice.groupId, "notices"));
+     await setDoc(ref, {
+       ...notice,
+       id: ref.id
+     });
+  },
+
+  updateNotice: async (groupId: string, noticeId: string, data: Partial<Notice>) => {
+    const ref = doc(db, "groups", groupId, "notices", noticeId);
+    await updateDoc(ref, data);
+  },
+
+  deleteNotice: async (groupId: string, noticeId: string) => {
+    const ref = doc(db, "groups", groupId, "notices", noticeId);
+    await deleteDoc(ref);
+  },
+
+  // --- PAYMENT RECEIPTS ---
+  // Compress image to base64 (client-side, max ~600px wide, quality 0.65)
+  compressImageToBase64: async (file: File): Promise<string> => {
+    // PDFs and non-image files: read as base64 directly without canvas compression
+    if (!file.type.startsWith('image/')) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+    return new Promise((resolve, reject) => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { reject(new Error('Canvas not available')); return; }
+      const img = new Image();
+      img.onload = () => {
+        const MAX_W = 900;
+        let w = img.width;
+        let h = img.height;
+        if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
+        canvas.width = w;
+        canvas.height = h;
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.65));
+        URL.revokeObjectURL(img.src);
+      };
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+  },
+
+  submitPaymentReceipt: async (imageFiles: File | File[], receipt: Omit<PaymentReceipt, 'id'>): Promise<string> => {
+    const currentAuthUid = auth.currentUser?.uid;
+    if (!currentAuthUid) throw new Error('No autenticado. Recarga la app.');
+    if (!receipt.groupId) throw new Error('Sin grupo asignado.');
+
+    const files = Array.isArray(imageFiles) ? imageFiles : [imageFiles];
+
+    // 1. Create the Firestore doc ref first to get an ID
+    const ref = doc(collection(db, "groups", receipt.groupId, "paymentReceipts"));
+
+    // 2. Upload all files to Firebase Storage
+    const uploadedUrls = await Promise.all(files.map(async (file, i) => {
+      const ext = file.type === 'application/pdf' ? 'pdf' : 'jpg';
+      const imgRef = storageRef(storage, `groups/${receipt.groupId}/receipts/${ref.id}_${i}.${ext}`);
+      await uploadBytes(imgRef, file);
+      return getDownloadURL(imgRef);
+    }));
+
+    const receiptImageUrl = uploadedUrls[0];
+    const receiptImageUrls = uploadedUrls;
+
+    // 3. Save Firestore document
+    const raw = { ...receipt, id: ref.id, userId: currentAuthUid, receiptImageUrl, receiptImageUrls };
+    const cleanData = Object.fromEntries(Object.entries(raw).filter(([, v]) => v !== undefined));
+    await setDoc(ref, cleanData);
+    return ref.id;
+  },
+
+  /** Admin registra una transacción/evidencia para cualquier miembro sin perder el monto real. */
+  createAdminPaymentReceipt: async (
+    imageFiles: File[],
+    receipt: Omit<PaymentReceipt, 'id' | 'status' | 'submittedAt'>,
+    reviewerUid: string,
+    alreadyIncluded: boolean = false
+  ): Promise<string> => {
+    if (!receipt.groupId) throw new Error('Sin grupo asignado.');
+    if (!receipt.userId) throw new Error('Selecciona un miembro.');
+
+    const ref = doc(collection(db, 'groups', receipt.groupId, 'paymentReceipts'));
+    const files = Array.isArray(imageFiles) ? imageFiles : [];
+    const uploadedUrls = await Promise.all(files.map(async (file, i) => {
+      const ext = file.type === 'application/pdf' ? 'pdf' : 'jpg';
+      const imgRef = storageRef(storage, `groups/${receipt.groupId}/receipts/${ref.id}_${i}.${ext}`);
+      await uploadBytes(imgRef, file);
+      return getDownloadURL(imgRef);
+    }));
+
+    const amount = Math.max(0, Number(receipt.amount) || 0);
+    const now = new Date().toISOString();
+    const directApproval = alreadyIncluded || amount <= 0;
+    const raw: PaymentReceipt = {
+      ...receipt,
+      id: ref.id,
+      amount,
+      receiptImageUrl: uploadedUrls[0] || '',
+      receiptImageUrls: uploadedUrls,
+      status: directApproval ? 'approved' : 'pending',
+      submittedAt: now,
+      ...(directApproval ? {
+        reviewedAt: now,
+        reviewedBy: reviewerUid,
+        appliedAmount: alreadyIncluded ? amount : 0,
+        unappliedAmount: 0,
+        ...(alreadyIncluded ? { ledgerIncluded: true } : {}),
+      } : {}),
+    };
+    const cleanData = Object.fromEntries(Object.entries(raw).filter(([, value]) => value !== undefined));
+    await setDoc(ref, cleanData);
+
+    if (!directApproval) {
+      try {
+        await dataService.approvePaymentReceipt(raw, reviewerUid);
+      } catch (error) {
+        await deleteDoc(ref).catch(() => {});
+        throw error;
+      }
+    }
+    return ref.id;
+  },
+
+  getPaymentReceipts: async (groupId: string): Promise<PaymentReceipt[]> => {
+    if (!groupId) return [];
+    try {
+      const q = query(collection(db, "groups", groupId, "paymentReceipts"));
+      const snap = await getDocs(q);
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as PaymentReceipt));
+      return list.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+    } catch (e) {
+      console.error("Error fetching payment receipts", e);
+      return [];
+    }
+  },
+
+  getUserPaymentReceipts: async (userId: string, groupId: string, strict = false): Promise<PaymentReceipt[]> => {
+    if (!userId || !groupId) return [];
+    try {
+      const q = query(
+        collection(db, "groups", groupId, "paymentReceipts"),
+        where("userId", "==", userId)
+      );
+      const snap = await getDocs(q);
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as PaymentReceipt));
+      return list.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+    } catch (e) {
+      if (strict) throw e;
+      return [];
+    }
+  },
+
+  approvePaymentReceipt: async (
+    receipt: PaymentReceipt,
+    reviewerUid: string
+  ): Promise<void> => {
+    const receiptRef = doc(db, "groups", receipt.groupId, "paymentReceipts", receipt.id);
+    const storedSnap = await getDoc(receiptRef);
+    const currentReceipt = storedSnap.exists()
+      ? ({ ...receipt, ...storedSnap.data(), id: storedSnap.id } as PaymentReceipt)
+      : receipt;
+
+    // Idempotency: the same receipt must never be credited twice.
+    if (currentReceipt.status === 'approved') return;
+
+    const approvalDate = validCaptureDate((currentReceipt.transferDate || '').slice(0,10));
+    const buildComment = (existing: string | undefined, label: string): string =>
+      existing ? `${existing} | ${label}` : label;
+
+    let appliedAmount = 0;
+
+    if (currentReceipt.receiptType === 'concepto_adicional') {
+      const result = await runTransaction(db, async transaction => {
+        const liveSnap = await transaction.get(receiptRef);
+        if (!liveSnap.exists()) throw new Error('El comprobante ya no existe.');
+        const live = { ...liveSnap.data(), id: receiptRef.id } as PaymentReceipt;
+        if (live.status === 'approved') return null;
+        if (live.receiptType !== 'concepto_adicional') throw new Error('El comprobante cambió. Actualiza la consulta.');
+        const period = live.extraFeePeriod || live.periods?.[0];
+        if (!period) throw new Error('Falta el período de la cuota extra.');
+        const ledgerRef = doc(db, 'users', live.userId, 'ledger', period);
+        const ledgerSnap = await transaction.get(ledgerRef);
+        if (!ledgerSnap.exists()) throw new Error('Este miembro todavía no tiene asignada la cuota.');
+        const source = { ...ledgerSnap.data(), period } as Payment;
+        const contribution = applyExtraReceipt(source, live);
+        const updated = contribution.payment;
+        transaction.update(ledgerRef, {
+          extraFees: updated.extraFees || [], extraAmount: updated.extraAmount || 0,
+          paidRegular: updated.paidRegular, paidExtra: updated.paidExtra, paid: updated.paid,
+          regularCovered: updated.regularCovered, extraCovered: updated.extraCovered, status: updated.status,
+          paymentDate: approvalDate,
+          comments: buildComment(source.comments, `${contribution.voluntary ? 'Abono voluntario' : 'Pago'} ${live.conceptDescription || 'cuota extra'}: +$${contribution.appliedAmount.toFixed(2)} (${approvalDate})${live.bankReference?' · Folio '+live.bankReference:''}`)
+        });
+        transaction.update(receiptRef, {status:'approved',reviewedAt:new Date().toISOString(),reviewedBy:reviewerUid,
+          appliedAmount:contribution.appliedAmount,unappliedAmount:Math.max(0,Number(live.amount)-contribution.appliedAmount),
+          extraFeeId:contribution.feeId,extraFeePeriod:period,voluntaryContribution:contribution.voluntary});
+        return { ...contribution, receipt: live, period };
+      });
+      if (!result) return; // A concurrent approval already recorded this receipt.
+      appliedAmount = result.appliedAmount;
+      Object.assign(currentReceipt, result.receipt, {extraFeeId:result.feeId,extraFeePeriod:result.period});
+    } else {
+      const result=await approveMonthlyReceipt(currentReceipt.groupId,currentReceipt.id,reviewerUid);
+      if(!result)return;
+      appliedAmount=result.appliedAmount;
+      Object.assign(currentReceipt,result.receipt);
+    }
+
+
+
+    try {
+      const periodsStr = (currentReceipt.periods || []).join(', ');
+      const label = currentReceipt.receiptType === 'concepto_adicional'
+        ? `tu comprobante de "${currentReceipt.conceptDescription || 'cuota extra'}" por $${Number(currentReceipt.amount || 0).toFixed(2)} (aplicado $${appliedAmount.toFixed(2)})`
+        : `los períodos ${periodsStr}`;
+      await notificationService.createNotification(
+        [currentReceipt.userId],
+        currentReceipt.groupId,
+        'payment_receipt',
+        '✅ Comprobante aprobado',
+        `Tu comprobante de pago para ${label} fue aprobado y registrado en tu cuenta.`
+      );
+    } catch (_) {}
+  },
+
+  rejectPaymentReceipt: async (
+    groupId: string,
+    receiptId: string,
+    userId: string,
+    reviewerUid: string,
+    comments: string
+  ): Promise<void> => {
+    const receiptRef = doc(db, "groups", groupId, "paymentReceipts", receiptId);
+    await updateDoc(receiptRef, {
+      status: 'rejected',
+      reviewedAt: new Date().toISOString(),
+      reviewedBy: reviewerUid,
+      reviewComments: comments
+    });
+
+    // Notify the member
+    try {
+      await notificationService.createNotification(
+        [userId],
+        groupId,
+        'payment_receipt',
+        '❌ Comprobante rechazado',
+        comments ? `Tu comprobante fue rechazado: ${comments}` : 'Tu comprobante de pago fue rechazado. Contacta al administrador.'
+      );
+    } catch (_) {}
+  },
+
+  /**
+   * Admin edita un comprobante.
+   * - Pendiente/rechazado: puede corregir los campos normales.
+   * - Aprobado extra: ajusta solo la contribución del comprobante en una transacción.
+   * - Aprobado mensual: permite corregir metadatos, pero no el monto porque no se guarda
+   *   el desglose exacto por período de aprobaciones históricas.
+   */
+  updatePaymentReceipt: async (
+    groupId: string,
+    receiptId: string,
+    updates: Partial<PaymentReceipt>
+  ): Promise<void> => {
+    const ref = doc(db, "groups", groupId, "paymentReceipts", receiptId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) throw new Error('El comprobante ya no existe.');
+
+    const current = { id: snap.id, ...snap.data() } as PaymentReceipt;
+    const allowed: (keyof PaymentReceipt)[] = ['periods', 'amount', 'receiptType', 'conceptDescription', 'transferDate'];
+    const clean = Object.fromEntries(
+      Object.entries(updates).filter(([k]) => allowed.includes(k as keyof PaymentReceipt) && updates[k as keyof PaymentReceipt] !== undefined)
+    ) as Partial<PaymentReceipt>;
+
+    // Commit the receipt and its ledger delta atomically; never rebuild from evidence.
+    await runTransaction(db, async transaction => {
+      const liveSnap = await transaction.get(ref);
+      if (!liveSnap.exists()) throw new Error('El comprobante ya no existe.');
+      const live = liveSnap.data() as PaymentReceipt;
+      if (live.quickMovementId) throw new Error('Este comprobante está enlazado a una captura rápida. Revisa la captura antes de corregirlo.');
+      if (live.status !== current.status) throw new Error('El estado cambió. Actualiza y vuelve a intentar.');
+      if (live.status !== 'approved') { transaction.update(ref, clean); return; }
+      if (clean.receiptType && clean.receiptType !== live.receiptType) throw new Error('No puedes cambiar el tipo de un pago aprobado.');
+      if (clean.periods && JSON.stringify(clean.periods) !== JSON.stringify(live.periods || [])) throw new Error('No puedes redistribuir un pago histórico entre meses sin su desglose.');
+      if (clean.conceptDescription !== undefined && clean.conceptDescription !== live.conceptDescription) throw new Error('No puedes cambiar el destino de un pago aprobado.');
+      if (clean.transferDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(clean.transferDate)) throw new Error('Indica una fecha válida.');
+      const changedAmount = clean.amount !== undefined && Number(clean.amount) !== Number(live.amount || 0);
+      const changes: Record<string, unknown> = {};
+      if (clean.transferDate !== undefined) changes.transferDate = clean.transferDate;
+      if (changedAmount && live.quotaAllocations) throw new Error('Este depósito tiene un reparto confirmado por cuotas. El reparto requiere una corrección contable; conserva el total original del depósito.');
+      if (changedAmount) {
+        if (live.receiptType !== 'concepto_adicional') throw new Error('Corrige el total mensual desde Gestión de Pagos; este comprobante histórico no tiene desglose por mes.');
+        const targetPeriod = live.extraFeePeriod || live.periods?.[0];
+        if (!targetPeriod || live.appliedAmount === undefined) throw new Error('Falta el monto aplicado histórico. Revisa el pago manualmente antes de corregir el comprobante.');
+        const ledgerRef = doc(db, 'users', live.userId, 'ledger', targetPeriod);
+        const ledgerSnap = await transaction.get(ledgerRef);
+        if (!ledgerSnap.exists()) throw new Error('No existe el registro del miembro.');
+        const payment = ledgerSnap.data() as Payment;
+        const fees = (payment.extraFees || []).map(fee => ({ ...fee }));
+        const matches = fees.map((fee, index) => ({ fee, index })).filter(({ fee }) => live.extraFeeId && live.extraFeeId !== 'legacy' ? fee.id === live.extraFeeId : fee.description === live.conceptDescription);
+        if (fees.length && matches.length !== 1) throw new Error('El concepto es ambiguo; revisa el pago del miembro.');
+        if (!fees.length && (payment.extraDescription || '') !== (live.conceptDescription || '')) throw new Error('El concepto histórico no coincide.');
+        const target = matches[0]?.fee;
+        const paid = Number(target ? target.paid : payment.paidExtra) || 0;
+        const cap = Number(target ? target.amount : payment.extraAmount) || 0;
+        const amount = Number(clean.amount);
+        const corrected = correctAppliedPayment(paid, cap, Number(live.appliedAmount), amount, !!target?.forgiven || !!live.voluntaryContribution);
+        if (target) fees[matches[0].index].paid = corrected;
+        const updated = normalizePayment({ ...payment, ...(fees.length ? { extraFees: fees } : { paidExtra: corrected }) });
+        transaction.update(ledgerRef, { ...updated, correctionHistory: [...(payment.correctionHistory || []), { at: new Date().toISOString(), by: auth.currentUser?.uid || '', reason: `Corrección comprobante ${receiptId}`, before: Number(payment.paid) || 0, after: updated.paid }] });
+        changes.amount = amount;
+        changes.appliedAmount = amount;
+        changes.unappliedAmount = 0;
+      }
+      if (Object.keys(changes).length) transaction.update(ref, { ...changes, correctionHistory: [...((live as any).correctionHistory || []), { at: new Date().toISOString(), by: auth.currentUser?.uid || '', before: { amount: live.amount ?? null, transferDate: live.transferDate }, after: changes }] });
+    });
+  },
+
+  /** Admin sube un comprobante para un pago ya registrado */
+  uploadAdminReceipt: async (
+    userId: string,
+    period: string,
+    groupId: string,
+    imageFile: File
+  ): Promise<string> => {
+    const imgRef = storageRef(storage, `groups/${groupId}/admin-receipts/${userId}-${period}.jpg`);
+    await uploadBytes(imgRef, imageFile);
+    const url = await getDownloadURL(imgRef);
+    const ledgerRef = doc(db, "users", userId, "ledger", period);
+    await updateDoc(ledgerRef, { adminReceiptUrl: url });
+    return url;
+  },
+
+  assignExistingExtraFee: async (groupId: string, uid: string, template: ExistingFeeTemplate, creatorUid: string): Promise<boolean> => {
+    const period = assignmentPeriod(template);
+    if (hasAssignedFee(await dataService.getPayments(uid, true), template)) return false;
+    const ledgerRef = doc(db, 'users', uid, 'ledger', period);
+    const registryRef = template.registryId ? doc(db, 'extraFees', template.registryId) : null;
+    return runTransaction(db, async transaction => {
+      const memberSnap = await transaction.get(doc(db, 'users', uid));
+      if (!memberSnap.exists() || memberSnap.data().groupId !== groupId) throw new Error('El miembro no pertenece a esta Logia.');
+      const ledgerSnap = await transaction.get(ledgerRef);
+      const registrySnap = registryRef ? await transaction.get(registryRef) : null;
+      if (registrySnap && (!registrySnap.exists() || registrySnap.data().groupId !== groupId)) throw new Error('La cuota original no pertenece a esta Logia.');
+      if (registrySnap?.exists()) {
+        const original = registrySnap.data();
+        if (original.period !== template.period || original.description !== template.description || Number(original.amount) !== template.amount) throw new Error('La cuota cambió. Actualiza la matriz antes de asignarla.');
+        if ((original.appliedToUsers || []).includes(uid)) return false;
+      }
+      const source = ledgerSnap.exists() ? { ...ledgerSnap.data(), period } as Payment : undefined;
+      if (source?.groupId && source.groupId !== groupId) throw new Error('El registro pertenece a otra Logia.');
+      const updated = assignExistingFee(source, template, creatorUid, new Date().toISOString());
+      if (!updated) return false;
+      transaction.set(ledgerRef, { ...updated, groupId });
+      if (registryRef && registrySnap?.exists()) transaction.update(registryRef, {appliedToUsers:[...new Set([...(registrySnap.data().appliedToUsers || []),uid])]});
+      return true;
+    });
+  },
+
+  /**
+   * Crea una cuota extra individual de forma MASIVA en un período dado para varios miembros.
+   * Si el miembro ya tiene esa cuota (mismo description) en ese período, se omite.
+   */
+  bulkCreateExtraFee: async (
+    groupId: string,
+    period: string,        // YYYY-MM
+    description: string,
+    amount: number,
+    targetUids: string[],  // UIDs de los miembros a aplicar
+    creatorUid: string
+  ): Promise<{ created: number; skipped: number }> => {
+    let created = 0;
+    let skipped = 0;
+    const feeId = `${period}-${description.toLowerCase().replace(/\s+/g, '-').substring(0, 20)}-${Date.now()}`;
+    const feeEntry: IndividualExtraFee = {
+      id: feeId,
+      description,
+      amount,
+      paid: 0,
+      createdAt: new Date().toISOString(),
+      createdBy: creatorUid,
+    };
+    // Get group fee to create ledger entry if needed
+    const groupSnap = await getDoc(doc(db, 'groups', groupId));
+    const membershipFee = groupSnap.exists() ? (groupSnap.data().membershipFee || 0) : 0;
+
+    for (const uid of targetUids) {
+      try {
+        const ledgerRef = doc(db, 'users', uid, 'ledger', period);
+        const ledgerSnap = await getDoc(ledgerRef);
+        if (ledgerSnap.exists()) {
+          const data = ledgerSnap.data() as Payment;
+          const existing = data.extraFees || [];
+          if (existing.some(ef => ef.description === description)) { skipped++; continue; }
+          await updateDoc(ledgerRef, { extraFees: [...existing, feeEntry] });
+        } else {
+          // Create ledger entry for future/missing period
+          await setDoc(ledgerRef, {
+            period, amount: membershipFee, paidRegular: 0, paid: 0, paidExtra: 0,
+            regularCovered: false, extraCovered: false, status: 'Pendiente',
+            comments: '', paymentDate: null, groupId,
+            extraFees: [feeEntry],
+          });
+        }
+        created++;
+      } catch (e) {
+        console.error(`bulkCreateExtraFee uid=${uid}`, e);
+        skipped++;
+      }
+    }
+    return { created, skipped };
+  },
+
+  /**
+   * Perdona/cierra cuotas extras para los miembros que NO pagaron.
+   * - description: descripción específica, o null para perdonar TODAS las descripciones
+   * - El registro permanece pero la deuda deja de contabilizarse.
+   */
+  forgiveExtraFee: async (
+    description: string | null,   // null = perdonar TODAS las descripciones
+    period: string | null,        // null = todos los períodos del año
+    year: number | null,
+    targetUids: string[],
+    forgiverUid: string,
+    note: string
+  ): Promise<number> => {
+    let count = 0;
+    const now = new Date().toISOString();
+    const matchesFee = (ef: IndividualExtraFee) =>
+      (description === null || ef.description === description) && !ef.forgiven && ef.paid < ef.amount;
+
+    for (const uid of targetUids) {
+      try {
+        if (period) {
+          const ledgerRef = doc(db, 'users', uid, 'ledger', period);
+          const snap = await getDoc(ledgerRef);
+          if (!snap.exists()) continue;
+          const data = snap.data() as Payment;
+          if (!data.extraFees?.length) continue;
+          const updated = data.extraFees.map(ef =>
+            matchesFee(ef)
+              ? { ...ef, forgiven: true, forgivenAt: now, forgivenBy: forgiverUid, forgivenNote: note }
+              : ef
+          );
+          if (JSON.stringify(updated) !== JSON.stringify(data.extraFees)) {
+            await updateDoc(ledgerRef, { extraFees: updated });
+            count++;
+          }
+        } else {
+          const snap = await getDocs(collection(db, 'users', uid, 'ledger'));
+          for (const pdoc of snap.docs) {
+            if (year && !pdoc.id.startsWith(String(year))) continue;
+            const data = pdoc.data() as Payment;
+            if (!data.extraFees?.length) continue;
+            const updated = data.extraFees.map(ef =>
+              matchesFee(ef)
+                ? { ...ef, forgiven: true, forgivenAt: now, forgivenBy: forgiverUid, forgivenNote: note }
+                : ef
+            );
+            if (JSON.stringify(updated) !== JSON.stringify(data.extraFees)) {
+              await updateDoc(doc(db, 'users', uid, 'ledger', pdoc.id), { extraFees: updated });
+              count++;
+            }
+          }
+        }
+      } catch (e) {
+        console.error('forgiveExtraFee uid=' + uid, e);
+      }
+    }
+    return count;
+  },
+
+  /** Evidence review only. Differences are not assumed to be errors or manual cash. */
+  reconcileExtraFeeFromReceipts: async (groupId: string, description: string, year: number) => {
+    const normalize = (value?: string) => (value || '').trim().toLocaleLowerCase('es-MX');
+    const receipts = (await dataService.getPaymentReceipts(groupId)).filter(r =>
+      r.status === 'approved' && (r.receiptType === 'concepto_adicional' || r.quotaAllocations?.some(a=>a.kind==='extra')));
+    const members = await dataService.getUsers(groupId);
+    const details: { uid: string; name: string; period: string; paid: number; receipts: number }[] = [];
+    let skippedAmbiguous = 0;
+    for (const member of members) {
+      const payments = (await dataService.getPayments(member.uid)).filter(p => p.period.startsWith(String(year)) && (!p.groupId || p.groupId === groupId));
+      const targets = payments.flatMap(p => p.extraFees?.length
+        ? p.extraFees.filter(f => normalize(f.description) === normalize(description)).map(f => ({ period: p.period, id: f.id, paid: Number(f.paid) || 0 }))
+        : normalize(p.extraDescription) === normalize(description) && Number(p.extraAmount) > 0
+          ? [{ period: p.period, id: 'legacy', paid: Number(p.paidExtra) || 0 }] : []);
+      for (const target of targets) {
+        let ambiguous = false;
+        const evidence = receipts.filter(r => {
+          if (r.userId !== member.uid) return false;
+          if (r.quotaAllocations) return r.quotaAllocations.some(a=>a.kind==='extra' && a.period===target.period && a.feeId===target.id);
+          if (r.extraFeeId && r.extraFeeId !== target.id) return false;
+          if (!r.extraFeeId && normalize(r.conceptDescription) !== normalize(description)) return false;
+          const periods = r.extraFeePeriod ? [r.extraFeePeriod] : r.periods || [];
+          if (periods.length) return periods.includes(target.period);
+          const candidates = targets.filter(t => !r.extraFeeId || t.id === r.extraFeeId);
+          if (candidates.length !== 1) { ambiguous = true; return false; }
+          return candidates[0] === target;
+        });
+        if (ambiguous) { skippedAmbiguous++; continue; }
+        const receiptTotal = evidence.reduce((sum, r) => sum + (r.quotaAllocations ? r.quotaAllocations.filter(a=>a.kind==='extra' && a.period===target.period && a.feeId===target.id).reduce((total,a)=>total+a.amount,0) : Number(r.appliedAmount ?? r.amount) || 0), 0);
+        if (Math.abs(target.paid - receiptTotal) >= 0.005) details.push({ uid: member.uid, name: member.name, period: target.period, paid: target.paid, receipts: receiptTotal });
+      }
+    }
+    return { updated: 0, skippedAmbiguous, discrepancies: details.length, details };
+  },
+
+  // --- DEBT NOTIFICATIONS ---
+  // Send in-app + browser notifications to users about pending months owed
+  sendDebtNotifications: async (
+    groupId: string,
+    adminUser: User,
+    targetUids?: string[] // If undefined, sends to all active members
+  ): Promise<number> => {
+    const allUsers = await dataService.getUsers(groupId);
+    const targets = targetUids
+      ? allUsers.filter(u => targetUids.includes(u.uid) && u.active)
+      : allUsers.filter(u => u.active && u.role !== 'viewer'); // Todos los roles activos excepto viewers
+
+    let sent = 0;
+    const currentPeriod = currentReminderPeriod();
+
+    for (const u of targets) {
+      try {
+        const payments = await dataService.getPayments(u.uid);
+        const reminder = debtReminder(payments, groupId, currentPeriod);
+        if (!reminder.periods.length) continue;
+        const body = reminder.body;
+
+        await notificationService.createNotification(
+          [u.uid],
+          groupId,
+          'payment',
+          '💳 Recordatorio de pago',
+          body
+        );
+        sent++;
+      } catch (_) {}
+    }
+    return sent;
+  },
+  getTasks: async (groupId: string): Promise<Task[]> => {
+    if (!groupId) return [];
+    try {
+      const q = query(collection(db, "groups", groupId, "tasks"));
+      const snapshot = await getDocs(q);
+      const list = snapshot.docs.map(d => ({id: d.id, ...d.data()} as Task));
+      // Sort by: incomplete first, then by creation date
+      return list.sort((a,b) => {
+        if (a.completed !== b.completed) {
+          return a.completed ? 1 : -1;
+        }
+        return b.createdAt.localeCompare(a.createdAt);
+      });
+    } catch (e) {
+      return [];
+    }
+  },
+
+  createTask: async (task: Omit<Task, 'id'>) => {
+    const ref = doc(collection(db, "groups", task.groupId, "tasks"));
+    await setDoc(ref, {
+      ...task,
+      id: ref.id
+    });
+  },
+
+  updateTask: async (groupId: string, taskId: string, data: Partial<Task>) => {
+    const ref = doc(db, "groups", groupId, "tasks", taskId);
+    await updateDoc(ref, data);
+  },
+
+  deleteTask: async (groupId: string, taskId: string) => {
+    const ref = doc(db, "groups", groupId, "tasks", taskId);
+    await deleteDoc(ref);
+  },
+
+  toggleTaskComplete: async (groupId: string, taskId: string, completed: boolean, userUid: string) => {
+    const ref = doc(db, "groups", groupId, "tasks", taskId);
+    const updateData: any = { completed };
+    if (completed) {
+      updateData.completedAt = new Date().toISOString();
+      updateData.completedBy = userUid;
+    } else {
+      updateData.completedAt = deleteField();
+      updateData.completedBy = deleteField();
+    }
+    await updateDoc(ref, updateData);
+  },
+
+  // VISIT REQUESTS
+  createVisitRequest: async (request: Omit<VisitRequest, 'id' | 'createdAt' | 'messages'>) => {
+    try {
+      const ref = doc(collection(db, "visitRequests"));
+      await setDoc(ref, {
+        ...request,
+        id: ref.id,
+        createdAt: Date.now(),
+        messages: []
+      });
+      return ref.id;
+    } catch (e) {
+      console.error("Error creating visit request:", e);
+      const errorMsg = (e as any)?.message || '';
+      if (errorMsg.includes('permission') || errorMsg.includes('Missing or insufficient')) {
+        throw new Error("Error de permisos: Contacta al administrador para configurar las reglas de Firestore");
+      }
+      throw e;
+    }
+  },
+
+  getVisitRequestsForGroup: async (groupId: string): Promise<VisitRequest[]> => {
+    try {
+      // Get requests where the group is either sender or receiver
+      const sentQ = query(collection(db, "visitRequests"), where("fromGroupId", "==", groupId));
+      const receivedQ = query(collection(db, "visitRequests"), where("toGroupId", "==", groupId));
+      
+      const [sentSnap, receivedSnap] = await Promise.all([
+        getDocs(sentQ),
+        getDocs(receivedQ)
+      ]);
+      
+      const requests: VisitRequest[] = [];
+      sentSnap.docs.forEach(d => requests.push(d.data() as VisitRequest));
+      receivedSnap.docs.forEach(d => requests.push(d.data() as VisitRequest));
+      
+      // Sort by creation date descending
+      return requests.sort((a, b) => b.createdAt - a.createdAt);
+    } catch (e) {
+      console.error("Error fetching visit requests", e);
+      return [];
+    }
+  },
+
+  updateVisitRequestStatus: async (requestId: string, status: 'accepted' | 'rejected' | 'completed') => {
+    const ref = doc(db, "visitRequests", requestId);
+    await updateDoc(ref, { status });
+  },
+
+  addMessageToVisitRequest: async (requestId: string, message: Omit<VisitMessage, 'id' | 'timestamp'>) => {
+    const ref = doc(db, "visitRequests", requestId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) throw new Error("Visit request not found");
+    
+    const request = snap.data() as VisitRequest;
+    const newMessage: VisitMessage = {
+      ...message,
+      id: `msg_${Date.now()}`,
+      timestamp: Date.now()
+    };
+    
+    const updatedMessages = [...(request.messages || []), newMessage];
+    await updateDoc(ref, { messages: updatedMessages });
+  },
+
+  deleteVisitRequest: async (requestId: string) => {
+    const ref = doc(db, "visitRequests", requestId);
+    await deleteDoc(ref);
+  },
+
+  // Bank Balances
+  getBankBalances: async (groupId: string): Promise<BankBalance[]> => {
+    const q = query(
+      collection(db, "bankBalances"),
+      where("groupId", "==", groupId)
+    );
+    const snapshot = await getDocs(q);
+    // Sort in memory instead of using orderBy (to avoid composite index requirement)
+    const balances = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as BankBalance));
+    return balances.sort((a, b) => new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime());
+  },
+
+  createBankBalance: async (balance: Omit<BankBalance, 'id'>): Promise<string> => {
+    const ref = await addDoc(collection(db, "bankBalances"), balance);
+    return ref.id;
+  },
+
+  updateBankBalance: async (id: string, balance: Partial<BankBalance>) => {
+    const ref = doc(db, "bankBalances", id);
+    await updateDoc(ref, balance);
+  },
+
+  deleteBankBalance: async (id: string) => {
+    const ref = doc(db, "bankBalances", id);
+    await deleteDoc(ref);
+  },
+
+  // EXTRA FEES MANAGEMENT
+  getExtraFees: async (groupId: string): Promise<ExtraFee[]> => {
+    const q = query(
+      collection(db, "extraFees"),
+      where("groupId", "==", groupId)
+    );
+    const snapshot = await getDocs(q);
+    const fees = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ExtraFee));
+    return fees.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  },
+
+  createExtraFee: async (fee: Omit<ExtraFee, 'id'>): Promise<string> => {
+    const ref = await addDoc(collection(db, "extraFees"), fee);
+    return ref.id;
+  },
+
+  deleteExtraFee: async (extraFeeId: string, appliedToUsers: string[], period: string, amount: number) => {
+    // 1. Eliminar el registro de extraFee
+    await deleteDoc(doc(db, "extraFees", extraFeeId));
+    
+    // 2. Revertir el monto de los ledgers de los usuarios
+    const chunkSize = 450;
+    for (let i = 0; i < appliedToUsers.length; i += chunkSize) {
+      const chunk = appliedToUsers.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+      let hasOps = false;
+
+      for (const uid of chunk) {
+        const ledgerRef = doc(db, "users", uid, "ledger", period);
+        const ledgerSnap = await getDoc(ledgerRef);
+        
+        if (ledgerSnap.exists()) {
+          const currentExtra = ledgerSnap.data().extraAmount || 0;
+          const newExtra = Math.max(0, currentExtra - amount);
+          
+          if (newExtra === 0) {
+            // Si no queda extraAmount, eliminar esos campos
+            batch.update(ledgerRef, {
+              extraAmount: deleteField(),
+              extraDescription: deleteField()
+            });
+          } else {
+            // Si aún queda monto, solo restar
+            batch.update(ledgerRef, {
+              extraAmount: newExtra
+            });
+          }
+          hasOps = true;
+        }
+      }
+      
+      if (hasOps) {
+        await batch.commit();
+      }
+    }
+  },
+
+  updateExtraFee: async (extraFeeId: string, updates: { description?: string; amount?: number }, oldAmount: number, appliedToUsers: string[], period: string) => {
+    // 1. Actualizar el registro de extraFee
+    await updateDoc(doc(db, "extraFees", extraFeeId), updates);
+    
+    // 2. Si cambió el monto, actualizar los ledgers
+    if (updates.amount !== undefined && updates.amount !== oldAmount) {
+      const amountDiff = updates.amount - oldAmount;
+      const chunkSize = 450;
+      
+      for (let i = 0; i < appliedToUsers.length; i += chunkSize) {
+        const chunk = appliedToUsers.slice(i, i + chunkSize);
+        const batch = writeBatch(db);
+        let hasOps = false;
+
+        for (const uid of chunk) {
+          const ledgerRef = doc(db, "users", uid, "ledger", period);
+          batch.set(ledgerRef, {
+            period,
+            extraAmount: increment(amountDiff)
+          }, { merge: true });
+          hasOps = true;
+        }
+        
+        if (hasOps) {
+          await batch.commit();
+        }
+      }
+    }
+  },
+
+  assignExtraFeeToUser: async (
+    groupId: string,
+    uid: string,
+    userName: string,
+    period: string,
+    amount: number,
+    description: string,
+    createdBy: string,
+    createdByName: string
+  ): Promise<string> => {
+    // 1. Crear registro en extraFees
+    const extraFee: Omit<ExtraFee, 'id'> = {
+      groupId,
+      period,
+      amount,
+      description,
+      type: 'individual',
+      targetUserId: uid,
+      targetUserName: userName,
+      createdBy,
+      createdByName,
+      createdAt: new Date().toISOString(),
+      appliedToUsers: [uid]
+    };
+    
+    const extraFeeId = await dataService.createExtraFee(extraFee);
+    
+    // 2. Aplicar al ledger del usuario como IndividualExtraFee
+    const ledgerRef = doc(db, "users", uid, "ledger", period);
+    
+    // Get current payment to retrieve existing extraFees
+    const currentDoc = await getDoc(ledgerRef);
+    const currentPayment = currentDoc.exists() ? currentDoc.data() as Payment : null;
+    
+    // Create new individual extra fee
+    const newExtraFee: IndividualExtraFee = {
+      id: `extra_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      description: description,
+      amount: amount,
+      paid: 0,
+      createdAt: new Date().toISOString(),
+      createdBy: createdBy
+    };
+    
+    // Add to existing extraFees array or create new one
+    const currentExtraFees = currentPayment?.extraFees || [];
+    const updatedExtraFees = [...currentExtraFees, newExtraFee];
+    
+    // Calculate totals
+    const totalExtraAmount = updatedExtraFees.reduce((sum, fee) => sum + fee.amount, 0);
+    const totalExtraPaid = updatedExtraFees.reduce((sum, fee) => sum + fee.paid, 0);
+    
+    // Update payment with extraFees array
+    await setDoc(ledgerRef, {
+      period,
+      extraFees: updatedExtraFees,
+      extraAmount: totalExtraAmount, // Keep legacy field updated
+      paidExtra: totalExtraPaid,
+      extraCovered: totalExtraPaid >= totalExtraAmount
+    }, { merge: true });
+    
+    return extraFeeId;
+  },
+
+  assignExtraFeeToAllNew: async (
+    groupId: string,
+    period: string,
+    amount: number,
+    description: string,
+    createdBy: string,
+    createdByName: string
+  ): Promise<string> => {
+    const users = await dataService.getUsers(groupId);
+    const activeUsers = users.filter(u => isBillableForPeriod(u, period));
+    const appliedToUsers = activeUsers.map(u => u.uid);
+    
+    // 1. Crear registro en extraFees
+    const extraFee: Omit<ExtraFee, 'id'> = {
+      groupId,
+      period,
+      amount,
+      description,
+      type: 'mass',
+      createdBy,
+      createdByName,
+      createdAt: new Date().toISOString(),
+      appliedToUsers
+    };
+    
+    const extraFeeId = await dataService.createExtraFee(extraFee);
+    
+    // 2. Aplicar a ledgers de usuarios activos
+    const chunkSize = 450;
+    for (let i = 0; i < activeUsers.length; i += chunkSize) {
+      const chunk = activeUsers.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+      let hasOps = false;
+
+      for (const u of chunk) {
+        const ref = doc(db, "users", u.uid, "ledger", period);
+        batch.set(ref, {
+          period,
+          extraAmount: increment(Number(amount)),
+          extraDescription: description,
+        }, { merge: true });
+        hasOps = true;
+      }
+      
+      if (hasOps) {
+        await batch.commit();
+      }
+    }
+    
+    return extraFeeId;
+  },
+
+  // v3.2.0: Apply individual extra fees to all active users
+  assignIndividualExtraFeeToAll: async (
+    groupId: string,
+    period: string,
+    amount: number,
+    description: string,
+    createdBy: string,
+    createdByName: string
+  ): Promise<string> => {
+    const users = await dataService.getUsers(groupId);
+    const activeUsers = users.filter(u => isBillableForPeriod(u, period));
+    const appliedToUsers = activeUsers.map(u => u.uid);
+    
+    // 1. Create record in extraFees collection
+    const extraFee: Omit<ExtraFee, 'id'> = {
+      groupId,
+      period,
+      amount,
+      description,
+      type: 'mass',
+      createdBy,
+      createdByName,
+      createdAt: new Date().toISOString(),
+      appliedToUsers
+    };
+    
+    const extraFeeId = await dataService.createExtraFee(extraFee);
+    
+    // 2. Apply to ledgers of active users as individual extra fees
+    const chunkSize = 450;
+    for (let i = 0; i < activeUsers.length; i += chunkSize) {
+      const chunk = activeUsers.slice(i, i + chunkSize);
+
+      for (const u of chunk) {
+        const ref = doc(db, "users", u.uid, "ledger", period);
+        
+        // Get current payment
+        const currentDoc = await getDoc(ref);
+        const currentPayment = currentDoc.exists() ? currentDoc.data() as Payment : null;
+        
+        // Create new individual extra fee
+        const newExtraFee: IndividualExtraFee = {
+          id: `extra_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          description: description,
+          amount: amount,
+          paid: 0,
+          createdAt: new Date().toISOString(),
+          createdBy: createdBy
+        };
+        
+        // Add to existing extraFees array or create new one
+        const currentExtraFees = currentPayment?.extraFees || [];
+        const updatedExtraFees = [...currentExtraFees, newExtraFee];
+        
+        // Calculate totals
+        const totalExtraAmount = updatedExtraFees.reduce((sum, fee) => sum + fee.amount, 0);
+        const totalExtraPaid = updatedExtraFees.reduce((sum, fee) => sum + fee.paid, 0);
+        
+        // Update payment
+        await setDoc(ref, {
+          period,
+          extraFees: updatedExtraFees,
+          extraAmount: totalExtraAmount, // Keep legacy field updated
+          paidExtra: totalExtraPaid,
+          extraCovered: totalExtraPaid >= totalExtraAmount
+        }, { merge: true });
+      }
+    }
+    
+    return extraFeeId;
+  },
+
+  // Migration function: Convert old extraAmount format to new extraFees array format
+  migrateExtraFeesToNewFormat: async (groupId: string): Promise<{
+    totalUsers: number;
+    totalPayments: number;
+    migratedPayments: number;
+    errors: string[];
+  }> => {
+    const errors: string[] = [];
+    let totalUsers = 0;
+    let totalPayments = 0;
+    let migratedPayments = 0;
+
+    try {
+      // Get all users from the group
+      const users = await dataService.getUsers(groupId);
+      totalUsers = users.length;
+
+      console.log(`🔄 Starting migration for ${totalUsers} users...`);
+
+      // Process each user
+      for (const user of users) {
+        try {
+          // Get all payments for this user
+          const ledgerSnapshot = await getDocs(collection(db, "users", user.uid, "ledger"));
+          
+          for (const paymentDoc of ledgerSnapshot.docs) {
+            totalPayments++;
+            const payment = paymentDoc.data() as Payment;
+            const period = paymentDoc.id;
+
+            // Check if this payment needs migration
+            const hasOldExtraAmount = payment.extraAmount && payment.extraAmount > 0;
+            const hasNoExtraFees = !payment.extraFees || payment.extraFees.length === 0;
+
+            if (hasOldExtraAmount && hasNoExtraFees) {
+              console.log(`  📝 Migrating ${user.name} - ${period}: $${payment.extraAmount}`);
+
+              // Create IndividualExtraFee from old data
+              const newExtraFee: IndividualExtraFee = {
+                id: `migrated_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                description: payment.extraDescription || 'Cuota Extraordinaria (Migrado)',
+                amount: Number(payment.extraAmount) || 0,
+                paid: Number(payment.paidExtra) || 0,
+                createdAt: new Date().toISOString(),
+                createdBy: 'system_migration'
+              };
+
+              // Update the payment with new format
+              const ledgerRef = doc(db, "users", user.uid, "ledger", period);
+              await updateDoc(ledgerRef, {
+                extraFees: [newExtraFee],
+                // Keep legacy fields for compatibility
+                extraAmount: newExtraFee.amount,
+                paidExtra: newExtraFee.paid,
+                extraCovered: newExtraFee.paid >= newExtraFee.amount
+              });
+
+              migratedPayments++;
+              console.log(`    ✅ Migrated successfully`);
+            }
+          }
+        } catch (userError: any) {
+          const errorMsg = `Error processing user ${user.name}: ${userError.message}`;
+          console.error(`  ❌ ${errorMsg}`);
+          errors.push(errorMsg);
+        }
+      }
+
+      console.log(`\n✨ Migration complete!`);
+      console.log(`   Total users: ${totalUsers}`);
+      console.log(`   Total payments: ${totalPayments}`);
+      console.log(`   Migrated payments: ${migratedPayments}`);
+      console.log(`   Errors: ${errors.length}`);
+
+      return {
+        totalUsers,
+        totalPayments,
+        migratedPayments,
+        errors
+      };
+    } catch (error: any) {
+      console.error('💥 Migration failed:', error);
+      errors.push(`Migration failed: ${error.message}`);
+      return {
+        totalUsers,
+        totalPayments,
+        migratedPayments,
+        errors
+      };
+    }
+  }
+};
+
+// ─── NOTIFICATION SERVICE ────────────────────────────────────────────────────
+export const notificationService = {
+
+  /** Solicita permiso del navegador para mostrar notificaciones */
+  requestPermission: async (): Promise<boolean> => {
+    if (!('Notification' in window)) return false;
+    if (Notification.permission === 'granted') return true;
+    if (Notification.permission === 'denied') return false;
+    const result = await Notification.requestPermission();
+    return result === 'granted';
+  },
+
+  /** Guarda/actualiza en Firestore si el usuario ha dado permiso */
+  savePermissionStatus: async (uid: string, granted: boolean) => {
+    try {
+      await updateDoc(doc(db, 'users', uid), {
+        notifPermission: granted,
+        notifPermissionUpdatedAt: Date.now()
+      });
+    } catch (_) {}
+  },
+
+  /** Crea un documento de notificación en Firestore para uno o varios usuarios y envía push FCM */
+  createNotification: async (
+    uids: string[],
+    groupId: string,
+    type: NotificationType,
+    title: string,
+    body: string
+  ) => {
+    // 1. Excluir usuarios inactivos o dados de baja.
+    const userDocs = await Promise.all(uids.map(uid => getDoc(doc(db, 'users', uid))));
+    const eligibleUids = uids.filter((uid, index) => {
+      const data = userDocs[index]?.data() as User | undefined;
+      return !!data && data.active !== false && !data.leaveDate;
+    });
+    if (eligibleUids.length === 0) return;
+    const batch = writeBatch(db);
+    for (const uid of eligibleUids) {
+      const ref = doc(collection(db, 'users', uid, 'notifications'));
+      const notif: AppNotification = {
+        id: ref.id,
+        uid,
+        groupId,
+        type,
+        title,
+        body,
+        read: false,
+        createdAt: Date.now()
+      };
+      batch.set(ref, notif);
+    }
+    await batch.commit();
+
+    // 2. FCM push via Cloud Function (best effort — doesn't fail the whole operation)
+    try {
+      const tokenDocs = await Promise.all(eligibleUids.map(uid => getDoc(doc(db, 'users', uid))));
+      const fcmTokens = tokenDocs
+        .map(d => d.data()?.fcmToken as string | undefined)
+        .filter((t): t is string => !!t);
+      if (fcmTokens.length > 0) {
+        // Mapear tipo de notificación a vista de la app
+        const typeToView: Record<string, string> = {
+          notice: 'notices', payment: 'payments', payment_receipt: 'payments',
+          attendance: 'attendance', trivia: 'trivia', profile_edit: 'profile'
+        };
+        const view = typeToView[type] || 'home';
+        fetch('https://us-central1-registrologia.cloudfunctions.net/sendNotification', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tokens: fcmTokens,
+            notification: { title, body },
+            data: { type, view }
+          })
+        }).catch(e => console.warn('FCM push error:', e));
+      }
+    } catch (e) {
+      console.warn('FCM token fetch error:', e);
+    }
+  },
+
+  /** Obtiene las notificaciones no leídas de un usuario */
+  getUnread: async (uid: string): Promise<AppNotification[]> => {
+    try {
+      const q = query(
+        collection(db, 'users', uid, 'notifications'),
+        where('read', '==', false),
+        orderBy('createdAt', 'desc'),
+        limit(50)
+      );
+      const snap = await getDocs(q);
+      return snap.docs.map(d => d.data() as AppNotification);
+    } catch (_) {
+      return [];
+    }
+  },
+
+  /** Marca una notificación como leída */
+  markRead: async (uid: string, notifId: string) => {
+    await updateDoc(doc(db, 'users', uid, 'notifications', notifId), { read: true });
+  },
+
+  /** Marca todas las notificaciones como leídas */
+  markAllRead: async (uid: string) => {
+    const q = query(collection(db, 'users', uid, 'notifications'), where('read', '==', false));
+    const snap = await getDocs(q);
+    if (snap.empty) return;
+    const batch = writeBatch(db);
+    snap.docs.forEach(d => batch.update(d.ref, { read: true }));
+    await batch.commit();
+  },
+
+  /** Muestra una notificación nativa del navegador */
+  showBrowserNotification: (title: string, body: string, type: NotificationType) => {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    try {
+      new Notification(title, {
+        body,
+        icon: '/icons/icon-192.png',
+        badge: '/icons/icon-192.png',
+        tag: type,
+        renotify: true
+      });
+    } catch (e) {
+      console.warn('Browser notification failed:', e);
+    }
+  }
+};
+
+export const generateTriviaWithAI = async (): Promise<Partial<Trivia>> => {
+  // FALLBACK SEGURO: Si no hay API KEY real, devuelve datos dummy para que no falle.
+  const apiKey = process.env.API_KEY || "TU_API_KEY_AQUI"; 
+  
+  if (!apiKey || apiKey === "TU_API_KEY_AQUI") {
+    console.warn("Modo Offline: Usando trivia por defecto (Falta API Key)");
+    // Simular retardo de red
+    await new Promise(r => setTimeout(r, 1000));
+    return {
+      question: "¿Cuál de las siguientes NO es una de las 7 Artes Liberales?",
+      options: ["Gramática", "Lógica", "Alquimia", "Astronomía"],
+      correctIndex: 2
+    };
+  }
+  
+  const ai = new GoogleGenerativeAI({ apiKey });
+  
+  const prompt = `
+    Genera una pregunta de trivia interesante y desafiante para un club de lectura adulto o logia masónica.
+    Temas: Simbolismo, Historia Universal, Filosofía, Arte Liberal o Ciencia.
+    El output debe ser un JSON.
+  `;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          question: { type: Type.STRING },
+          options: { type: Type.ARRAY, items: { type: Type.STRING } },
+          correctIndex: { type: Type.INTEGER, description: "Index 0-3 of the correct option" }
+        },
+        required: ["question", "options", "correctIndex"]
+      }
+    }
+  });
+  
+  const text = response.text;
+  if (!text) throw new Error("No response from AI");
+  return JSON.parse(text);
+};
+
+

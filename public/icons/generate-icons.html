@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Generador de Iconos PWA</title>
+</head>
+<body>
+    <h1>Generador de Iconos</h1>
+    <p>Este archivo generará los iconos automáticamente usando Canvas</p>
+    
+    <canvas id="canvas" style="display:none;"></canvas>
+    <div id="status"></div>
+    
+    <script>
+        const sizes = [72, 96, 128, 144, 152, 192, 384, 512];
+        const status = document.getElementById('status');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        async function generateIcon(size) {
+            canvas.width = size;
+            canvas.height = size;
+            
+            // Fondo
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, size, size);
+            
+            // Círculo con gradiente
+            const gradient = ctx.createLinearGradient(0, 0, size, size);
+            gradient.addColorStop(0, '#6366f1');
+            gradient.addColorStop(1, '#4f46e5');
+            
+            const centerX = size / 2;
+            const centerY = size * 0.39;
+            const radius = size * 0.195;
+            
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+            ctx.fillStyle = gradient;
+            ctx.fill();
+            
+            // Escuadra
+            ctx.fillStyle = '#fbbf24';
+            const escuadraSize = size * 0.39;
+            const escuadraThick = size * 0.058;
+            const escuadraX = size * 0.305;
+            const escuadraY = size * 0.352;
+            
+            // Horizontal
+            ctx.fillRect(escuadraX, escuadraY, escuadraSize, escuadraThick);
+            // Vertical
+            ctx.fillRect(escuadraX, escuadraY, escuadraThick, escuadraSize);
+            
+            // Texto ML
+            ctx.fillStyle = '#6366f1';
+            ctx.font = `bold ${size * 0.156}px Inter, Arial, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('ML', centerX, size * 0.879);
+            
+            // Convertir a blob y descargar
+            return new Promise(resolve => {
+                canvas.toBlob(blob => {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `icon-${size}x${size}.png`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    resolve();
+                });
+            });
+        }
+        
+        async function generateAll() {
+            status.innerHTML = '<p>Generando iconos...</p>';
+            for (const size of sizes) {
+                await generateIcon(size);
+                status.innerHTML += `<p>✅ Generado: icon-${size}x${size}.png</p>`;
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            status.innerHTML += '<p><strong>¡Todos los iconos generados! Guárdalos en la carpeta /public/icons/</strong></p>';
+        }
+        
+        // Generar automáticamente al cargar
+        window.addEventListener('load', generateAll);
+    </script>
+</body>
+</html>
