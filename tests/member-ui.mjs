@@ -15,7 +15,7 @@ try {
   await page.waitForFunction(()=>getComputedStyle(document.querySelector('table')).display==='table' && getComputedStyle(document.body).backgroundColor==='rgb(15, 23, 42)');
   assert.equal(await page.getByRole('table').isVisible(),true);
   await page.getByRole('button',{name:'Ver ficha de Miembro 000'}).click();
-  await page.getByRole('table',{name:'Tabla de meses, cuotas y abonos'}).waitFor();assert.equal(await page.evaluate(()=>window.__historyRequests),1,'opening a member loads the account directly');
+  await page.getByRole('region',{name:'Estado de cuenta por meses'}).waitFor();assert.equal(await page.evaluate(()=>window.__historyRequests),1,'opening a member loads the account directly');
   await page.getByRole('button',{name:'Estado de cuenta',exact:true}).click();
   if(await page.getByRole('button',{name:'Expandir mes 2026-09',exact:true}).count())await page.getByRole('button',{name:'Expandir mes 2026-09',exact:true}).click();
   await page.getByText('Evento legado',{exact:true}).waitFor();
