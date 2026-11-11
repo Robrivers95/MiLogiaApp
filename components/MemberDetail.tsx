@@ -2,7 +2,7 @@ import {watchMemberAccount} from '../services/memberAccountWatch';
 import AdminPaymentEvidenceModal,{AdminPaymentEvidenceContext} from './AdminPaymentEvidenceModal';
 import AdvanceCorrection from './AdvanceCorrection';
 import MemberAccount from './MemberAccount';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import type { Payment, PaymentReceipt, Role, User } from '../types';
 import { accountStatus, degreeLabel, memberMoney, memberStatus, MemberStats, paymentHistoryRows, memberEvidence, roleLabel } from '../services/memberPresentation';
 import MemberEvidence from './MemberEvidence';
@@ -18,6 +18,7 @@ export interface MemberActions {
 }
 interface Props { member: User; currentUser: User; stats?: MemberStats; statsLoading: boolean; readOnly: boolean; actions: MemberActions; loadHistory: (uid: string) => Promise<Payment[]>; loadReceipts: (uid: string) => Promise<PaymentReceipt[]>; revision: number; financialScope: string; onClose: () => void; }
 export default function MemberDetail({ member, currentUser, stats, statsLoading, readOnly, actions, loadHistory, loadReceipts, revision, financialScope, onClose }: Props) {
+  const accountContainer=useRef<HTMLElement>(null),identityHeader=useRef<HTMLDivElement>(null);
   const [paymentContext,setPaymentContext]=useState<{context:AdminPaymentEvidenceContext;included:boolean}|null>(null);
   const [tab, setTab] = useState<'profile' | 'history' | 'evidence'>('history');
   const [receipts, setReceipts] = useState<PaymentReceipt[]>([]);
@@ -61,9 +62,10 @@ export default function MemberDetail({ member, currentUser, stats, statsLoading,
   let historyError = error;
   try { history = paymentHistoryRows(payments); } catch { historyError = 'Hay un registro con montos inválidos. Revisa los pagos de este miembro.'; }
   const displayMoney = (value?: number) => statsLoading ? 'Actualizando…' : value == null ? 'Sin calcular' : memberMoney(value);
+  useEffect(()=>{const header=identityHeader.current;if(!header)return;const measure=()=>accountContainer.current?.style.setProperty('--member-header-height',header.getBoundingClientRect().height+'px');measure();const observer=typeof ResizeObserver!=='undefined'?new ResizeObserver(measure):null;observer?.observe(header);window.addEventListener('resize',measure);return()=>{observer?.disconnect();window.removeEventListener('resize',measure);};},[]);
   useEffect(()=>{const old=document.body.style.overflow;document.body.style.overflow='hidden';return()=>{document.body.style.overflow=old;};},[]);
-  return <aside style={{position:'fixed',inset:0,zIndex:40,overflowY:'auto'}} className="member-detail bg-logia-900 min-w-0" aria-label="Ficha del miembro">
-    <div className="sticky top-0 bg-logia-800 border-b border-logia-700 p-4 flex gap-3 justify-between items-start z-10">
+  return <aside ref={accountContainer} style={{position:'fixed',inset:0,zIndex:40,overflowY:'auto'}} className="member-detail bg-logia-900 min-w-0" aria-label="Ficha del miembro">
+    <div ref={identityHeader} className="sticky top-0 bg-logia-800 border-b border-logia-700 p-4 flex gap-3 justify-between items-start z-10">
       <div className="min-w-0"><p className="text-xs text-indigo-300">Estado de cuenta del miembro</p><h3 className="text-lg font-bold break-words">{member.name}</h3><p className="text-xs text-gray-400 break-all">{member.email}</p></div>
       <button onClick={onClose} className="shrink-0 p-3 rounded-lg border border-logia-700" aria-label="Cerrar ficha">Volver al directorio</button>
     </div>

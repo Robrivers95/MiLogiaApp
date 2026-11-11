@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mi-logia-unified-corrections-20261111';
+const CACHE_NAME = 'mi-logia-clear-months-save-feedback-20261111';
 const urlsToCache = [
   '/',
   '/index.html',
