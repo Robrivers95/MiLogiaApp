@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mi-logia-folded-account-20261109';
+const CACHE_NAME = 'mi-logia-unified-corrections-20261111';
 const urlsToCache = [
   '/',
   '/index.html',

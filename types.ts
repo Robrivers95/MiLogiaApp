@@ -152,7 +152,13 @@ export interface IndividualExtraFee {
   forgivenNote?: string; // Nota opcional del perdón
 }
 
+export interface QuotaCorrectionAudit {
+ at:string;by:string;kind:'regular'|'extra';feeId:string|null;concept:string;
+ beforeAmount:number;afterAmount:number;beforePaid:number;afterPaid:number;
+ beforeForgiven:boolean;afterForgiven:boolean;reason:string;historicalReceiptIds:string[];
+}
 export interface Payment {
+  quotaCorrections?: QuotaCorrectionAudit[];
   quotaCreatedAt?: string;
   quotaCreatedBy?: string;
   correctionHistory?: { at: string; by: string; reason: string; before: number; after: number; beforeDate?: string | null; afterDate?: string | null }[];

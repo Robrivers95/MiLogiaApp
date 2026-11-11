@@ -85,7 +85,7 @@ jobs:
       - name: Verify reviewed multi-income capture
         run: node tests/income-capture-ui.mjs
       - name: Verify member accounts and statement expenses
-        run: node tests/member-account-ui.mjs && node tests/member-unified-ui.mjs && node tests/member-table-ui.mjs && node tests/member-account-live-ui.mjs
+        run: node tests/member-account-ui.mjs && node tests/member-unified-ui.mjs && node tests/member-table-ui.mjs && node tests/member-account-live-ui.mjs && node tests/member-quota-edit-ui.mjs
       - name: Verify quick finance
         run: node tests/quick-finance-ui.mjs
       - name: Verify treasury report
