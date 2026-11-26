@@ -1,21 +1,80 @@
 // Mercado Pago exports: preserve operation IDs, dates and amounts exactly.
 export interface BankMovement {payerName:string;amount:number;date:string;period:string;kind:string;concept:string;reference:string;paymentMethod:string;sourceQuote:string;}
-const money=(s:string)=>{const clean=s.replace(/\$/g,'').trim();if(!/^-?(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}$/.test(clean))throw Error('Monto bancario inválido.');return Number(clean.replace(/,/g,''));};
-const date=(s:string)=>{const [d,m,y]=s.split('-');const value=`${y}-${m}-${d}`;if(!/^\d{4}-\d{2}-\d{2}$/.test(value)||new Date(value+'T12:00:00Z').toISOString().slice(0,10)!==value)throw Error('Fecha bancaria inválida.');return value;};
-export function bankStatement(text:string):{incomes:BankMovement[];ignored:number}|null{
- const csv=/RELEASE_DATE;TRANSACTION_TYPE;REFERENCE_ID;TRANSACTION_NET_AMOUNT;PARTIAL_BALANCE/i.test(text);
+export const BANK_TEXT_LIMIT=128000;
+export const BANK_INCOME_LIMIT=120;
+
+const columns=['RELEASE_DATE','TRANSACTION_TYPE','REFERENCE_ID','TRANSACTION_NET_AMOUNT'] as const;
+const field=(value:string)=>value.trim().replace(/^\uFEFF/,'');
+function cells(line:string,separator:string):string[]{
+ const result:string[]=[];let value='',quoted=false,closed=false;
+ for(let i=0;i<line.length;i++){
+  const c=line[i];
+  if(quoted){
+   if(c==='"'&&line[i+1]==='"'){value+='"';i++;}
+   else if(c==='"'){quoted=false;closed=true;}
+   else value+=c;
+  }else if(c===separator){result.push(field(value));value='';closed=false;}
+  else if(c==='"'&&!closed&&!value.trim()){quoted=true;value='';}
+  else if(c==='"'||closed&&c.trim())throw Error('Hay comillas fuera de lugar.');
+  else if(!closed)value+=c;
+ }
+ if(quoted)throw Error('Hay un campo entre comillas sin cerrar. Vuelve a exportar el CSV original.');
+ return [...result,field(value)];
+}
+function csvHeader(line:string){
+ if(!columns.every(c=>line.toUpperCase().includes(c)))return null;
+ for(const separator of [';',',','\t']){
+  try{
+   const names=cells(line,separator).map(s=>s.toUpperCase());
+   if(columns.every(c=>names.filter(n=>n===c).length===1))return {separator,length:names.length,indices:columns.map(c=>names.indexOf(c))};
+  }catch{}
+ }
+ return null;
+}
+export const hasBankCsvHeader=(text:string)=>text.split(/\r\n|\n|\r/).some(line=>csvHeader(line)!==null);
+
+const money=(value:string)=>{
+ const clean=value.trim().replace(/^(-?)\s*\$\s*/,'$1');
+ let normalized:string;
+ if(/^-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(clean))normalized=clean.replace(/,/g,'');
+ else if(/^-?(?:\d+|\d{1,3}(?:\.\d{3})+),\d{1,2}$/.test(clean))normalized=clean.replace(/\./g,'').replace(',','.');
+ else throw Error('el monto de la operación no es válido.');
+ const amount=Number(normalized);
+ if(!Number.isFinite(amount)||Math.abs(amount)>999999999)throw Error('el monto de la operación está fuera de rango.');
+ return amount;
+};
+const date=(value:string)=>{
+ const parts=/^(\d{1,2})([-/])(\d{1,2})\2(\d{4})$/.exec(value);
+ const iso=parts?`${parts[4]}-${parts[3].padStart(2,'0')}-${parts[1].padStart(2,'0')}`:value;
+ const timestamp=Date.parse(iso+'T12:00:00Z');
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(iso)||!Number.isFinite(timestamp)||new Date(timestamp).toISOString().slice(0,10)!==iso)throw Error('la fecha de la operación no es válida.');
+ return iso;
+};
+export function bankStatement(text:string):{incomes:BankMovement[];ignored:number;repeatedRows:number}|null{
+ const lines=text.split(/\r\n|\n|\r/);
+ const csv=lines.some(line=>csvHeader(line)!==null);
  const pdf=/ESTADO DE SALDOS Y MOVIMIENTOS/i.test(text)&&/Mercado\s+Pago/i.test(text);
  if(!csv&&!pdf)return null;
- const candidates:{day:string;description:string;reference:string;amount:string;quote:string}[]=[];
+ const candidates:{day:string;description:string;reference:string;amount:string;quote:string;line?:number}[]=[];
  if(csv){
-  for(const line of text.split(/\r?\n/)){
-   const parts=line.trim().split(';').map(s=>s.trim().replace(/^"(.*)"$/,'$1'));
-   if(parts.length!==5||!/^\d{2}-\d{2}-\d{4}$/.test(parts[0]))continue;
-   // Validate every row, including excluded outgoing transfers and returns.
-   date(parts[0]);money(parts[3]);money(parts[4]);
-   candidates.push({day:parts[0],description:parts[1],reference:parts[2],amount:parts[3],quote:line.trim()});
+  let header:ReturnType<typeof csvHeader>=null,csvRows=0;
+  for(let i=0;i<lines.length;i++){
+   const line=field(lines[i]);
+   if(!line)continue;
+   const next=csvHeader(line);
+   if(next){header=next;continue;}
+   if(/^(?:CSV|PDF|Excel) .+:$|^ESTADO DE SALDOS Y MOVIMIENTOS\b|^sep=[;,\t]$|^["\s]*INITIAL_BALANCE["\s]*[;,\t]/i.test(line)){header=null;continue;}
+   if(!header)continue;
+   try{
+    const parts=cells(line,header.separator);
+    if(parts.length!==header.length)throw Error('las columnas no coinciden con el encabezado. Usa el CSV original del banco.');
+    const [day,description,reference,amount]=header.indices.map(index=>parts[index]);
+    date(day);money(amount);
+    if(!description)throw Error('falta la descripción de la operación.');
+    candidates.push({day,description,reference,amount,quote:line,line:i+1});csvRows++;
+   }catch(e){throw Error(`CSV, línea ${i+1}: ${(e as Error).message}`);}
   }
-  if(!candidates.length)throw Error('No se encontraron movimientos válidos en el CSV.');
+  if(!csvRows)throw Error('El CSV tiene encabezado, pero no contiene movimientos.');
  }
  if(pdf){
   const normalized=text.replace(/^\s*\d+\/\d+\s*$/gm,'').replace(/Fecha\s+Descripción\s+ID de la\s*operación\s+Valor\s+Saldo/g,'').replace(/Fecha de generación:[\s\S]*?mercadopago\.com\.mx\/c\/ifpetyc\./g,'').replace(/Transferencia\s+recibida\s+(\d{2}-\d{2}-\d{4})/g,'$1 Transferencia recibida');
@@ -26,15 +85,15 @@ export function bankStatement(text:string):{incomes:BankMovement[];ignored:numbe
   const actual=candidates.filter(c=>/^Transferencia\s+recibida\b/i.test(c.description)).length;
   if(actual<expected)throw Error('No se pudieron leer todas las transferencias del PDF. Prueba el CSV de Mercado Pago.');
  }
- const incomes:BankMovement[]=[],seen=new Map<string,string>();let ignored=0;
+ const incomes:BankMovement[]=[],seen=new Map<string,string>();let ignored=0,repeatedRows=0;
  for(const c of candidates){
   const amount=money(c.amount),day=date(c.day);
   if(amount<=0||!/^Transferencia\s+recibida\b/i.test(c.description)){ignored++;continue;}
-  if(!/^\d{8,40}$/.test(c.reference))throw Error('Referencia bancaria inválida.');
+  if(!/^\d{8,40}$/.test(c.reference))throw Error(c.line?`CSV, línea ${c.line}: el folio debe conservar sus dígitos originales. Evita volver a guardar el archivo en Excel si cambió el folio a notación científica.`:'Referencia bancaria inválida.');
   const payerName=c.description.replace(/^Transferencia\s+recibida\s*/i,'').trim();
   if(!payerName)throw Error('Hay una transferencia sin nombre de ordenante.');
-  const identity=JSON.stringify([payerName.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase(),day,amount]);
-  if(seen.has(c.reference)){if(seen.get(c.reference)!==identity)throw Error('La misma referencia aparece con datos distintos. Revisa los archivos.');continue;}
+  const identity=JSON.stringify([payerName.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').toUpperCase(),day,amount]);
+  if(seen.has(c.reference)){if(seen.get(c.reference)!==identity)throw Error('La misma referencia aparece con datos distintos. Revisa los archivos.');repeatedRows++;continue;}
   seen.set(c.reference,identity);
   let sourceQuote=c.quote;
   if(!text.includes(sourceQuote)){
@@ -47,6 +106,6 @@ export function bankStatement(text:string):{incomes:BankMovement[];ignored:numbe
   }
   incomes.push({payerName,amount,date:day,period:'',kind:'regular',concept:'Transferencia recibida · concepto por confirmar',reference:c.reference,paymentMethod:'transfer',sourceQuote});
  }
- if(incomes.length>30)throw Error('Hay más de 30 ingresos. Divide el estado de cuenta en varios análisis.');
- return {incomes,ignored};
+ if(incomes.length>BANK_INCOME_LIMIT)throw Error(`Se detectaron ${incomes.length} transferencias. Importa hasta ${BANK_INCOME_LIMIT} por análisis, conservando el encabezado.`);
+ return {incomes,ignored,repeatedRows};
 }
