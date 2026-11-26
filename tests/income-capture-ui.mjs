@@ -99,6 +99,28 @@ try{for(let i=0;i<80;i++){try{await fetch('http://127.0.0.1:5192/tests/income-br
  assert.equal(await page.evaluate(()=>window.__approved.length),0);
  console.log('Unrecognized CSV mapping passes on a phone: original folio, explicit credit column and no automatic payment.');
 
+ await page.goto('http://127.0.0.1:5192/tests/income-browser.html');
+ const compact='Fecha,Tipo y contraparte,Concepto,Importe,Folio\n5-Nov,Gasto — Proveedor,Servicio,"(1,400.00)",2.30000E+14\n6-Nov,Ingreso — Juan Pérez,Cuota,500,000-REF-03\n7-Nov,Ingreso — Carlos Ríos,Abono,400,3.12345E+13';
+ const legacyEncoding=Buffer.from(compact.replace(/—/g,'\x97'),'latin1');
+ await page.getByLabel('Archivos de ingresos',{exact:true}).setInputFiles({name:'estado-ficticio.csv',mimeType:'text/csv',buffer:legacyEncoding});
+ const prepare=page.getByRole('button',{name:'Interpretar y preparar solicitudes'});
+ await prepare.click();
+ await page.getByRole('alert').filter({hasText:'pero no año'}).waitFor();
+ assert.equal(await page.evaluate(()=>window.__analyses.length),0);
+ const year=page.getByRole('textbox',{name:'Año de las fechas del CSV',exact:true});assert.equal(await year.inputValue(),'');await year.fill('2026');
+ await prepare.click();
+ await page.getByText('Ingresos con folio utilizable: 1. Ingresos que requieren el folio original: 1.',{exact:true}).waitFor();
+ await page.getByText('Ver filas que requieren corrección',{exact:true}).click();
+ await page.getByText(/línea 4 .notación científica/).waitFor();
+ assert.equal(await page.evaluate(()=>window.__analyses.length),0);
+ await page.getByRole('checkbox',{name:'Preparar solo los ingresos con folio utilizable'}).check();
+ await prepare.click();
+ await page.getByRole('status').filter({hasText:'Ingresos omitidos por folio incompleto: 1.'}).waitFor();
+ const compactInput=await page.evaluate(()=>window.__analyses[0].csvFiles[0]);
+ assert.equal(compactInput.text,compact);assert.equal(compactInput.year,'2026');assert.equal(compactInput.mapping.direction,1);assert.equal(compactInput.skipInvalidFolios,true);
+ assert.equal(await page.evaluate(()=>window.__approved.length),0);
+ console.log('Phone CSV import passed: missing year and rounded folios require separate explicit choices before preparing draft records.');
+
  await page.goto('http://127.0.0.1:5192/tests/income-browser.html?role=member');await page.getByText(/requiere Admin o Admin Master/).waitFor();assert.deepEqual(errors,[]);console.log('Income browser passed: image+text -> two drafts, separate review/approval, corrected member/year/month/extra concept and amount, confirmation reset, linked proof, reject, responsive widths and role gate.');
 }finally{await browser?.close();server.kill();for(const suffix of ['js','html'])rmSync('tests/income-browser.'+suffix,{force:true});}
 

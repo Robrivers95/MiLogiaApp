@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mi-logia-flex-bank-csv-20261126';
+const CACHE_NAME = 'mi-logia-bank-csv-dates-20261126';
 const urlsToCache = [
   '/',
   '/index.html',

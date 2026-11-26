@@ -1,5 +1,6 @@
-import {BANK_INCOME_LIMIT,BANK_TEXT_LIMIT} from '../functions/src/meetingBankStatement';
-import {csvIsReady,inspectBankCsv,recognizeBankCsvText} from '../functions/src/meetingBankCsv';
+import {bankStatement,BANK_INCOME_LIMIT,BANK_TEXT_LIMIT} from '../functions/src/meetingBankStatement';
+import type {BankImportFolioIssue} from '../functions/src/meetingBankStatement';
+import {bankCsvNeedsYear,csvIsReady,inspectBankCsv,isBankCsvYear,recognizeBankCsvText} from '../functions/src/meetingBankCsv';
 import type {CsvInput,CsvMapping} from '../functions/src/meetingBankCsv';
 import {incomeCsvText,isIncomeCsv} from '../services/incomeCsv';
 import BankCsvColumns,{BankCsvPlan} from './BankCsvColumns';
@@ -26,6 +27,9 @@ export default function IncomeCapture({user,suspended=false,onBusyChange}:{user:
  const fileInput=useRef<HTMLInputElement>(null);
  const [csvPlans,setCsvPlans]=useState<BankCsvPlan[]|null>(null);
  const [conflicts,setConflicts]=useState<string[]>([]);
+ const [folioWarnings,setFolioWarnings]=useState<{issues:BankImportFolioIssue[];files:string[];usable:number}|null>(null);
+ const [skipInvalidFolios,setSkipInvalidFolios]=useState(false);
+ const clearFolioWarnings=()=>{setFolioWarnings(null);setSkipInvalidFolios(false);};
  const request=useRef(''),flight=useRef(false);const allowed=['admin','master'].includes(user.role)&&user.active!==false&&!suspended;
  const refresh=async()=>{const [list,options]=await Promise.all([incomeCaptureApi.list(user.groupId),incomeCaptureApi.options(user.groupId)]);setRows(list);setMembers(options.members);setAccounts(options.accounts);setVersion(v=>v+1);};
  useEffect(()=>{if(allowed)void refresh().catch(e=>setError(e.message));},[user.uid,user.groupId,allowed]);
@@ -56,8 +60,17 @@ export default function IncomeCapture({user,suspended=false,onBusyChange}:{user:
   return plans;
  };
  const changeCsv=(index:number,patch:Partial<CsvMapping>)=>{
-  setCsvPlans(current=>current?.map((plan,i)=>i===index?{...plan,...(patch.dateOrder?{ambiguousDate:false}:{}),mapping:{...plan.mapping,...patch}}:plan)||null);
-  request.current='';setError('');
+  setCsvPlans(current=>current?.map((plan,i)=>{
+   if(i!==index)return plan;
+   const mapping={...plan.mapping,...patch};
+   const needsYear=patch.date===undefined?plan.needsYear:bankCsvNeedsYear(plan.text,plan.headerLine,plan.separator,mapping.date);
+   return {...plan,...(patch.dateOrder?{ambiguousDate:false}:{}),mapping,needsYear,year:needsYear?plan.year:undefined};
+  })||null);
+  request.current='';setError('');clearFolioWarnings();
+ };
+ const changeCsvYear=(index:number,year:string)=>{
+  setCsvPlans(current=>current?.map((plan,i)=>i===index?{...plan,year}:plan)||null);
+  request.current='';setError('');clearFolioWarnings();
  };
  const analyze=()=>run(async()=>{
   setConflicts([]);
@@ -68,21 +81,37 @@ export default function IncomeCapture({user,suspended=false,onBusyChange}:{user:
    setError('Revisa las columnas y el formato de fecha. Elige columnas distintas para el folio, la fecha y el importe, e indica cómo identificar los abonos. Todavía no se crearon solicitudes.');
    return;
   }
+  if(plans.some(plan=>plan.needsYear&&!isBankCsvYear(plan.year))){
+   setCsvPlans(plans);
+   setError('Algunas fechas del CSV tienen día y mes, pero no año. Indica el año del archivo para continuar.');
+   return;
+  }
   const otherFiles=files.filter(file=>!isIncomeCsv(file));
   if(plans.length&&otherFiles.some(file=>!/\.pdf$/i.test(file.name)&&file.type!=='application/pdf'))throw Error('Analiza el CSV por separado de fotos y Excel para mantener la conciliación por folio.');
   const pasted=plans.some(plan=>plan.name==='CSV pegado'&&plan.text===text);
   const prepared=await incomeAttachments(otherFiles,pasted?'':text,plans.length>0);
   if(plans.length&&(prepared.images.length||prepared.documents.length))throw Error('El PDF no tiene texto legible. Analiza el CSV por separado del PDF escaneado.');
-  const csvFiles:CsvInput[]=plans.map(({text,headerLine,separator,mapping})=>({text,headerLine,separator,mapping}));
+  const csvFiles:CsvInput[]=plans.map(({text,headerLine,separator,mapping,needsYear,year})=>({text,headerLine,separator,mapping,...(needsYear?{year}:{})}));
   if(prepared.text.length+csvFiles.reduce((sum,file)=>sum+file.text.length,0)>BANK_TEXT_LIMIT)throw Error('Divide los movimientos en partes y conserva el encabezado de cada CSV.');
+  const previewFiles=csvFiles.map(file=>({...file,skipInvalidFolios:true}));
+  const preview=csvFiles.length?bankStatement('',previewFiles):null;
+  if(preview?.invalidFolios.length){
+   setCsvPlans(plans);
+   setFolioWarnings({issues:preview.invalidFolios,files:plans.map(plan=>plan.name),usable:preview.incomes.length});
+   if(!preview.incomes.length||!skipInvalidFolios){
+    setError(preview.incomes.length?'Algunos ingresos no tienen un folio completo. Corrige esas filas o confirma que quieres preparar solo los ingresos con folio utilizable.':'Ningún ingreso de este CSV tiene un folio utilizable. Consigue los folios completos y vuelve a subir el archivo.');
+    return;
+   }
+  }
   request.current ||= crypto.randomUUID();
-  const result=await incomeCaptureApi.analyze(user.groupId,request.current,prepared.text,date,prepared.images,retainImages,prepared.documents,csvFiles);
+  const result=await incomeCaptureApi.analyze(user.groupId,request.current,prepared.text,date,prepared.images,retainImages,prepared.documents,preview?.invalidFolios.length?previewFiles:csvFiles);
   await refresh();
-  setText('');setFiles([]);setCsvPlans(null);if(fileInput.current)fileInput.current.value='';request.current='';
+  setText('');setFiles([]);setCsvPlans(null);clearFolioWarnings();if(fileInput.current)fileInput.current.value='';request.current='';
   if(result.bankRead&&result.created!==undefined){
    const conflicts=result.conflicts||[];
+   const excluded=result.invalidFolios||preview?.invalidFolios.length||0;
    setConflicts(conflicts);setFilter('pending');
-   setNotice(`Solicitudes nuevas: ${result.created}. Movimientos que ya tenían registro o solicitud: ${result.existing||0}. Filas repetidas en el archivo: ${result.repeatedRows||0}. Operaciones no consideradas (egresos, rendimientos u otras): ${result.ignored||0}. ${conflicts.length?`Folios con datos distintos: ${conflicts.length}; no se importaron. `:''}No se registró dinero. ${result.created?'Revisa y aprueba las solicitudes nuevas.':''}`);
+   setNotice(`Solicitudes nuevas: ${result.created}. Movimientos que ya tenían registro o solicitud: ${result.existing||0}. Filas repetidas en el archivo: ${result.repeatedRows||0}. Operaciones no consideradas (egresos, rendimientos u otras): ${result.ignored||0}. ${excluded?'Ingresos omitidos por folio incompleto: '+excluded+'. ':''}${conflicts.length?`Folios con datos distintos: ${conflicts.length}; no se importaron. `:''}No se registró dinero. ${result.created?'Revisa y aprueba las solicitudes nuevas.':''}`);
   }else setNotice(result.ids?.length?(result.bankRead?'Lectura bancaria lista. Revisa las solicitudes pendientes.':'Análisis listo. Revisa cada solicitud antes de aprobar.'):'No se identificaron ingresos. No se registró dinero.');
  });
  if(!allowed)return <p className="p-3 text-amber-200">La captura de ingresos requiere Admin o Admin Master y una logia activa.</p>;
@@ -92,14 +121,24 @@ export default function IncomeCapture({user,suspended=false,onBusyChange}:{user:
   {!!conflicts.length&&<details className="rounded-lg border border-amber-600 p-3 text-amber-200"><summary>Ver folios con datos distintos</summary><p>Compara la fecha y el importe con el registro existente antes de corregirlo.</p><ul className="list-disc pl-5">{conflicts.map(ref=><li key={ref}>{ref}</li>)}</ul></details>}
   {!selected&&<>
    <fieldset disabled={busy} className="rounded-xl border border-logia-700 p-4 space-y-3">
-    <label className="block">Texto o explicación<textarea aria-label="Texto de ingresos" className={field} rows={4} value={text} onChange={e=>{setText(e.target.value);setCsvPlans(null);request.current='';}} placeholder="Ej. Juan Pérez pagó $500 de septiembre y Carlos Ríos $700 de la cuota extraordinaria…"/></label>
-    <label className="block">Fotos, Excel, CSV o PDF (hasta 4)<input ref={fileInput} aria-label="Archivos de ingresos" className={field} type="file" multiple accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,.xlsx,.csv,text/csv,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={e=>{const next=Array.from(e.target.files||[]);if(next.length>4){setError('Selecciona hasta cuatro archivos.');e.target.value='';return;}setFiles(next);setCsvPlans(null);setError('');request.current='';}}/></label>
+    <label className="block">Texto o explicación<textarea aria-label="Texto de ingresos" className={field} rows={4} value={text} onChange={e=>{setText(e.target.value);setCsvPlans(null);clearFolioWarnings();request.current='';}} placeholder="Ej. Juan Pérez pagó $500 de septiembre y Carlos Ríos $700 de la cuota extraordinaria…"/></label>
+    <label className="block">Fotos, Excel, CSV o PDF (hasta 4)<input ref={fileInput} aria-label="Archivos de ingresos" className={field} type="file" multiple accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,.xlsx,.csv,text/csv,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={e=>{const next=Array.from(e.target.files||[]);if(next.length>4){setError('Selecciona hasta cuatro archivos.');e.target.value='';return;}setFiles(next);setCsvPlans(null);clearFolioWarnings();setError('');request.current='';}}/></label>
     <p className="text-xs text-gray-400">CSV con folio, fecha e importe: hasta {BANK_INCOME_LIMIT} transferencias por análisis. PDF y Excel: máximo 2 MB por archivo. Excel debe ser .xlsx; convierte los .xls antiguos. Por defecto solo se guardan los datos escritos, sin adjuntar el estado de cuenta.</p>
     {files.map((f,i)=><p className="text-xs break-words" key={i}>{f.name}</p>)}
     <label className="flex items-start gap-2"><input aria-label="Guardar imágenes como comprobantes" type="checkbox" checked={retainImages} onChange={e=>{setRetainImages(e.target.checked);request.current='';}}/>Guardar también las imágenes como comprobantes</label>
     <p className="text-xs text-gray-400">El CSV se concilia por folio sin Gemini. Puedes ajustar las columnas si tu banco usa otros nombres. La IA interpreta otros textos o fotos y busca coincidencias en el directorio. Por defecto se conserva solo el detalle escrito de cada movimiento; la foto no se guarda. Revisa las dudas antes de aprobar.</p>
     {files.some(isIncomeCsv)&&!csvPlans&&<button type="button" className={button} onClick={()=>void run(async()=>setCsvPlans(await loadCsvPlans()))}>Revisar columnas del CSV</button>}
-    {csvPlans?.map((plan,i)=><BankCsvColumns key={i} plan={plan} onChange={patch=>changeCsv(i,patch)}/>)}
+    {csvPlans?.map((plan,i)=><BankCsvColumns key={i} plan={plan} onChange={patch=>changeCsv(i,patch)} onYearChange={year=>changeCsvYear(i,year)}/>)}
+    {folioWarnings&&<div className="rounded-lg border border-amber-600 p-3 space-y-2 text-amber-100">
+     <p className="text-sm">Ingresos con folio utilizable: {folioWarnings.usable}. Ingresos que requieren el folio original: {folioWarnings.issues.length}.</p>
+     <details className="text-sm"><summary>Ver filas que requieren corrección</summary><ul className="list-disc pl-5">
+      {folioWarnings.files.map((name,i)=>{
+       const issues=folioWarnings.issues.filter(issue=>issue.file===i);
+       return issues.length?<li className="break-words" key={i}>{name}: {issues.map(issue=>'línea '+issue.line+' ('+(issue.reason==='scientific'?'notación científica':issue.reason==='missing'?'sin folio':'folio inválido')+')').join(', ')}</li>:null;
+      })}
+     </ul></details>
+     {folioWarnings.usable>0&&<label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={skipInvalidFolios} onChange={e=>{setSkipInvalidFolios(e.target.checked);request.current='';setError('');}}/>Preparar solo los ingresos con folio utilizable</label>}
+    </div>}
     <label className="block">Fecha de referencia<input aria-label="Fecha de referencia de ingresos" className={field} type="date" value={date} onChange={e=>{setDate(e.target.value);request.current='';}}/></label>
     <button className={button+' bg-indigo-600'} onClick={analyze}>{busy?'Analizando…':'Interpretar y preparar solicitudes'}</button>
    </fieldset>

@@ -545,3 +545,32 @@ for(const [suffix,bankArgs,reason] of [
 assert.equal(providerCalls,beforeBankProvider,'every CSV was read without an AI key or provider call');
 assert.deepEqual([...store].filter(([path])=>path.includes('/ledger/')||path.includes('/treasury/')||path.includes('/paymentReceipts/')).filter(entry=>!['older-proof','older-deposit','pending-upload','different-amount','foreign-proof'].includes(entry[0].split('/').pop())),beforeMoney);
 console.log('Multiple bank CSV formats passed: Spanish and English headers, unknown columns explicitly mapped, date ambiguity, exact alphanumeric/zero-prefixed folios, old drafts across formats, outgoings ignored and no money posted.');
+
+const shortDates=[
+ 'Fecha,Tipo y contraparte,Concepto,Importe,Folio',
+ '6-Nov,Gasto — Proveedor,Servicio,"(2,400.00)",2.30000E+14',
+ '24-Nov,Ingreso — Juan Pérez,Cuota,"1,200.50",000-CSV-X9',
+ '23-nov.,Ingreso — Carlos Ríos,Abono,100.50,8.12345E+12',
+ '3-noviembre,Ingreso — Carlos Ríos,Cuota,400,000-REF-Z1',
+ '4-Nov-2025,Ingreso — Carlos Ríos,Cuota,200,000-ISO-X9',
+].join('\r\n');
+const shortInput=fromCsv(shortDates,1,',',{reference:4,date:0,amount:3,direction:1,mode:'typed'});
+const emptyBankWrites=[...store];
+await assert.rejects(call(flexInput('no-csv-year','',[shortInput]),actor('admin')),e=>e.code==='invalid-argument'&&/línea 3.*no trae año/.test(e.message));
+await assert.rejects(call(flexInput('no-skip-confirmation','',[{...shortInput,year:'2026'}]),actor('admin')),e=>e.code==='invalid-argument'&&/línea 4.*notación científica/.test(e.message));
+assert.deepEqual([...store],emptyBankWrites,'no draft or other write before valid year and exclusion choice');
+const shortReady={...shortInput,year:'2026',skipInvalidFolios:true};
+const shortImported=await call(flexInput('short-dates','',[shortReady]),actor('admin'));
+assert.equal(shortImported.ignored,1,'parenthesized withdrawal is not imported');
+assert.equal(shortImported.invalidFolios,1,'scientific abbreviation is not an exact reference');
+assert.equal(shortImported.created,2);assert.equal(shortImported.existing,1);
+const shortCaptured=Array.from(shortImported.ids,id=>store.get('groups/lodge/incomeDrafts/'+id));
+for(const [folio,date,amount,payer] of [['000-CSV-X9','2026-11-24',1200.5,'juan'],['000-ISO-X9','2025-11-04',200,'carlos']]){
+ const d=shortCaptured.find(r=>r.reference===folio);
+ assert.equal(d.date,date);assert.equal(d.amount,amount);assert.equal(d.memberId,payer);assert.equal(d.status,'pending');assert.equal(d.period,'');
+}
+const shortRepeated=await call(flexInput('short-dates-reimport','',[shortReady]),actor('master'));
+assert.equal(shortRepeated.created,0);assert.equal(shortRepeated.existing,3);assert.equal(shortRepeated.invalidFolios,1);
+assert.equal(providerCalls,beforeBankProvider);
+assert.deepEqual([...store].filter(([path])=>path.includes('/ledger/')||path.includes('/treasury/')||path.includes('/paymentReceipts/')),emptyBankWrites.filter(([path])=>path.includes('/ledger/')||path.includes('/treasury/')||path.includes('/paymentReceipts/')));
+console.log('Bank CSV with month names and accounting negatives passed: explicit missing year, exact statement year preserved when provided, separate type and concept, no abbreviated references booked, and repeated folio kept unique.');
