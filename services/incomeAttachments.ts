@@ -1,8 +1,9 @@
-import {BANK_TEXT_LIMIT,hasBankCsvHeader} from '../functions/src/meetingBankStatement';
+import {incomeCsvText} from './incomeCsv';
+import {BANK_TEXT_LIMIT,hasBankCsvHeader,isMercadoPagoPdf} from '../functions/src/meetingBankStatement';
 import {incomeImage} from './incomeCaptureApi';
 type Part={mimeType:string;data:string};
 // Files remain local until analysis. Only extracted text and individual quotes persist.
-export async function incomeAttachments(files:File[],text:string):Promise<{text:string;images:Part[];documents:Part[]}>{
+export async function incomeAttachments(files:File[],text:string,withBankCsv=false):Promise<{text:string;images:Part[];documents:Part[]}>{
  if(files.length>4)throw Error('Selecciona hasta cuatro archivos.');
  const images:Part[]=[],documents:Part[]=[];const sections=[text];
  for(const file of files){
@@ -13,16 +14,12 @@ export async function incomeAttachments(files:File[],text:string):Promise<{text:
    if(new TextDecoder().decode(bytes.slice(0,5))!=='%PDF-')throw Error('El archivo no es un PDF válido.');
    const {incomePdf}=await import('./incomePdf');
    const extracted=await incomePdf(bytes);
+   if(withBankCsv&&!isMercadoPagoPdf(extracted))throw Error('Analiza este PDF por separado del CSV para que no se omitan movimientos.');
    if(extracted.replace(/\s/g,'').length>40){sections.push(`PDF ${file.name}:\n${extracted}`);continue;}
    let binary='';for(let offset=0;offset<bytes.length;offset+=16384)binary+=String.fromCharCode(...bytes.subarray(offset,offset+16384));
    documents.push({mimeType:'application/pdf',data:btoa(binary)});
   }else if(extension==='csv'||file.type==='text/csv'){
-   if(file.size>BANK_TEXT_LIMIT*2)throw Error('El CSV es muy grande. Divídelo en partes y conserva el encabezado en cada una.');
-   const bytes=new Uint8Array(await file.arrayBuffer());let source:string;
-   if(bytes[0]===255&&bytes[1]===254)source=new TextDecoder('utf-16le').decode(bytes);
-   else if(bytes[0]===254&&bytes[1]===255)source=new TextDecoder('utf-16be').decode(bytes);
-   else try{source=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{source=new TextDecoder('windows-1252').decode(bytes);}
-   if(!hasBankCsvHeader(source))throw Error('No reconocí las columnas de este CSV. Para conciliar por folio usa el archivo original de Mercado Pago, con fecha, tipo, referencia e importe de la operación.');
+   const source=await incomeCsvText(file);
    sections.push(`CSV ${file.name}:\n${source.replace(/^\uFEFF/,'')}`);
   }else if(extension==='xlsx'){
    if(file.size>2*1024*1024)throw Error('El Excel supera 2 MB. Exporta solo los movimientos que quieres revisar.');
@@ -43,7 +40,7 @@ export async function incomeAttachments(files:File[],text:string):Promise<{text:
   }else throw Error('Selecciona fotos JPG, PNG o WebP, Excel .xlsx, CSV o PDF. Convierte los .xls antiguos a .xlsx.');
  }
  const combined=sections.filter(Boolean).join('\n\n');
- const bankCsv=hasBankCsvHeader(combined);
+ const bankCsv=withBankCsv||hasBankCsvHeader(combined);
  if(bankCsv&&(images.length||documents.length))throw Error('Analiza el CSV por separado de fotos y PDF escaneados para comprobar los folios sin Gemini.');
  if(combined.length>(bankCsv?BANK_TEXT_LIMIT:20000))throw Error('Hay demasiado texto. Divide los movimientos en varios análisis y conserva el encabezado de cada CSV.');
  if([...images,...documents].reduce((sum,p)=>sum+p.data.length,0)>6500000)throw Error('Los archivos juntos son demasiado pesados. Analiza menos archivos a la vez.');

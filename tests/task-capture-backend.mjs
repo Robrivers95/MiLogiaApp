@@ -493,3 +493,55 @@ const concurrentText=csvHeader+'\n'+line('000000000000000000000099','250.00');
 const concurrent=await Promise.all(['admin','master'].map(uid=>call({...largerInput,requestId:'concurrent-'+uid,text:concurrentText},actor(uid))));
 assert.equal(concurrent.reduce((s,r)=>s+r.created,0),1);assert.equal(concurrent.reduce((s,r)=>s+r.existing,0),1);
 console.log('CSV reconciliation passed: flexible headers/dates/amounts, over 30 deposits, exact folios across drafts/receipts/treasury, conflicts isolated, repeat and concurrent imports, no Gemini dependency, and actionable row errors without writes.');
+
+const flexInput=(suffix,text,csvFiles=[])=>({...importBank,requestId:'flex-'+suffix,text,csvFiles});
+const fromCsv=(text,headerLine,separator,mapping)=>({text,headerLine,separator,mapping:{reference:-1,date:-1,amount:-1,payer:-1,direction:-1,mode:'signed',dateOrder:'DMY',...mapping}});
+const spanish=[
+ 'Estado de cuenta de prueba',
+ 'Clave de rastreo;Cargo;Nombre del ordenante;Fecha del movimiento;Abonos;Moneda',
+ '  000ABC-001  ;;Juan Pérez;2026-10-23 21:05:00;1.200,50;MXN',
+ 'NO-IMPORTAR;400;Carlos Ríos;2026-10-24;;MXN',
+ '900000000001;;Juan Pérez;2026-10-01;800;MXN',
+].join('\n');
+const spanishResult=await call(flexInput('spanish',spanish),actor('admin'));
+assert.equal(spanishResult.created,1);assert.equal(spanishResult.existing,1);assert.equal(spanishResult.ignored,1);
+const deposit=Array.from(spanishResult.ids,id=>store.get('groups/lodge/incomeDrafts/'+id)).find(d=>d.reference==='000ABC-001');
+assert.equal(deposit.date,'2026-10-23');assert.equal(deposit.amount,1200.5);assert.equal(deposit.memberId,'juan');assert.equal(deposit.status,'pending');
+const english=[
+ 'Transaction ID,Operation Type,Amount,Posting Date,Sender Name',
+ '000ABC-001,Incoming transfer,"+1,200.50",10/23/2026,Juan Pérez',
+ 'NOT-IN,Outgoing transfer,200,10/23/2026,Carlos Ríos',
+ '000ABC-002,Credit,800.01,10/24/2026,"Carlos, Ríos"',
+].join('\r\n');
+const englishResult=await call(flexInput('english',english),actor('master'));
+assert.equal(englishResult.created,1);assert.equal(englishResult.existing,1);assert.equal(englishResult.ignored,1);
+const englishDeposit=Array.from(englishResult.ids,id=>store.get('groups/lodge/incomeDrafts/'+id)).find(d=>d.reference==='000ABC-002');
+assert.equal(englishDeposit.date,'2026-10-24');assert.equal(englishDeposit.amount,800.01);assert.equal(englishDeposit.memberId,'carlos');
+const custom='Encabezado introductorio\nDía|ID único|Pesos\n2026/11/03|000-REF-Z1|400.00\n2026/11/04|OUT| -100.00';
+const mapped=fromCsv(custom,2,'|',{reference:1,date:0,amount:2});
+const reviewed=await call(flexInput('manual','',[mapped]),actor('admin'));assert.equal(reviewed.created,1);assert.equal(reviewed.ignored,1);
+const manualDraft=store.get('groups/lodge/incomeDrafts/'+reviewed.ids[0]);
+assert.equal(manualDraft.reference,'000-REF-Z1');assert.equal(manualDraft.status,'pending');assert.equal(manualDraft.period,'');assert.equal(manualDraft.memberId,'');
+assert.match(manualDraft.sourceQuote,/000-REF-Z1/);
+const mappedSame=await call(flexInput('manual-other-admin','',[mapped]),actor('master'));assert.equal(mappedSame.created,0);assert.equal(mappedSame.existing,1);
+const ambiguousDateCsv='Fecha,Referencia,Abonos\n11/03/2026,000-REF-Z1,400.00';
+await assert.rejects(call(flexInput('ambiguous-date',ambiguousDateCsv),actor('admin')),e=>e.code==='invalid-argument'&&/formato de fecha/.test(e.message));
+const explicitDate=await call(flexInput('mapped-date','',[fromCsv(ambiguousDateCsv,1,',',{reference:1,date:0,amount:2,mode:'credit',dateOrder:'MDY'})]),actor('admin'));
+assert.equal(explicitDate.created,0);assert.equal(explicitDate.existing,1);
+const bankSame=['RELEASE_DATE;TRANSACTION_TYPE;REFERENCE_ID;TRANSACTION_NET_AMOUNT','01-10-2026;SPEI recibido Juan Pérez;900000000001;800'].join('\n');
+const newBankLabel=await call(flexInput('updated-bank-label','',[fromCsv(bankSame,1,';',{reference:2,date:0,amount:3,direction:1,mode:'typed'})]),actor('admin'));
+assert.equal(newBankLabel.created,0);assert.equal(newBankLabel.existing,1);
+for(const [suffix,bankArgs,reason] of [
+ ['missing-ref',[spanish.replace('000ABC-001',''),[]],/línea 3.*folio/],
+ ['rounded-ref',[spanish.replace('000ABC-001','2.123E+11'),[]],/línea 3.*folio/],
+ ['not-mxn',[spanish.replace(';MXN',';USD'),[]],/línea 3.*moneda/],
+ ['conflicting-refs',['',[mapped,{...mapped,text:custom.replace('400.00','500.00')}]],/mismo folio/],
+ ['same-column',['',[{...mapped,mapping:{...mapped.mapping,reference:2}}]],/columnas/],
+]){
+ const before=[...store];
+ await assert.rejects(call(flexInput(suffix,...bankArgs),actor('admin')),e=>e.code==='invalid-argument'&&reason.test(e.message));
+ assert.deepEqual([...store],before,'invalid mapping or folio writes nothing');
+}
+assert.equal(providerCalls,beforeBankProvider,'every CSV was read without an AI key or provider call');
+assert.deepEqual([...store].filter(([path])=>path.includes('/ledger/')||path.includes('/treasury/')||path.includes('/paymentReceipts/')).filter(entry=>!['older-proof','older-deposit','pending-upload','different-amount','foreign-proof'].includes(entry[0].split('/').pop())),beforeMoney);
+console.log('Multiple bank CSV formats passed: Spanish and English headers, unknown columns explicitly mapped, date ambiguity, exact alphanumeric/zero-prefixed folios, old drafts across formats, outgoings ignored and no money posted.');
