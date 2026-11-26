@@ -1,6 +1,6 @@
 export const incomeName = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
-export function incomeRows(output: any, roster: {id:string;name:string}[], text: string, hasImages: boolean) {
-  if (!Array.isArray(output?.incomes) || output.incomes.length > 30) throw Error('La respuesta debe contener hasta 30 ingresos separados.');
+export function incomeRows(output: any, roster: {id:string;name:string}[], text: string, hasImages: boolean, limit = 30) {
+  if (!Array.isArray(output?.incomes) || output.incomes.length > limit) throw Error(`La respuesta debe contener hasta ${limit} ingresos separados.`);
   return (output.incomes as any[]).map((row: any) => {
     const str=(key:string,max=1000)=>typeof row?.[key]==='string'?row[key].trim().slice(0,max):'';
     const payerName=str('payerName',180), quote=str('sourceQuote'), tokens=incomeName(payerName).split(' ').filter(t=>t.length>1);

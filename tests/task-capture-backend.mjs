@@ -19,18 +19,16 @@ const ref = (path) => ({
   id: path.split("/").at(-1),
   get: async () => snap(path),
 });
-const query = (path) => ({
-  where: () => query(path),
-  limit: () => query(path),
+const query = (path, filters = [], max = Infinity) => ({
+  where: (field, op, value) => query(path, [...filters, [field, op, value]], max),
+  limit: (n) => query(path, filters, n),
   get: async () => ({
-    docs: [...store.keys()]
-      .filter(
-        (k) =>
-          k.startsWith(path + "/") &&
-          !k.slice(path.length+1).includes("/") &&
-          store.get(k).groupId === "lodge",
-      )
-      .map(snap),
+    docs: [...store.keys()].filter(k => k.startsWith(path + "/") && !k.slice(path.length+1).includes("/") &&
+      filters.every(([field, op, expected]) => {
+        const value = field.split('.').reduce((obj, key) => obj?.[key], store.get(k));
+        return op === 'in' ? expected.includes(value) : value === expected;
+      })
+    ).slice(0,max).map(snap),
   }),
 });
 const db = {
@@ -40,7 +38,7 @@ const db = {
     const result = queue.then(async () => {
       const writes = [];
       const tx = {
-        get: async (r) => snap(r.path),
+        get: async (r) => { assert.equal(writes.length,0,'transactions read before writing');return r.path ? snap(r.path) : r.get(); },
         set: (r, v) => writes.push([r.path, v]),
         update: (r, v) => writes.push([r.path, { ...store.get(r.path), ...v }]),
         delete: r => writes.push([r.path, undefined]),
@@ -450,7 +448,48 @@ assert.deepEqual([...store].filter(([path])=>path.includes('/ledger/')||path.inc
 const pdfAgain=await call({...importBank,text:bankPdfText,requestId:'same-bank-as-pdf'},actor('master'));
 assert.deepEqual(Array.from(pdfAgain.ids),Array.from(bankRead.ids),'CSV and multi-page PDF reuse drafts by operation reference across admins');
 assert.equal(new Set(pdfAgain.ids).size,3);
-await reject(()=>call({...importBank,requestId:'bank-reference-conflict',text:bankCsv.replace(';800.00;',';900.00;')},actor('admin')),'failed-precondition');
+const collision=await call({...importBank,requestId:'bank-reference-conflict',text:bankCsv.replace(';800.00;',';900.00;')},actor('admin'));
+assert.deepEqual(Array.from(collision.conflicts),['900000000001']);assert.equal(collision.created,0);assert.equal(collision.existing,2);
 console.log('Bank CSV/PDF passed: exact dates/amounts/references, omitted returns/outgoings, separate equal payments, cross-admin deduplication, Gemini quota fallback, no financial writes.');
 
 const combinedBank=await call({...importBank,text:bankCsv+'\n'+bankPdfText,requestId:'same-bank-two-files'},actor('admin'));assert.equal(combinedBank.ids.length,3);assert.deepEqual(Array.from(combinedBank.ids),Array.from(bankRead.ids),'PDF+CSV in one import deduplicate accents and references');
+
+const csvHeader='"REFERENCE_ID","TRANSACTION_NET_AMOUNT","RELEASE_DATE","TRANSACTION_TYPE"';
+const line=(ref,amount,date='2026-10-08')=>`"${ref}","${amount}","${date}","Transferencia recibida Juan Pérez"`;
+const existingReceipt='000000000000000000000010';
+const existingTreasury='000000000000000000000011';
+const legacyPending='000000000000000000000012';
+const conflictRef='000000000000000000000013';
+const foreignReference='000000000000000000000014';
+const olderDraft='000000000000000000000015';
+store.set('groups/lodge/paymentReceipts/older-proof',{status:'approved',bankOriginalReference:existingReceipt,amount:1200.5,transferDate:'2026-10-08'});
+store.set('groups/lodge/treasury/older-deposit',{type:'income',bankReference:existingTreasury,amount:30,date:'2026-10-08'});
+store.set('groups/lodge/paymentReceipts/pending-upload',{status:'pending',bankReference:legacyPending,amount:20,transferDate:'2026-10-08'});
+store.set('groups/lodge/treasury/different-amount',{type:'income',bankReference:conflictRef,amount:9999,date:'2026-10-08'});
+store.set('groups/other/paymentReceipts/foreign-proof',{status:'approved',bankReference:foreignReference,amount:25,transferDate:'2026-10-08'});
+for(let i=0;i<505;i++)store.set('groups/lodge/incomeDrafts/filler-'+i,{status:'rejected'});
+store.set('groups/lodge/incomeDrafts/old-beyond-list-limit',{status:'approved',reference:'old-edit',approvedReview:{reference:olderDraft},amount:15,date:'2026-10-08'});
+const fresh=Array.from({length:63},(_,i)=>line(String(7700000000000+i),'100.00','8/10/2026'));
+const csvRows=[line(existingReceipt,'1,200.50'),line(existingTreasury,'30,00'),line(legacyPending,'20'),line(conflictRef,'10'),line(foreignReference,'25'),line(olderDraft,'15'),...fresh,fresh[0]];
+const largeText=['CSV octubre.csv:',csvHeader,...csvRows].join('\r\n');
+const beforeBankProvider=providerCalls;delete context.process.env.GEMINI_API_KEY;
+const largerInput={...importBank,requestId:'larger-quoted-bank',text:largeText};
+const importResult=await call(largerInput,actor('admin'));assert.equal(importResult.created,64);assert.equal(importResult.existing,4);assert.equal(importResult.repeatedRows,1);assert.deepEqual(Array.from(importResult.conflicts),[conflictRef]);assert.equal(providerCalls,beforeBankProvider,'structured bank import never calls Gemini');
+assert.ok(importResult.ids.includes('old-beyond-list-limit'));assert.ok(Array.from(importResult.ids,id=>store.get('groups/lodge/incomeDrafts/'+id)).some(r=>r.reference===foreignReference),'same reference in another lodge is isolated');
+assert.ok(Array.from(importResult.ids,id=>store.get('groups/lodge/incomeDrafts/'+id)).filter(r=>r.status==='pending').every(r=>r.sourceText===''&&r.sourceQuote.includes(r.reference)));
+const sameRetry=await call(largerInput,actor('admin'));assert.deepEqual(JSON.parse(JSON.stringify(sameRetry)),JSON.parse(JSON.stringify(importResult)));
+const duplicateBank=await call({...largerInput,requestId:'larger-reimport'},actor('master'));assert.equal(duplicateBank.created,0);assert.equal(duplicateBank.existing,68);
+for(const [suffix,broken,expected] of [
+ ['bad-date',line(foreignReference,'25','31/02/2026'),/línea 3.*fecha/],
+ ['lost-folio',line('7.7E+12','25'),/línea 3.*folio/],
+ ['missing-field','2026-10-08,25',/línea 3.*columnas/],
+]){
+ const before=[...store];
+ await assert.rejects(call({...largerInput,requestId:suffix,text:['CSV otro.csv:',csvHeader,broken].join('\n')},actor('admin')),e=>e.code==='invalid-argument'&&expected.test(e.message));
+ assert.deepEqual([...store],before,'invalid CSV creates no requests or drafts');
+}
+const beyondOldTextLimit=await call({...largerInput,requestId:'over-old-text-limit',text:'Nota de referencia '.repeat(1100)+'\n'+largeText},actor('master'));assert.equal(beyondOldTextLimit.created,0);
+const concurrentText=csvHeader+'\n'+line('000000000000000000000099','250.00');
+const concurrent=await Promise.all(['admin','master'].map(uid=>call({...largerInput,requestId:'concurrent-'+uid,text:concurrentText},actor(uid))));
+assert.equal(concurrent.reduce((s,r)=>s+r.created,0),1);assert.equal(concurrent.reduce((s,r)=>s+r.existing,0),1);
+console.log('CSV reconciliation passed: flexible headers/dates/amounts, over 30 deposits, exact folios across drafts/receipts/treasury, conflicts isolated, repeat and concurrent imports, no Gemini dependency, and actionable row errors without writes.');

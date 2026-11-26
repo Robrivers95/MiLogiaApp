@@ -1,3 +1,4 @@
+import {BANK_INCOME_LIMIT} from '../functions/src/meetingBankStatement';
 import {incomeAllocation} from '../services/incomeAllocation';
 import React,{useEffect,useRef,useState} from 'react';
 import type {User,BankBalance} from '../types';
@@ -18,10 +19,12 @@ export default function IncomeCapture({user,suspended=false,onBusyChange}:{user:
  const {ledgers,errors:ledgerErrors}=useIncomeLedgers(user.groupId,[...rows.map(r=>(r as any).approvedReview?.memberId||r.memberId),review?.memberId||''],version);
  const payments=ledgers[review?.memberId||'']||[],paymentsReady=!!review?.memberId&&Object.prototype.hasOwnProperty.call(ledgers,review.memberId);
  const through=localFinanceDate().slice(0,7);
+ const fileInput=useRef<HTMLInputElement>(null);
+ const [conflicts,setConflicts]=useState<string[]>([]);
  const request=useRef(''),flight=useRef(false);const allowed=['admin','master'].includes(user.role)&&user.active!==false&&!suspended;
  const refresh=async()=>{const [list,options]=await Promise.all([incomeCaptureApi.list(user.groupId),incomeCaptureApi.options(user.groupId)]);setRows(list);setMembers(options.members);setAccounts(options.accounts);setVersion(v=>v+1);};
  useEffect(()=>{if(allowed)void refresh().catch(e=>setError(e.message));},[user.uid,user.groupId,allowed]);
- const run=async(work:()=>Promise<void>)=>{if(flight.current||!allowed)return;flight.current=true;setBusy(true);onBusyChange?.(true);setError('');setNotice('');try{await work();}catch(e:any){setError(e.message||'No se pudo completar. Reintenta.');}finally{flight.current=false;setBusy(false);onBusyChange?.(false);}};
+ const run=async(work:()=>Promise<void>)=>{if(flight.current||!allowed)return;flight.current=true;setBusy(true);onBusyChange?.(true);setError('');setNotice('');try{await work();}catch(e:any){setError(!e?.message||['internal','invalid-argument','failed-precondition','Bad Request'].includes(e.message)?'No se pudo analizar o guardar la solicitud. Si estás importando un CSV, prueba con el archivo original del banco y conserva los folios sin editar.':e.message);}finally{flight.current=false;setBusy(false);onBusyChange?.(false);}};
  const update=(patch:Partial<IncomeReview>)=>{if(frozen)return;setReview(old=>old?{...old,...patch}:old);setReviewed(false);setError('');};
  const open=(draft:IncomeDraft)=>{setSelected(draft);setMemberSearch('');setReview((draft as any).approvedReview||{reference:draft.reference||'',...(draft.kind!=='other'?{allocations:[],allowUnapplied:false}:{}),memberId:draft.memberId,amount:draft.amount,date:draft.date,period:draft.period,kind:draft.kind==='other'?'other':'regular',feeId:'',concept:draft.concept||'',paymentMethod:draft.paymentMethod,accountId:''});setReviewed(false);setError('');setConfirmReject(false);setFrozen(undefined);try{const pending=JSON.parse(localStorage.getItem(`income-confirm:${user.uid}:${user.groupId}:${draft.id}`)||'null');if(pending){setReview(pending);setFrozen(pending);setReviewed(true);}}catch{}};
 
@@ -34,20 +37,35 @@ export default function IncomeCapture({user,suspended=false,onBusyChange}:{user:
  const save=()=>run(async()=>{if(!selected||!review||!reviewed)throw Error('Revisa los datos y marca la confirmación.');const key=`income-confirm:${user.uid}:${user.groupId}:${selected.id}`,payload=frozen||{...review,...(allocationPreview?{periodAmounts:allocationPreview.allocations.map(a=>a.amount)}:{})};localStorage.setItem(key,JSON.stringify(payload));setFrozen(payload);
   try{await incomeCaptureApi.approve(user.groupId,selected.id,payload,true);}catch(e){try{const state=await incomeCaptureApi.state(user.groupId,selected.id);if(state==='pending'){localStorage.removeItem(key);setFrozen(undefined);}}catch{}throw e;}
   localStorage.removeItem(key);setFrozen(undefined);setSelected(undefined);setReview(undefined);await refresh();setNotice(selectionPreview?.unapplied?'Ingreso aprobado. El folio quedó guardado y el remanente se conserva en Capturas como saldo sin aplicar.':'Ingreso aprobado y registrado. El folio y el reparto quedaron guardados.');});
+ const analyze=()=>run(async()=>{
+  setConflicts([]);
+  if(!text.trim()&&!files.length)throw Error('Agrega texto, fotos, Excel, CSV o PDF.');
+  request.current ||= crypto.randomUUID();
+  const prepared=await incomeAttachments(files,text);
+  const result=await incomeCaptureApi.analyze(user.groupId,request.current,prepared.text,date,prepared.images,retainImages,prepared.documents);
+  await refresh();
+  setText('');setFiles([]);if(fileInput.current)fileInput.current.value='';request.current='';
+  if(result.bankRead&&result.created!==undefined){
+   const conflicts=result.conflicts||[];
+   setConflicts(conflicts);setFilter('pending');
+   setNotice(`Solicitudes nuevas: ${result.created}. Movimientos que ya tenían registro o solicitud: ${result.existing||0}. Filas repetidas en el archivo: ${result.repeatedRows||0}. Operaciones no consideradas (egresos, rendimientos u otras): ${result.ignored||0}. ${conflicts.length?`Folios con datos distintos: ${conflicts.length}; no se importaron. `:''}No se registró dinero. ${result.created?'Revisa y aprueba las solicitudes nuevas.':''}`);
+  }else setNotice(result.ids?.length?(result.bankRead?'Lectura bancaria lista. Revisa las solicitudes pendientes.':'Análisis listo. Revisa cada solicitud antes de aprobar.'):'No se identificaron ingresos. No se registró dinero.');
+ });
  if(!allowed)return <p className="p-3 text-amber-200">La captura de ingresos requiere Admin o Admin Master y una logia activa.</p>;
  return <section aria-label="Ingresos con IA" className="space-y-4 min-w-0">
   <div><h3 className="text-xl font-bold">Conciliar ingresos con Gemini</h3><p className="text-sm text-gray-400">Texto, fotos, Excel (.xlsx), CSV o PDF de transferencias y estados de cuenta. Cada pago genera una solicitud. Solo se registra al aprobarla.</p></div>
   {error&&<p role="alert" className="rounded border border-red-600 bg-red-900/30 p-3 break-words">{error}</p>}{notice&&<p role="status" className="text-green-300">{notice}</p>}
+  {!!conflicts.length&&<details className="rounded-lg border border-amber-600 p-3 text-amber-200"><summary>Ver folios con datos distintos</summary><p>Compara la fecha y el importe con el registro existente antes de corregirlo.</p><ul className="list-disc pl-5">{conflicts.map(ref=><li key={ref}>{ref}</li>)}</ul></details>}
   {!selected&&<>
    <fieldset disabled={busy} className="rounded-xl border border-logia-700 p-4 space-y-3">
-    <label className="block">Texto o explicación<textarea aria-label="Texto de ingresos" className={field} rows={4} maxLength={20000} value={text} onChange={e=>{setText(e.target.value);request.current='';}} placeholder="Ej. Juan Pérez pagó $500 de septiembre y Carlos Ríos $700 de la cuota extraordinaria…"/></label>
-    <label className="block">Fotos, Excel, CSV o PDF (hasta 4)<input aria-label="Archivos de ingresos" className={field} type="file" multiple accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,.xlsx,.csv,text/csv,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={e=>{const next=Array.from(e.target.files||[]);if(next.length>4){setError('Selecciona hasta cuatro archivos.');e.target.value='';return;}setFiles(next);request.current='';}}/></label>
-    <p className="text-xs text-gray-400">CSV: hasta 20,000 caracteres. PDF y Excel: máximo 2 MB por archivo. Excel debe ser .xlsx; convierte los .xls antiguos. Por defecto solo se guardan los datos escritos, sin adjuntar el estado de cuenta.</p>
+    <label className="block">Texto o explicación<textarea aria-label="Texto de ingresos" className={field} rows={4} value={text} onChange={e=>{setText(e.target.value);request.current='';}} placeholder="Ej. Juan Pérez pagó $500 de septiembre y Carlos Ríos $700 de la cuota extraordinaria…"/></label>
+    <label className="block">Fotos, Excel, CSV o PDF (hasta 4)<input ref={fileInput} aria-label="Archivos de ingresos" className={field} type="file" multiple accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,.xlsx,.csv,text/csv,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={e=>{const next=Array.from(e.target.files||[]);if(next.length>4){setError('Selecciona hasta cuatro archivos.');e.target.value='';return;}setFiles(next);request.current='';}}/></label>
+    <p className="text-xs text-gray-400">CSV original de Mercado Pago: hasta {BANK_INCOME_LIMIT} transferencias por análisis. PDF y Excel: máximo 2 MB por archivo. Excel debe ser .xlsx; convierte los .xls antiguos. Por defecto solo se guardan los datos escritos, sin adjuntar el estado de cuenta.</p>
     {files.map((f,i)=><p className="text-xs break-words" key={i}>{f.name}</p>)}
     <label className="flex items-start gap-2"><input aria-label="Guardar imágenes como comprobantes" type="checkbox" checked={retainImages} onChange={e=>{setRetainImages(e.target.checked);request.current='';}}/>Guardar también las imágenes como comprobantes</label>
-    <p className="text-xs text-gray-400">Gemini interpreta la foto o el texto y busca coincidencias en el directorio. Por defecto se conserva solo el detalle escrito de cada movimiento; la foto no se guarda. Revisa las dudas antes de aprobar.</p>
+    <p className="text-xs text-gray-400">El CSV de Mercado Pago se lee por folio sin Gemini. La IA interpreta otros textos o fotos y busca coincidencias en el directorio. Por defecto se conserva solo el detalle escrito de cada movimiento; la foto no se guarda. Revisa las dudas antes de aprobar.</p>
     <label className="block">Fecha de referencia<input aria-label="Fecha de referencia de ingresos" className={field} type="date" value={date} onChange={e=>{setDate(e.target.value);request.current='';}}/></label>
-    <button className={button+' bg-indigo-600'} onClick={()=>void run(async()=>{if(!text.trim()&&!files.length)throw Error('Agrega texto, fotos, Excel, CSV o PDF.');request.current ||= crypto.randomUUID();const prepared=await incomeAttachments(files,text);const analyzed:any=await incomeCaptureApi.analyze(user.groupId,request.current,prepared.text,date,prepared.images,retainImages,prepared.documents);await refresh();setText('');setFiles([]);request.current='';setNotice(analyzed.ids?.length?(analyzed.bankRead?`Lectura bancaria lista: ${analyzed.ids.length} transferencias identificadas. Las referencias ya importadas conservan su solicitud. Se omiten rendimientos y egresos. ${analyzed.aiUsed===false?'Gemini no estuvo disponible; se conservaron los datos bancarios originales. ':''}Revisa y confirma cada ingreso.`:'Análisis listo. Revisa cada solicitud antes de aprobar.'):'No se identificaron ingresos. No se registró dinero.');})}>{busy?'Analizando…':'Interpretar y preparar solicitudes'}</button>
+    <button className={button+' bg-indigo-600'} onClick={analyze}>{busy?'Analizando…':'Interpretar y preparar solicitudes'}</button>
    </fieldset>
    <div className="flex gap-2 items-center"><label>Ver<select aria-label="Estado de solicitudes de ingreso" className={field} value={filter} disabled={busy} onChange={e=>setFilter(e.target.value)}><option value="pending">Pendientes</option><option value="approved">Aprobadas</option><option value="rejected">Rechazadas</option></select></label><button disabled={busy} className={button} onClick={()=>void run(refresh)}>Actualizar solicitudes</button></div>
    <label className="block text-sm">Buscar por hermano o folio<input aria-label="Buscar solicitudes por hermano o folio" className={field} placeholder="Nombre, referencia o ID de transferencia" value={search} onChange={e=>setSearch(e.target.value)}/></label>
