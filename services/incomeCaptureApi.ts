@@ -8,7 +8,7 @@ import {quickFinanceService} from './quickFinanceApi';
 import {applyCapture,captureAmount,validCaptureDate} from './quickFinance';
 import type {Payment,PaymentReceipt,TreasuryEntry,User} from '../types';
 export interface IncomeDraft {id:string;groupId:string;status:'pending'|'approved'|'rejected';payerName:string;memberId:string;amount:number;date:string;period:string;kind:'regular'|'extra'|'other';concept:string;reference:string;paymentMethod:'cash'|'card'|'transfer';sourceQuote:string;sourceText:string;receiptImageUrls:string[];warnings:string[];possibleDuplicate:boolean;createdAt:number;}
-export interface IncomeAnalysis {ids:string[];bankRead?:boolean;created?:number;existing?:number;ignored?:number;repeatedRows?:number;conflicts?:string[];}
+export interface IncomeAnalysis {ids:string[];bankRead?:boolean;created?:number;existing?:number;ignored?:number;repeatedRows?:number;invalidFolios?:number;conflicts?:string[];}
 export interface IncomeReview {reference?:string;allocations?:IncomeSelection[];allowUnapplied?:boolean;periodAmounts?:number[];periods?:string[];memberId:string;amount:number;date:string;period:string;kind:IncomeDraft['kind'];feeId:string;concept:string;paymentMethod:IncomeDraft['paymentMethod'];accountId:string;}
 const clean=<T,>(value:T):T=>JSON.parse(JSON.stringify(value));
 async function authority(tx:any,groupId:string){

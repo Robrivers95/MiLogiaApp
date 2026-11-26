@@ -109,7 +109,7 @@ export async function analyzeIncome(data:any,uid:string,groupId:string,key:strin
         const duplicate=pending.docs.some(p=>p.data().status!=='rejected'&&p.data().amount===row.amount&&p.data().date===row.date&&(p.data().payerName===row.payerName||(row.reference&&p.data().reference===row.reference)));
         tx.set(db.doc(`${draftPath}/${id}`),{...row,id,groupId,status:'pending',createdBy:uid,createdAt:Date.now(),sourceText:bank?'':data.text,receiptImageUrls:urls,possibleDuplicate:duplicate,requestId:op});
       });
-      const result={ids,bankRead:!!bank,aiUsed,ignored:bank?.ignored||0,repeatedRows:bank?.repeatedRows||0,created,existing:existingCount,conflicts};
+      const result={ids,bankRead:!!bank,aiUsed,ignored:bank?.ignored||0,repeatedRows:bank?.repeatedRows||0,invalidFolios:bank?.invalidFolios.length||0,created,existing:existingCount,conflicts};
       tx.update(request,{status:'done',ids,result});return result;
     });
     uploaded=[];return result;

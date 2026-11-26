@@ -1,7 +1,8 @@
-import {csvIsReady,recognizeBankCsvText,readBankCsv} from './meetingBankCsv';
-import type {CsvInput,CsvMapping} from './meetingBankCsv';
+import {csvIsReady,recognizeBankCsvText,readBankCsv,namedBankDate,isBankCsvYear} from './meetingBankCsv';
+import type {BankCsvFolioIssue,CsvInput,CsvMapping} from './meetingBankCsv';
 // Mercado Pago exports: preserve operation IDs, dates and amounts exactly.
 export interface BankMovement {payerName:string;amount:number;date:string;period:string;kind:string;concept:string;reference:string;paymentMethod:string;sourceQuote:string;}
+export type BankImportFolioIssue=BankCsvFolioIssue&{file:number};
 export const BANK_TEXT_LIMIT=128000;
 export const BANK_INCOME_LIMIT=120;
 
@@ -37,7 +38,11 @@ export const isMercadoPagoPdf=(text:string)=>/ESTADO DE SALDOS Y MOVIMIENTOS/i.t
 export const hasBankCsvHeader=(text:string)=>text.split(/\r\n|\n|\r/).some(line=>csvHeader(line)!==null);
 
 const money=(value:string)=>{
- const clean=value.trim().replace(/^(?:MXN|MX\$)\s*|\s*MXN$/gi,'').replace(/^([+-]?)\s*\$\s*/,'$1').replace(/^\+/,'');
+ const raw=value.trim();
+ const wrapped=raw.startsWith('(')&&raw.endsWith(')');
+ const plain=wrapped?raw.slice(1,-1).trim():raw;
+ if(wrapped&&/[-+]/.test(plain))throw Error('el monto de la operación no es válido.');
+ const clean=(wrapped?'-':'')+plain.replace(/^(?:MXN|MX\$)\s*|\s*MXN$/gi,'').replace(/^([+-]?)\s*\$\s*/,'$1').replace(/^\+/,'');
  let normalized:string;
  if(/^-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(clean))normalized=clean.replace(/,/g,'');
  else if(/^-?(?:\d+|\d{1,3}(?:\.\d{3})+),\d{1,2}$/.test(clean))normalized=clean.replace(/\./g,'').replace(',','.');
@@ -46,16 +51,19 @@ const money=(value:string)=>{
  if(!Number.isFinite(amount)||Math.abs(amount)>999999999)throw Error('el monto de la operación está fuera de rango.');
  return amount;
 };
-const date=(value:string,order:CsvMapping['dateOrder']='DMY')=>{
+const date=(value:string,order:CsvMapping['dateOrder']='DMY',year?:string)=>{
  const printed=value.trim().replace(/[T ]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:\s?(?:Z|[+-]\d{2}:?\d{2}|AM|PM))?$/i,'');
  const parts=/^(\d{1,2})([-/])(\d{1,2})\2(\d{4})$/.exec(printed);
  const ymd=/^(\d{4})([-/])(\d{1,2})\2(\d{1,2})$/.exec(printed);
- const iso=ymd?`${ymd[1]}-${ymd[3].padStart(2,'0')}-${ymd[4].padStart(2,'0')}`:parts?`${parts[4]}-${parts[order==='DMY'?3:1].padStart(2,'0')}-${parts[order==='DMY'?1:3].padStart(2,'0')}`:printed;
+ const named=namedBankDate(printed);
+ const dateYear=named?.year||year;
+ if(named&&!isBankCsvYear(dateYear))throw Error('la fecha del movimiento no trae año. Indica el año de las fechas del CSV.');
+ const iso=named?dateYear+'-'+named.month.padStart(2,'0')+'-'+named.day.padStart(2,'0'):ymd?`${ymd[1]}-${ymd[3].padStart(2,'0')}-${ymd[4].padStart(2,'0')}`:parts?`${parts[4]}-${parts[order==='DMY'?3:1].padStart(2,'0')}-${parts[order==='DMY'?1:3].padStart(2,'0')}`:printed;
  const timestamp=Date.parse(iso+'T12:00:00Z');
  if(!/^\d{4}-\d{2}-\d{2}$/.test(iso)||!Number.isFinite(timestamp)||new Date(timestamp).toISOString().slice(0,10)!==iso)throw Error('la fecha de la operación no es válida.');
  return iso;
 };
-export function bankStatement(text:string,files:CsvInput[]=[]):{incomes:BankMovement[];ignored:number;repeatedRows:number}|null{
+export function bankStatement(text:string,files:CsvInput[]=[]):{incomes:BankMovement[];ignored:number;repeatedRows:number;invalidFolios:BankImportFolioIssue[]}|null{
  const lines=text.split(/\r\n|\n|\r/);
  const csv=lines.some(line=>csvHeader(line)!==null);
  const pdf=isMercadoPagoPdf(text);
@@ -63,7 +71,7 @@ export function bankStatement(text:string,files:CsvInput[]=[]):{incomes:BankMove
  if(!csv&&!pdf&&!files.length){
   const candidate=recognizeBankCsvText(text);
   if(!candidate)return null;
-  if(!csvIsReady(candidate.mapping)||candidate.ambiguousDate)throw Error('Adjunta el CSV para confirmar sus columnas o el formato de fecha.');
+  if(!csvIsReady(candidate.mapping)||candidate.ambiguousDate||candidate.needsYear)throw Error('Adjunta el CSV para confirmar sus columnas, el formato de fecha o el año.');
   structured.push(readBankCsv({...candidate,text},money,date));
  }
  const candidates:{day:string;description:string;reference:string;amount:string;quote:string;line?:number}[]=[];
@@ -96,7 +104,7 @@ export function bankStatement(text:string,files:CsvInput[]=[]):{incomes:BankMove
   const actual=candidates.filter(c=>/^Transferencia\s+recibida\b/i.test(c.description)).length;
   if(actual<expected)throw Error('No se pudieron leer todas las transferencias del PDF. Prueba el CSV de Mercado Pago.');
  }
- const incomes:BankMovement[]=[],seen=new Map<string,string>();let ignored=0,repeatedRows=0;
+ const incomes:BankMovement[]=[],seen=new Map<string,string>(),invalidFolios:BankImportFolioIssue[]=[];let ignored=0,repeatedRows=0;
  const add=(movement:BankMovement)=>{
   const identity=JSON.stringify([movement.date,movement.amount]);
   if(seen.has(movement.reference)){
@@ -122,7 +130,7 @@ export function bankStatement(text:string,files:CsvInput[]=[]):{incomes:BankMove
   }
   add({payerName,amount,date:day,period:'',kind:'regular',concept:'Transferencia recibida · concepto por confirmar',reference:c.reference,paymentMethod:'transfer',sourceQuote});
  }
- for(const parsed of structured){ignored+=parsed.ignored;parsed.incomes.forEach(add);}
+ structured.forEach((parsed,file)=>{ignored+=parsed.ignored;parsed.incomes.forEach(add);parsed.invalidFolios.forEach(issue=>invalidFolios.push({...issue,file}));});
  if(incomes.length>BANK_INCOME_LIMIT)throw Error(`Se detectaron ${incomes.length} transferencias. Importa hasta ${BANK_INCOME_LIMIT} por análisis, conservando el encabezado.`);
- return {incomes,ignored,repeatedRows};
+ return {incomes,ignored,repeatedRows,invalidFolios};
 }
