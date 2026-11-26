@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';import {readFileSync,writeFileSync,rmSyn
 const mock=`
 const members=[{uid:'a',name:'Juan Pérez',active:true},{uid:'b',name:'Carlos Ríos',active:true}];let rows=[];window.__approved=[];window.__analyses=[];
 export const incomeImage=async()=>({mimeType:'image/jpeg',data:'mock-image'});
-export const incomeCaptureApi={options:async()=>({members,accounts:[]}),payments:async()=>[...['2026-07','2026-08','2026-09'].map(period=>({period,amount:400,paid:0,paidRegular:0})),{period:'2027-09',amount:500,paid:0,extraFees:[{id:'event',description:'Evento',amount:700,paid:0,createdAt:''}]}],list:async()=>structuredClone(rows),state:async()=> 'pending',analyze:async(g,id,text,date,images,retainImages,documents)=>{window.__analyses.push({text,images,retainImages,documents});rows=[1,2].map(i=>({id:'row'+i,status:'pending',payerName:i===1?'Juan Pérez':'Carlos Ríos',memberId:'a',amount:i===1?100:200,date:'2026-10-29',period:'2026-09',kind:'regular',concept:'Cuota normal',reference:'00001234000'+i,paymentMethod:'transfer',sourceQuote:'Pago '+i,sourceText:text,receiptImageUrls:['https://proof.test/image.png'],warnings:[],createdAt:i}));return {ids:rows.map(r=>r.id),...(text.includes('RELEASE_DATE;TRANSACTION_TYPE')?{bankRead:true,created:2,existing:1,repeatedRows:1,ignored:2,conflicts:['900000000009']}: {})};},approve:async(g,id,review,confirmed)=>{await new Promise(r=>setTimeout(r,50));window.__approved.push({id,review,confirmed});rows=rows.map(r=>r.id===id?{...r,status:'approved',approvedReview:review}:r);},reject:async(g,id)=>{rows=rows.map(r=>r.id===id?{...r,status:'rejected'}:r);}};
+export const incomeCaptureApi={options:async()=>({members,accounts:[]}),payments:async()=>[...['2026-07','2026-08','2026-09'].map(period=>({period,amount:400,paid:0,paidRegular:0})),{period:'2027-09',amount:500,paid:0,extraFees:[{id:'event',description:'Evento',amount:700,paid:0,createdAt:''}]}],list:async()=>structuredClone(rows),state:async()=> 'pending',analyze:async(g,id,text,date,images,retainImages,documents,csvFiles=[])=>{window.__analyses.push({text,images,retainImages,documents,csvFiles});rows=[1,2].map(i=>({id:'row'+i,status:'pending',payerName:i===1?'Juan Pérez':'Carlos Ríos',memberId:'a',amount:i===1?100:200,date:'2026-10-29',period:'2026-09',kind:'regular',concept:'Cuota normal',reference:'00001234000'+i,paymentMethod:'transfer',sourceQuote:'Pago '+i,sourceText:text,receiptImageUrls:['https://proof.test/image.png'],warnings:[],createdAt:i}));return {ids:rows.map(r=>r.id),...(csvFiles.length?{bankRead:true,created:2,existing:1,repeatedRows:1,ignored:2,conflicts:['900000000009']}: {})};},approve:async(g,id,review,confirmed)=>{await new Promise(r=>setTimeout(r,50));window.__approved.push({id,review,confirmed});rows=rows.map(r=>r.id===id?{...r,status:'approved',approvedReview:review}:r);},reject:async(g,id)=>{rows=rows.map(r=>r.id===id?{...r,status:'rejected'}:r);}};
 `;
 await build({stdin:{contents:"import React from 'react';import {createRoot} from 'react-dom/client';import Income from './components/IncomeCapture';createRoot(document.getElementById('root')).render(<Income user={{uid:'admin',name:'Admin',role:new URLSearchParams(location.search).get('role')||'master',groupId:'lodge',active:true}}/>);",loader:'tsx',resolveDir:process.cwd()},bundle:true,format:'esm',outfile:'tests/income-browser.js',plugins:[{name:'isolated-income',setup(b){b.onResolve({filter:/\/incomeCaptureApi$/},()=>({path:'api',namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},()=>({contents:mock}));}}]});
 writeFileSync('tests/income-browser.html',readFileSync('tests/member-ui.html','utf8').replace('/tests/member-ui-fixture.tsx','/tests/income-browser.js').replace(/<script src="https:\/\/cdn.tailwindcss.com"><\/script>/,process.env.LOGIA_UI_CSS?'<script>window.tailwind={}</script>':'<script src="https://cdn.tailwindcss.com"></script>').replace('</head>',(process.env.LOGIA_UI_CSS?'<style>'+readFileSync(process.env.LOGIA_UI_CSS,'utf8')+'</style>':'')+'</head>'));
@@ -27,7 +27,7 @@ try{for(let i=0;i<80;i++){try{await fetch('http://127.0.0.1:5192/tests/income-br
  await page.goto('http://127.0.0.1:5192/tests/income-browser.html');
  await page.getByLabel('Archivos de ingresos',{exact:true}).setInputFiles([{name:'banco.csv',mimeType:'text/csv',buffer:Buffer.from(bankCsv)},{name:'banco-legible.pdf',mimeType:'application/pdf',buffer:makePdf(bankPdfText.split('\n'))}]);
  await page.getByRole('button',{name:'Interpretar y preparar solicitudes'}).click();await page.getByRole('button',{name:'Revisar solicitud',exact:true}).first().waitFor();
- const bankInput=await page.evaluate(()=>window.__analyses[0]);assert.match(bankInput.text,/RELEASE_DATE;TRANSACTION_TYPE/);assert.match(bankInput.text,/900000000005/);assert.equal(bankInput.documents.length,0,'readable PDF extracted locally');assert.equal(await page.evaluate(()=>window.__approved.length),0);
+ const bankInput=await page.evaluate(()=>window.__analyses[0]);assert.match(bankInput.csvFiles[0].text,/RELEASE_DATE;TRANSACTION_TYPE/);assert.match(bankInput.csvFiles[0].text,/900000000005/);assert.match(bankInput.text,/ESTADO DE SALDOS Y MOVIMIENTOS/);assert.equal(bankInput.documents.length,0,'readable PDF extracted locally');assert.equal(await page.evaluate(()=>window.__approved.length),0);
  await page.getByRole('status').filter({hasText:'Solicitudes nuevas: 2.'}).waitFor();
  await page.getByText('Ver folios con datos distintos',{exact:true}).click();await page.getByText('900000000009',{exact:true}).waitFor();
  assert.equal(await page.getByLabel('Archivos de ingresos',{exact:true}).evaluate(e=>e.files.length),0,'successful import clears selected files');
@@ -80,6 +80,24 @@ try{for(let i=0;i<80;i++){try{await fetch('http://127.0.0.1:5192/tests/income-br
  console.log('Matrix review passed: manual normal + extra amounts, explicit unapplied credit, immutable approval, folio search and mobile widths.');
 
 
+
+
+ await page.goto('http://127.0.0.1:5192/tests/income-browser.html');
+ await page.setViewportSize({width:320,height:844});
+ const custom='Estado ficticio\nDía;ID único;Pesos;Nombre\n23/10/2026;000-REF-03;1.200,50;Carlos Ríos';
+ await page.getByLabel('Archivos de ingresos',{exact:true}).setInputFiles({name:'nuevo-banco.csv',mimeType:'text/csv',buffer:Buffer.from(custom)});
+ await page.getByRole('button',{name:'Interpretar y preparar solicitudes'}).click();
+ await page.getByRole('alert').filter({hasText:'Todavía no se crearon solicitudes'}).waitFor();
+ assert.equal(await page.evaluate(()=>window.__analyses.length),0);
+ const selectors={'Folio o referencia':'1','Fecha del movimiento':'0','Importe':'2','Ordenante (opcional)':'3','Cómo identificar los abonos':'credit'};
+ for(const [label,value] of Object.entries(selectors))await page.getByRole('combobox',{name:label,exact:true}).selectOption(value);
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2),false,'CSV column picker fits the phone');
+ await page.getByRole('button',{name:'Interpretar y preparar solicitudes'}).click();
+ await page.getByRole('status').filter({hasText:'Solicitudes nuevas: 2.'}).waitFor();
+ const manual=await page.evaluate(()=>window.__analyses[0].csvFiles[0]);assert.equal(manual.text,custom);assert.equal(manual.headerLine,2);
+ assert.deepEqual(manual.mapping,{reference:1,date:0,amount:2,payer:3,direction:-1,mode:'credit',dateOrder:'DMY'});
+ assert.equal(await page.evaluate(()=>window.__approved.length),0);
+ console.log('Unrecognized CSV mapping passes on a phone: original folio, explicit credit column and no automatic payment.');
 
  await page.goto('http://127.0.0.1:5192/tests/income-browser.html?role=member');await page.getByText(/requiere Admin o Admin Master/).waitFor();assert.deepEqual(errors,[]);console.log('Income browser passed: image+text -> two drafts, separate review/approval, corrected member/year/month/extra concept and amount, confirmation reset, linked proof, reject, responsive widths and role gate.');
 }finally{await browser?.close();server.kill();for(const suffix of ['js','html'])rmSync('tests/income-browser.'+suffix,{force:true});}

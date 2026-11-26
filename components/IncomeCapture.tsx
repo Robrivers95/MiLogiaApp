@@ -1,4 +1,8 @@
-import {BANK_INCOME_LIMIT} from '../functions/src/meetingBankStatement';
+import {BANK_INCOME_LIMIT,BANK_TEXT_LIMIT} from '../functions/src/meetingBankStatement';
+import {csvIsReady,inspectBankCsv,recognizeBankCsvText} from '../functions/src/meetingBankCsv';
+import type {CsvInput,CsvMapping} from '../functions/src/meetingBankCsv';
+import {incomeCsvText,isIncomeCsv} from '../services/incomeCsv';
+import BankCsvColumns,{BankCsvPlan} from './BankCsvColumns';
 import {incomeAllocation} from '../services/incomeAllocation';
 import React,{useEffect,useRef,useState} from 'react';
 import type {User,BankBalance} from '../types';
@@ -20,11 +24,12 @@ export default function IncomeCapture({user,suspended=false,onBusyChange}:{user:
  const payments=ledgers[review?.memberId||'']||[],paymentsReady=!!review?.memberId&&Object.prototype.hasOwnProperty.call(ledgers,review.memberId);
  const through=localFinanceDate().slice(0,7);
  const fileInput=useRef<HTMLInputElement>(null);
+ const [csvPlans,setCsvPlans]=useState<BankCsvPlan[]|null>(null);
  const [conflicts,setConflicts]=useState<string[]>([]);
  const request=useRef(''),flight=useRef(false);const allowed=['admin','master'].includes(user.role)&&user.active!==false&&!suspended;
  const refresh=async()=>{const [list,options]=await Promise.all([incomeCaptureApi.list(user.groupId),incomeCaptureApi.options(user.groupId)]);setRows(list);setMembers(options.members);setAccounts(options.accounts);setVersion(v=>v+1);};
  useEffect(()=>{if(allowed)void refresh().catch(e=>setError(e.message));},[user.uid,user.groupId,allowed]);
- const run=async(work:()=>Promise<void>)=>{if(flight.current||!allowed)return;flight.current=true;setBusy(true);onBusyChange?.(true);setError('');setNotice('');try{await work();}catch(e:any){setError(!e?.message||['internal','invalid-argument','failed-precondition','Bad Request'].includes(e.message)?'No se pudo analizar o guardar la solicitud. Si estás importando un CSV, prueba con el archivo original del banco y conserva los folios sin editar.':e.message);}finally{flight.current=false;setBusy(false);onBusyChange?.(false);}};
+ const run=async(work:()=>Promise<void>)=>{if(flight.current||!allowed)return;flight.current=true;setBusy(true);onBusyChange?.(true);setError('');setNotice('');try{await work();}catch(e:any){setError(!e?.message||['internal','invalid-argument','failed-precondition','Bad Request'].includes(e.message)?'No se pudo analizar o guardar la solicitud. Revisa las columnas y conserva el folio como texto si estás importando un CSV.':e.message);}finally{flight.current=false;setBusy(false);onBusyChange?.(false);}};
  const update=(patch:Partial<IncomeReview>)=>{if(frozen)return;setReview(old=>old?{...old,...patch}:old);setReviewed(false);setError('');};
  const open=(draft:IncomeDraft)=>{setSelected(draft);setMemberSearch('');setReview((draft as any).approvedReview||{reference:draft.reference||'',...(draft.kind!=='other'?{allocations:[],allowUnapplied:false}:{}),memberId:draft.memberId,amount:draft.amount,date:draft.date,period:draft.period,kind:draft.kind==='other'?'other':'regular',feeId:'',concept:draft.concept||'',paymentMethod:draft.paymentMethod,accountId:''});setReviewed(false);setError('');setConfirmReject(false);setFrozen(undefined);try{const pending=JSON.parse(localStorage.getItem(`income-confirm:${user.uid}:${user.groupId}:${draft.id}`)||'null');if(pending){setReview(pending);setFrozen(pending);setReviewed(true);}}catch{}};
 
@@ -37,14 +42,43 @@ export default function IncomeCapture({user,suspended=false,onBusyChange}:{user:
  const save=()=>run(async()=>{if(!selected||!review||!reviewed)throw Error('Revisa los datos y marca la confirmación.');const key=`income-confirm:${user.uid}:${user.groupId}:${selected.id}`,payload=frozen||{...review,...(allocationPreview?{periodAmounts:allocationPreview.allocations.map(a=>a.amount)}:{})};localStorage.setItem(key,JSON.stringify(payload));setFrozen(payload);
   try{await incomeCaptureApi.approve(user.groupId,selected.id,payload,true);}catch(e){try{const state=await incomeCaptureApi.state(user.groupId,selected.id);if(state==='pending'){localStorage.removeItem(key);setFrozen(undefined);}}catch{}throw e;}
   localStorage.removeItem(key);setFrozen(undefined);setSelected(undefined);setReview(undefined);await refresh();setNotice(selectionPreview?.unapplied?'Ingreso aprobado. El folio quedó guardado y el remanente se conserva en Capturas como saldo sin aplicar.':'Ingreso aprobado y registrado. El folio y el reparto quedaron guardados.');});
+ const loadCsvPlans=async()=>{
+  if(csvPlans)return csvPlans;
+  const plans=await Promise.all(files.filter(isIncomeCsv).map(async file=>{
+   const source=await incomeCsvText(file);
+   return {...inspectBankCsv(source),text:source,name:file.name};
+  }));
+  if(text.length<=BANK_TEXT_LIMIT){
+   const pasted=recognizeBankCsvText(text);
+   // A complete original export, including its summary section, also works here.
+   if(pasted)plans.push({...pasted,text,name:'CSV pegado'});
+  }
+  return plans;
+ };
+ const changeCsv=(index:number,patch:Partial<CsvMapping>)=>{
+  setCsvPlans(current=>current?.map((plan,i)=>i===index?{...plan,...(patch.dateOrder?{ambiguousDate:false}:{}),mapping:{...plan.mapping,...patch}}:plan)||null);
+  request.current='';setError('');
+ };
  const analyze=()=>run(async()=>{
   setConflicts([]);
   if(!text.trim()&&!files.length)throw Error('Agrega texto, fotos, Excel, CSV o PDF.');
+  const plans=await loadCsvPlans();
+  if(plans.some(plan=>!csvIsReady(plan.mapping)||plan.ambiguousDate)){
+   setCsvPlans(plans);
+   setError('Revisa las columnas y el formato de fecha. Elige columnas distintas para el folio, la fecha y el importe, e indica cómo identificar los abonos. Todavía no se crearon solicitudes.');
+   return;
+  }
+  const otherFiles=files.filter(file=>!isIncomeCsv(file));
+  if(plans.length&&otherFiles.some(file=>!/\.pdf$/i.test(file.name)&&file.type!=='application/pdf'))throw Error('Analiza el CSV por separado de fotos y Excel para mantener la conciliación por folio.');
+  const pasted=plans.some(plan=>plan.name==='CSV pegado'&&plan.text===text);
+  const prepared=await incomeAttachments(otherFiles,pasted?'':text,plans.length>0);
+  if(plans.length&&(prepared.images.length||prepared.documents.length))throw Error('El PDF no tiene texto legible. Analiza el CSV por separado del PDF escaneado.');
+  const csvFiles:CsvInput[]=plans.map(({text,headerLine,separator,mapping})=>({text,headerLine,separator,mapping}));
+  if(prepared.text.length+csvFiles.reduce((sum,file)=>sum+file.text.length,0)>BANK_TEXT_LIMIT)throw Error('Divide los movimientos en partes y conserva el encabezado de cada CSV.');
   request.current ||= crypto.randomUUID();
-  const prepared=await incomeAttachments(files,text);
-  const result=await incomeCaptureApi.analyze(user.groupId,request.current,prepared.text,date,prepared.images,retainImages,prepared.documents);
+  const result=await incomeCaptureApi.analyze(user.groupId,request.current,prepared.text,date,prepared.images,retainImages,prepared.documents,csvFiles);
   await refresh();
-  setText('');setFiles([]);if(fileInput.current)fileInput.current.value='';request.current='';
+  setText('');setFiles([]);setCsvPlans(null);if(fileInput.current)fileInput.current.value='';request.current='';
   if(result.bankRead&&result.created!==undefined){
    const conflicts=result.conflicts||[];
    setConflicts(conflicts);setFilter('pending');
@@ -58,12 +92,14 @@ export default function IncomeCapture({user,suspended=false,onBusyChange}:{user:
   {!!conflicts.length&&<details className="rounded-lg border border-amber-600 p-3 text-amber-200"><summary>Ver folios con datos distintos</summary><p>Compara la fecha y el importe con el registro existente antes de corregirlo.</p><ul className="list-disc pl-5">{conflicts.map(ref=><li key={ref}>{ref}</li>)}</ul></details>}
   {!selected&&<>
    <fieldset disabled={busy} className="rounded-xl border border-logia-700 p-4 space-y-3">
-    <label className="block">Texto o explicación<textarea aria-label="Texto de ingresos" className={field} rows={4} value={text} onChange={e=>{setText(e.target.value);request.current='';}} placeholder="Ej. Juan Pérez pagó $500 de septiembre y Carlos Ríos $700 de la cuota extraordinaria…"/></label>
-    <label className="block">Fotos, Excel, CSV o PDF (hasta 4)<input ref={fileInput} aria-label="Archivos de ingresos" className={field} type="file" multiple accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,.xlsx,.csv,text/csv,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={e=>{const next=Array.from(e.target.files||[]);if(next.length>4){setError('Selecciona hasta cuatro archivos.');e.target.value='';return;}setFiles(next);request.current='';}}/></label>
-    <p className="text-xs text-gray-400">CSV original de Mercado Pago: hasta {BANK_INCOME_LIMIT} transferencias por análisis. PDF y Excel: máximo 2 MB por archivo. Excel debe ser .xlsx; convierte los .xls antiguos. Por defecto solo se guardan los datos escritos, sin adjuntar el estado de cuenta.</p>
+    <label className="block">Texto o explicación<textarea aria-label="Texto de ingresos" className={field} rows={4} value={text} onChange={e=>{setText(e.target.value);setCsvPlans(null);request.current='';}} placeholder="Ej. Juan Pérez pagó $500 de septiembre y Carlos Ríos $700 de la cuota extraordinaria…"/></label>
+    <label className="block">Fotos, Excel, CSV o PDF (hasta 4)<input ref={fileInput} aria-label="Archivos de ingresos" className={field} type="file" multiple accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,.xlsx,.csv,text/csv,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={e=>{const next=Array.from(e.target.files||[]);if(next.length>4){setError('Selecciona hasta cuatro archivos.');e.target.value='';return;}setFiles(next);setCsvPlans(null);setError('');request.current='';}}/></label>
+    <p className="text-xs text-gray-400">CSV con folio, fecha e importe: hasta {BANK_INCOME_LIMIT} transferencias por análisis. PDF y Excel: máximo 2 MB por archivo. Excel debe ser .xlsx; convierte los .xls antiguos. Por defecto solo se guardan los datos escritos, sin adjuntar el estado de cuenta.</p>
     {files.map((f,i)=><p className="text-xs break-words" key={i}>{f.name}</p>)}
     <label className="flex items-start gap-2"><input aria-label="Guardar imágenes como comprobantes" type="checkbox" checked={retainImages} onChange={e=>{setRetainImages(e.target.checked);request.current='';}}/>Guardar también las imágenes como comprobantes</label>
-    <p className="text-xs text-gray-400">El CSV de Mercado Pago se lee por folio sin Gemini. La IA interpreta otros textos o fotos y busca coincidencias en el directorio. Por defecto se conserva solo el detalle escrito de cada movimiento; la foto no se guarda. Revisa las dudas antes de aprobar.</p>
+    <p className="text-xs text-gray-400">El CSV se concilia por folio sin Gemini. Puedes ajustar las columnas si tu banco usa otros nombres. La IA interpreta otros textos o fotos y busca coincidencias en el directorio. Por defecto se conserva solo el detalle escrito de cada movimiento; la foto no se guarda. Revisa las dudas antes de aprobar.</p>
+    {files.some(isIncomeCsv)&&!csvPlans&&<button type="button" className={button} onClick={()=>void run(async()=>setCsvPlans(await loadCsvPlans()))}>Revisar columnas del CSV</button>}
+    {csvPlans?.map((plan,i)=><BankCsvColumns key={i} plan={plan} onChange={patch=>changeCsv(i,patch)}/>)}
     <label className="block">Fecha de referencia<input aria-label="Fecha de referencia de ingresos" className={field} type="date" value={date} onChange={e=>{setDate(e.target.value);request.current='';}}/></label>
     <button className={button+' bg-indigo-600'} onClick={analyze}>{busy?'Analizando…':'Interpretar y preparar solicitudes'}</button>
    </fieldset>
